@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Onlayn Do'kon</title>
+  <!-- Telegram Web App va Stiller -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-4 font-sans">
+
+  <div class="max-w-md mx-auto bg-white rounded-2xl shadow-md p-5">
+    <h1 class="text-2xl font-bold text-center text-blue-600 mb-4">🛍️ Online Do'kon</h1>
+    
+    <!-- Mahsulotlar ro'yxati -->
+    <div id="products" class="space-y-4"></div>
+
+    <!-- Savatcha qismi -->
+    <div class="mt-6 border-t pt-4">
+      <h2 class="text-lg font-semibold">Buyurtma ma'lumotlari:</h2>
+      <input type="text" id="phone" placeholder="+998 90 123 45 67" class="w-full mt-2 p-2 border rounded-lg">
+      <input type="text" id="address" placeholder="Manzil (Masalan: Chilonzor 5-mavze)" class="w-full mt-2 p-2 border rounded-lg">
+      
+      <div class="flex justify-between items-center mt-4 text-xl font-bold">
+        <span>Jami:</span>
+        <span id="total-price" class="text-green-600">0 so'm</span>
+      </div>
+
+      <button onclick="sendOrder()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl mt-4">
+        ✅ Buyurtma berish
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // ⚙️ SOZLAMALAR (Shu yerni o'zgartirasiz)
+    const BOT_TOKEN = "8659743606:AAFcAN91p-6-32yTsPInypX-r1qfXylIYIs"; // BotFather bergan token
+    const ADMIN_ID = "1533504949";   // @userinfobot bergan ID raqamingiz
+
+    const tg = window.Telegram.WebApp;
+    tg.expand(); // Oynani to'liq ekranga ochish
+
+    // Mahsulotlar ro'yxati (Xohlagancha qo'shishingiz mumkin)
+    const productsList = [
+      { id: 1, name: "Gamburger", price: 30000, img: "https://via.placeholder.com/80" },
+      { id: 2, name: "Lavash", price: 35000, img: "https://via.placeholder.com/80" },
+      { id: 3, name: "Coca-Cola 0.5L", price: 9000, img: "https://via.placeholder.com/80" }
+    ];
+
+    let cart = {};
+
+    // Mahsulotlarni ekranga chiqarish
+    function renderProducts() {
+      const container = document.getElementById('products');
+      container.innerHTML = '';
+      productsList.forEach(p => {
+        container.innerHTML += `
+          <div class="flex items-center justify-between border-b pb-3">
+            <div>
+              <h3 class="font-bold text-gray-800">${p.name}</h3>
+              <p class="text-sm text-gray-500">${p.price.toLocaleString()} so'm</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="changeQty(${p.id}, -1)" class="bg-gray-200 px-3 py-1 rounded-lg font-bold">-</button>
+              <span id="qty-${p.id}" class="font-bold">0</span>
+              <button onclick="changeQty(${p.id}, 1)" class="bg-blue-500 text-white px-3 py-1 rounded-lg font-bold">+</button>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    // Miqdorni o'zgartirish
+    function changeQty(id, change) {
+      if (!cart[id]) cart[id] = 0;
+      cart[id] += change;
+      if (cart[id] < 0) cart[id] = 0;
+      
+      document.getElementById(`qty-${id}`).innerText = cart[id];
+      updateTotal();
+    }
+
+    // Jami summani hisoblash
+    function updateTotal() {
+      let total = 0;
+      productsList.forEach(p => {
+        if (cart[p.id]) total += cart[p.id] * p.price;
+      });
+      document.getElementById('total-price').innerText = total.toLocaleString() + " so'm";
+    }
+
+    // Buyurtmani Telegram botga yuborish
+    async function sendOrder() {
+      const phone = document.getElementById('phone').value;
+      const address = document.getElementById('address').value;
+
+      if (!phone || !address) {
+        alert("Iltimos, telefon va manzilingizni kiriting!");
+        return;
+      }
+
+      let orderText = "📥 <b>YANGI BUYURTMA!</b>\n\n";
+      let total = 0;
+      let itemsCount = 0;
+
+      productsList.forEach(p => {
+        if (cart[p.id] && cart[p.id] > 0) {
+          orderText += `• ${p.name} x ${cart[p.id]} ta = ${(cart[p.id] * p.price).toLocaleString()} so'm\n`;
+          total += cart[p.id] * p.price;
+          itemsCount++;
+        }
+      });
+
+      if (itemsCount === 0) {
+        alert("Savat bo'sh! Kamida bitta mahsulot tanlang.");
+        return;
+      }
+
+      orderText += `\n💰 <b>Jami summa:</b> ${total.toLocaleString()} so'm`;
+      orderText += `\n📞 <b>Tel:</b> ${phone}`;
+      orderText += `\n📍 <b>Manzil:</b> ${address}`;
+
+      // Xabarni serverga yuborish
+      const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+      
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: ADMIN_ID,
+            text: orderText,
+            parse_mode: 'HTML'
+          })
+        });
+
+        if (response.ok) {
+          alert(" Buyurtmangiz qabul qilindi!");
+          tg.close(); // Telegram ilovasini yopish
+        } else {
+          alert("Xatolik yuz berdi. Bot Token yoki Admin ID to'g'riligini tekshiring.");
+        }
+      } catch (err) {
+        alert("Internet xatoligi!");
+      }
+    }
+
+    renderProducts();
+  </script>
+</body>
+</html>
