@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Telegram Mini App - Do'kon, Ombor & ERP</title>
+  <title>FITCORE - Telegram Mini App & ERP</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -13,8 +13,8 @@
   <!-- HEADER -->
   <header class="bg-white sticky top-0 z-40 border-b px-4 py-3 flex items-center justify-between shadow-sm">
     <div class="flex items-center space-x-2">
-      <div id="role-badge" class="bg-blue-600 text-white font-black px-2 py-0.5 rounded-lg text-xs">USER</div>
-      <span class="font-bold text-base text-gray-900">Sport Shop</span>
+      <div id="role-badge" class="bg-blue-600 text-white font-black px-2.5 py-1 rounded-xl text-xs tracking-wider">FITCORE</div>
+      <span class="font-black text-lg text-gray-900 tracking-tight">FITCORE</span>
     </div>
     <div class="flex items-center space-x-3">
       <button onclick="switchTab('cart')" class="relative p-2 bg-gray-100 rounded-full">
@@ -29,7 +29,7 @@
 
   <!-- MAIN CONTAINER -->
   <main id="app-content" class="p-4 max-w-md mx-auto min-h-screen">
-    <!-- Content renders here dynamically -->
+    <!-- Dynamic Content -->
   </main>
 
   <!-- BOTTOM NAVIGATION -->
@@ -63,12 +63,12 @@
   <!-- MODALS CONTAINER -->
   <div id="modal-container"></div>
 
-  <!-- JAVASCRIPT APPLICATION LOGIC -->
+  <!-- JAVASCRIPT LOGIC -->
   <script>
     // ⚙️ CONFIGURATION
     const CONFIG = {
       BOT_TOKEN: "BOT_TOKEN_SHUYERGA",
-      ADMIN_ID: "ADMIN_ID_SHUYERGA"
+      ADMIN_ID: "ADMIN_ID_SHUYERGA" // Bosh Admin ID
     };
 
     const tg = window.Telegram?.WebApp;
@@ -78,9 +78,9 @@
     function initStorage() {
       if (!localStorage.getItem('products')) {
         const initialProducts = [
-          { id: "p1", sku: "SP-00001", name: "Whey Protein Gold Standard 1kg", price: 450000, stock: 15, categoryId: "c1-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "Muskul massasini oshirish uchun yuqori sifatli zardob proteini.", isFeatured: true, sortOrder: 1 },
-          { id: "p2", sku: "SP-00002", name: "Creatine Monohydrate 300g", price: 220000, stock: 5, categoryId: "c1-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "Kuch va chidamlilikni oshiruvchi 100% mikronizatsiyalangan kreatin.", isFeatured: true, sortOrder: 2 },
-          { id: "p3", sku: "SP-00003", name: "Gantel 10kg Rezina", price: 320000, stock: 8, categoryId: "c2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Uy va zal mashg'ulotlari uchun qulay tutqichli gantel.", isFeatured: false, sortOrder: 3 }
+          { id: "p1", sku: "SP-00001", name: "Whey Protein Gold 1kg", price: 400000, oldPrice: 480000, stock: 15, categoryId: "c1-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "FITCORE zardob proteini.", isFeatured: true, sortOrder: 1 },
+          { id: "p2", sku: "SP-00002", name: "Creatine Monohydrate 300g", price: 220000, oldPrice: null, stock: 5, categoryId: "c1-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "FITCORE mikronizatsiyalangan kreatin.", isFeatured: true, sortOrder: 2 },
+          { id: "p3", sku: "SP-00003", name: "Gantel 10kg Rezina", price: 320000, oldPrice: 350000, stock: 8, categoryId: "c2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Rezinalangan gantel.", isFeatured: false, sortOrder: 3 }
         ];
         localStorage.setItem('products', JSON.stringify(initialProducts));
       }
@@ -95,6 +95,10 @@
         localStorage.setItem('categories', JSON.stringify(initialCategories));
       }
 
+      if (!localStorage.getItem('adminsList')) {
+        localStorage.setItem('adminsList', JSON.stringify([String(CONFIG.ADMIN_ID)]));
+      }
+
       if (!localStorage.getItem('cart')) localStorage.setItem('cart', JSON.stringify({}));
       if (!localStorage.getItem('orders')) localStorage.setItem('orders', JSON.stringify([]));
       if (!localStorage.getItem('cartLogs')) localStorage.setItem('cartLogs', JSON.stringify([]));
@@ -105,19 +109,23 @@
     // STATE VARIABLES
     let products = JSON.parse(localStorage.getItem('products'));
     let categories = JSON.parse(localStorage.getItem('categories'));
+    let adminsList = JSON.parse(localStorage.getItem('adminsList'));
     let cart = JSON.parse(localStorage.getItem('cart'));
     let orders = JSON.parse(localStorage.getItem('orders'));
     let cartLogs = JSON.parse(localStorage.getItem('cartLogs'));
 
+    const userTgId = String(tg?.initDataUnsafe?.user?.id || CONFIG.ADMIN_ID);
+    const isUserAnAdmin = adminsList.includes(userTgId) || userTgId === String(CONFIG.ADMIN_ID);
+
     let currentTab = 'home';
-    let isAdminMode = false; // Persistent Admin Role Toggle
+    let isAdminMode = isUserAnAdmin; // ADMINLAR UCHUN AVTOMATIK ADMIN REJIMI
     let adminCatParentId = null;
     let categoryPage = 1;
     let ordersPage = 1;
     let selectedProductModal = null;
     let selectedOrderModal = null;
+    let editMenuProduct = null;
 
-    // Filters for Admin Orders
     let adminOrderFilters = {
       statuses: ['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'],
       region: 'ALL',
@@ -125,12 +133,11 @@
       search: ''
     };
 
-    // User Info from TG
     const currentUser = {
       firstName: tg?.initDataUnsafe?.user?.first_name || "Mijoz",
       lastName: tg?.initDataUnsafe?.user?.last_name || "",
       phone: "+998",
-      tgId: tg?.initDataUnsafe?.user?.id || 0
+      tgId: userTgId
     };
 
     // TRANSLITERATION & SEARCH
@@ -153,7 +160,7 @@
       });
     }
 
-    // NAVIGATION ENGINE
+    // NAVIGATION
     function switchTab(tab) {
       currentTab = tab;
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-blue-600', 'font-bold'));
@@ -164,24 +171,10 @@
 
     function toggleAdminRole() {
       isAdminMode = !isAdminMode;
-      const badge = document.getElementById('role-badge');
-      const whBtn = document.getElementById('nav-warehouse-btn');
-      
-      if (isAdminMode) {
-        badge.innerText = "ADMIN";
-        badge.className = "bg-amber-600 text-white font-black px-2 py-0.5 rounded-lg text-xs";
-        whBtn.classList.remove('hidden');
-        whBtn.classList.add('flex');
-      } else {
-        badge.innerText = "USER";
-        badge.className = "bg-blue-600 text-white font-black px-2 py-0.5 rounded-lg text-xs";
-        whBtn.classList.add('hidden');
-        if (currentTab === 'warehouse') currentTab = 'home';
-      }
       render();
     }
 
-    // CART LOGIC WITH LOGGING
+    // CART LOGIC
     function addToCart(id, e) {
       if (e) e.stopPropagation();
       const p = products.find(prod => prod.id === id);
@@ -229,8 +222,24 @@
     // RENDER ROUTER
     function render() {
       updateCartBadge();
-      const container = document.getElementById('app-content');
+
+      // Update Role Badge & Nav
+      const badge = document.getElementById('role-badge');
+      const whBtn = document.getElementById('nav-warehouse-btn');
       
+      if (isAdminMode) {
+        badge.innerText = "ADMIN";
+        badge.className = "bg-amber-600 text-white font-black px-2 py-0.5 rounded-lg text-xs tracking-wider";
+        whBtn.classList.remove('hidden');
+        whBtn.classList.add('flex');
+      } else {
+        badge.innerText = "FITCORE";
+        badge.className = "bg-blue-600 text-white font-black px-2 py-0.5 rounded-lg text-xs tracking-wider";
+        whBtn.classList.add('hidden');
+        if (currentTab === 'warehouse') currentTab = 'home';
+      }
+
+      const container = document.getElementById('app-content');
       switch (currentTab) {
         case 'home': renderHome(container); break;
         case 'categories': renderCategories(container); break;
@@ -243,26 +252,23 @@
       lucide.createIcons();
     }
 
-    // 1. BOSH SAHIFA (HOME TAB)
+    // 1. HOME TAB
     function renderHome(container) {
       container.innerHTML = `
         <div class="space-y-4">
-          <!-- SEARCH BAR -->
           <div class="relative">
-            <input type="text" id="search-input" oninput="handleSearch()" placeholder="Mahsulot qidirish (Lotin / Kirill)..." 
+            <input type="text" id="search-input" oninput="handleSearch()" placeholder="FITCORE dan qidirish (Lotin / Kirill)..." 
               class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
             <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
           </div>
 
-          <!-- ADMIN TOOLBAR -->
           ${isAdminMode ? `
             <div class="bg-amber-50 border border-amber-200 p-3 rounded-2xl text-xs flex justify-between items-center text-amber-900 font-bold">
-              <span>🛡️ Admin Rejimi: Bosh sahifani boshqarish</span>
-              <button onclick="openAddProductModal()" class="bg-amber-600 text-white px-2.5 py-1 rounded-lg">+ Tovar</button>
+              <span>🛡️ Admin Rejimi: Bosh sahifa boshqaruvi</span>
+              <button onclick="openAddProductModal()" class="bg-amber-600 text-white px-3 py-1.5 rounded-xl">+ Tovar Qo'shish</button>
             </div>
           ` : ''}
 
-          <!-- PRODUCTS GRID -->
           <div id="products-grid" class="grid grid-cols-2 gap-3"></div>
         </div>
       `;
@@ -284,9 +290,10 @@
       lucide.createIcons();
     }
 
-    // REUSABLE PRODUCT CARD
+    // REUSABLE PRODUCT CARD (WITH DISCOUNT DISPLAY)
     function renderProductCardHTML(p, idx, totalLen) {
       const inCart = cart[p.id];
+      const hasDiscount = p.oldPrice && p.oldPrice > p.price;
 
       return `
         <div onclick="openProductDetailModal('${p.id}')" class="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex flex-col justify-between relative cursor-pointer hover:shadow-md transition-all">
@@ -294,10 +301,22 @@
             <div class="relative">
               <img src="${p.img || 'https://via.placeholder.com/150'}" class="w-full h-28 object-cover rounded-xl mb-2">
               ${p.isFeatured ? `<span class="absolute top-1 left-1 bg-amber-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md">Bosh sahifa</span>` : ''}
+              ${hasDiscount ? `<span class="absolute top-1 right-1 bg-red-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md">CHEGIRMA</span>` : ''}
             </div>
             <span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${p.sku}</span>
             <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${p.name}</h4>
-            <p class="text-xs text-blue-600 font-black mt-1">${p.price.toLocaleString()} so'm</p>
+            
+            <!-- DISCOUNT PRICE DISPLAY -->
+            <div class="mt-1">
+              ${hasDiscount ? `
+                <div class="flex items-center space-x-1">
+                  <span class="text-[10px] text-gray-400 line-through font-bold">${Number(p.oldPrice).toLocaleString()}</span>
+                  <span class="text-xs text-red-600 font-black">${Number(p.price).toLocaleString()} so'm</span>
+                </div>
+              ` : `
+                <p class="text-xs text-blue-600 font-black">${Number(p.price).toLocaleString()} so'm</p>
+              `}
+            </div>
           </div>
 
           <!-- ADMIN CONTROLS ON CARD -->
@@ -307,46 +326,44 @@
                 <button onclick="moveProductSort('${p.id}', -1)" ${idx === 0 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬆️</button>
                 <button onclick="moveProductSort('${p.id}', 1)" ${idx === totalLen - 1 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬇️</button>
                 <button onclick="toggleProductFeatured('${p.id}')" class="px-1.5 py-0.5 ${p.isFeatured ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'} rounded font-bold">📌</button>
-                <button onclick="openEditProductModal('${p.id}')" class="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded font-bold">✏️</button>
+                <button onclick="openGranularEditProductModal('${p.id}')" class="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded font-bold">✏️</button>
                 <button onclick="deleteProduct('${p.id}')" class="px-1.5 py-0.5 bg-red-100 text-red-600 rounded font-bold">🗑️</button>
               </div>
             </div>
-          ` : ''}
-
-          <!-- USER CART BUTTON / QUANTITY CONTROL -->
-          <div class="mt-2" onclick="event.stopPropagation()">
-            ${p.stock > 0 ? (
-              inCart ? `
-                <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl p-1">
-                  <button onclick="changeCartQty('${p.id}', -1, event)" class="w-6 h-6 bg-white font-bold rounded-lg shadow text-xs text-blue-600">-</button>
-                  <span class="font-bold text-xs text-blue-800">${inCart.qty}</span>
-                  <button onclick="changeCartQty('${p.id}', 1, event)" class="w-6 h-6 bg-blue-600 font-bold rounded-lg text-xs text-white">+</button>
-                </div>
-              ` : `
-                <button onclick="addToCart('${p.id}', event)" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1">
-                  <i data-lucide="plus" class="w-3.5 h-3.5"></i> <span>Savatga</span>
-                </button>
-              `
-            ) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-2 rounded-xl text-xs">❌ Tugagan</button>`}
-          </div>
+          ` : `
+            <!-- USER CART CONTROLS (ADMINDA KO'RINMAYDI) -->
+            <div class="mt-2" onclick="event.stopPropagation()">
+              ${p.stock > 0 ? (
+                inCart ? `
+                  <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl p-1">
+                    <button onclick="changeCartQty('${p.id}', -1, event)" class="w-6 h-6 bg-white font-bold rounded-lg shadow text-xs text-blue-600">-</button>
+                    <span class="font-bold text-xs text-blue-800">${inCart.qty}</span>
+                    <button onclick="changeCartQty('${p.id}', 1, event)" class="w-6 h-6 bg-blue-600 font-bold rounded-lg text-xs text-white">+</button>
+                  </div>
+                ` : `
+                  <button onclick="addToCart('${p.id}', event)" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1">
+                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> <span>Savatga</span>
+                  </button>
+                `
+              ) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-2 rounded-xl text-xs">❌ Tugagan</button>`}
+            </div>
+          `}
         </div>
       `;
     }
 
-    // 2. KATALOGLAR BO'LIMI (CATEGORIES TAB WITH DRILL-DOWN & PAGINATION)
+    // 2. CATEGORIES TAB
     function renderCategories(container) {
       const currentCat = categories.find(c => c.id === adminCatParentId);
       const subCats = categories.filter(c => c.parentId === adminCatParentId);
       const catProds = products.filter(p => p.categoryId === adminCatParentId && p.status !== 'DELETED');
 
-      // PAGINATION FOR PRODUCTS (10 items per page)
       const totalPages = Math.ceil(catProds.length / 10) || 1;
       if (categoryPage > totalPages) categoryPage = 1;
       const paginatedProds = catProds.slice((categoryPage - 1) * 10, categoryPage * 10);
 
       container.innerHTML = `
         <div class="space-y-4">
-          <!-- BREADCRUMBS & BACK BUTTONS -->
           <div class="bg-white p-3 rounded-2xl border space-y-2 shadow-sm">
             <div class="flex items-center justify-between text-xs">
               <span class="font-bold text-gray-700">📍 katalog: <b class="text-blue-600">${currentCat ? currentCat.name : 'Bosh Kataloglar'}</b></span>
@@ -358,7 +375,6 @@
               ` : ''}
             </div>
 
-            <!-- ADMIN ACTION BUTTONS INSIDE CATEGORY -->
             ${isAdminMode ? `
               <div class="flex space-x-2 pt-1 border-t">
                 <button onclick="openAddCatModal()" class="flex-1 bg-blue-600 text-white font-bold py-1.5 rounded-xl text-xs">➕ Katalog qo'shish</button>
@@ -367,12 +383,15 @@
             ` : ''}
           </div>
 
-          <!-- SUBCATEGORIES LIST -->
+          <!-- SUBCATEGORIES LIST WITH EDIT BUTTON -->
           <div class="space-y-2">
             ${subCats.map(sub => `
               <div onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="bg-white p-3.5 rounded-2xl border flex items-center justify-between shadow-sm cursor-pointer hover:bg-gray-50">
                 <div class="flex items-center space-x-3">
-                  <span class="text-xl">${sub.img || '📁'}</span>
+                  ${sub.img && (sub.img.startsWith('http') || sub.img.startsWith('data:')) ? 
+                    `<img src="${sub.img}" class="w-8 h-8 object-cover rounded-lg">` : 
+                    `<span class="text-xl">${sub.img || '📁'}</span>`
+                  }
                   <div>
                     <h5 class="font-bold text-sm text-gray-800">${sub.name}</h5>
                     <p class="text-[10px] text-gray-400">${categories.filter(c => c.parentId === sub.id).length} katalog | ${products.filter(p => p.categoryId === sub.id && p.status !== 'DELETED').length} tovar</p>
@@ -380,7 +399,8 @@
                 </div>
                 <div class="flex items-center space-x-2">
                   ${isAdminMode ? `
-                    <button onclick="deleteCategory('${sub.id}', event)" class="p-1 bg-red-100 text-red-600 rounded text-xs">🗑️</button>
+                    <button onclick="openGranularEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
+                    <button onclick="deleteCategory('${sub.id}', event)" class="p-1 bg-red-100 text-red-600 rounded text-xs font-bold">🗑️</button>
                   ` : ''}
                   <i data-lucide="chevron-right" class="w-5 h-5 text-gray-400"></i>
                 </div>
@@ -388,14 +408,13 @@
             `).join('')}
           </div>
 
-          <!-- PRODUCTS LIST IN CATEGORY -->
+          <!-- PRODUCTS LIST -->
           <div class="space-y-2 pt-2">
             <h4 class="font-bold text-xs text-gray-500 uppercase px-1">📦 Tovarlar (${catProds.length})</h4>
             <div class="grid grid-cols-2 gap-3">
               ${paginatedProds.map((p, idx) => renderProductCardHTML(p, idx, paginatedProds.length)).join('')}
             </div>
 
-            <!-- PAGINATION CONTROLS -->
             ${totalPages > 1 ? `
               <div class="flex justify-center items-center space-x-2 pt-4">
                 ${Array.from({ length: totalPages }, (_, i) => i + 1).map(pNum => `
@@ -418,10 +437,9 @@
       render();
     }
 
-    // 3. SAVAT BO'LIMI (USER CHECKOUT & ADMIN ACTIVE CARTS VIEW)
+    // 3. CART TAB
     function renderCart(container) {
       if (isAdminMode) {
-        // ADMIN SAVAT BO'LIMI (JONLI MONITORING)
         container.innerHTML = `
           <div class="space-y-4">
             <h2 class="text-lg font-bold text-amber-900">🛒 Savatchalar Monitoringi (Admin)</h2>
@@ -445,7 +463,6 @@
         return;
       }
 
-      // USER SAVAT BO'LIMI
       const items = Object.entries(cart).map(([id, itemData]) => {
         const p = products.find(prod => prod.id === id);
         return p ? { ...p, qty: itemData.qty } : null;
@@ -483,7 +500,6 @@
             `).join('')}
           </div>
 
-          <!-- CHECKOUT FORM -->
           <div class="bg-white rounded-2xl p-4 shadow-sm space-y-3">
             <h3 class="font-bold text-sm border-b pb-2">📍 Buyurtmani Rasmiylashtirish</h3>
             
@@ -624,7 +640,7 @@
       localStorage.setItem('orders', JSON.stringify(orders));
 
       // TELEGRAM BOT NOTIFICATION
-      let msg = `🛍 <b>YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
+      let msg = `🛍 <b>FITCORE - YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
       msg += `👤 <b>Mijoz:</b> ${fullname}\n📞 <b>Tel:</b> ${phone}\n📍 <b>Hudud:</b> ${region} (${district})\n🏠 <b>Manzil:</b> ${address}\n💳 <b>To'lov:</b> ${selectedPayMethod}\n\n📦 <b>Tarkib:</b>\n`;
       orderItems.forEach(i => msg += `• ${i.name} (x${i.qty}) = ${(i.price * i.qty).toLocaleString()} so'm\n`);
       msg += `\n💰 <b>Jami:</b> ${totalPrice.toLocaleString()} so'm`;
@@ -646,10 +662,10 @@
       selectedProductModal = null;
       document.getElementById('modal-container').innerHTML = `
         <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div class="bg-white rounded-3xl p-6 text-center max-w-sm w-full space-y-4 shadow-2xl animate-bounce-short">
+          <div class="bg-white rounded-3xl p-6 text-center max-w-sm w-full space-y-4 shadow-2xl">
             <div class="text-5xl">🎉</div>
             <h3 class="text-xl font-black text-gray-900">Buyurtmangiz Qabul Qilindi!</h3>
-            <p class="text-xs text-gray-500">Buyurtma ID: <b class="text-blue-600">#${orderId}</b>. Tez orada xodimlarimiz siz bilan bog'lanishadi.</p>
+            <p class="text-xs text-gray-500">Buyurtma ID: <b class="text-blue-600">#${orderId}</b>. FITCORE mutaxassislari tez orada siz bilan bog'lanishadi.</p>
             <button onclick="document.getElementById('modal-container').innerHTML=''; switchTab('orders');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-xl text-xs">
               📦 Buyurtmalarda ko'rish
             </button>
@@ -658,10 +674,9 @@
       `;
     }
 
-    // 4. BUYURTMALAR BO'LIMI (USER & ADMIN MULTI-FILTER + PAGINATION)
+    // 4. ORDERS TAB
     function renderOrders(container) {
       if (isAdminMode) {
-        // ADMIN ORDERS VIEW
         let filteredOrders = orders.filter(o => {
           const matchStatus = adminOrderFilters.statuses.includes(o.status);
           const matchRegion = adminOrderFilters.region === 'ALL' || o.region === adminOrderFilters.region;
@@ -678,7 +693,6 @@
           <div class="space-y-4">
             <h2 class="text-lg font-bold text-amber-900">🛍 Barcha Buyurtmalar (Admin)</h2>
 
-            <!-- MULTI-FILTERS BAR -->
             <div class="bg-white p-3 rounded-2xl border space-y-2 text-xs">
               <input type="text" id="adm-ord-search" oninput="adminOrderFilters.search = this.value; render();" placeholder="Mijoz ismi yoki tel raqami..." value="${adminOrderFilters.search}" class="w-full p-2 border rounded-xl">
               
@@ -705,7 +719,6 @@
               </div>
             </div>
 
-            <!-- ORDERS LIST -->
             <div class="space-y-2">
               ${paginatedOrders.length === 0 ? '<p class="text-xs text-gray-400 bg-white p-4 rounded-xl text-center">Buyurtmalar topilmadi</p>' : ''}
               ${paginatedOrders.map(o => `
@@ -723,7 +736,6 @@
               `).join('')}
             </div>
 
-            <!-- PAGINATION -->
             ${totalPages > 1 ? `
               <div class="flex justify-center space-x-2 pt-2">
                 ${Array.from({ length: totalPages }, (_, i) => i + 1).map(pNum => `
@@ -736,7 +748,6 @@
         return;
       }
 
-      // USER ORDERS VIEW
       container.innerHTML = `
         <div class="space-y-3">
           <h2 class="text-lg font-bold">📦 Buyurtmalarim</h2>
@@ -770,7 +781,7 @@
       render();
     }
 
-    // 5. OMBOR BO'LIMI (HIERARCHICAL TREE VIEW)
+    // 5. WAREHOUSE TAB
     function renderWarehouse(container) {
       const topCats = categories.filter(c => !c.parentId);
 
@@ -782,7 +793,6 @@
             ${topCats.map(parent => renderCategoryTreeNodeHTML(parent, 0)).join('')}
           </div>
 
-          <!-- BULK STOCK UPDATE -->
           <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
             <h3 class="font-bold text-sm text-gray-800">⚡ ID orqali ko'p tovar qoldig'ini yangilash</h3>
             <p class="text-[10px] text-gray-500">SKU va sonini kiriting (Masalan: <b>SP-00001 35</b>)</p>
@@ -814,8 +824,10 @@
       `;
     }
 
-    // 6. PROFIL BO'LIMI
+    // 6. PROFIL BO'LIMI (SUPER ADMIN & ADMIN MANAGEMENT)
     function renderProfile(container) {
+      const isSuperAdmin = userTgId === String(CONFIG.ADMIN_ID);
+
       container.innerHTML = `
         <div class="space-y-4">
           <div class="bg-white p-5 rounded-2xl shadow-sm flex items-center space-x-4 border">
@@ -824,20 +836,63 @@
             </div>
             <div>
               <h2 class="text-lg font-bold">${currentUser.firstName} ${currentUser.lastName}</h2>
-              <p class="text-xs text-gray-500">Tel: ${currentUser.phone}</p>
+              <p class="text-xs text-gray-500">TG ID: ${currentUser.tgId}</p>
               <span class="inline-block mt-1 px-2 py-0.5 text-[10px] font-bold rounded ${isAdminMode ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}">
                 ${isAdminMode ? '🛡️ ADMIN REJIMI' : '👤 USER REJIMI'}
               </span>
             </div>
           </div>
 
-          <!-- ROLE TOGGLE BUTTON -->
-          <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-800 to-slate-900'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-lg">
-            <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
-            <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-          </button>
+          ${isUserAnAdmin ? `
+            <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-800 to-slate-900'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-lg">
+              <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
+              <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+            </button>
+          ` : ''}
+
+          <!-- BOSH ADMINLAR BO'LIMI (ADMIN QO'SHISH VA O'CHIRISH) -->
+          ${isSuperAdmin ? `
+            <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
+              <div class="flex justify-between items-center border-b pb-2">
+                <h3 class="font-bold text-xs text-amber-900">👑 Adminlarni Boshqarish (Bosh Admin)</h3>
+                <button onclick="addNewAdmin()" class="bg-amber-600 text-white font-bold px-2.5 py-1 rounded-xl text-[10px]">+ Admin Qo'shish</button>
+              </div>
+
+              <div class="space-y-1 text-xs">
+                ${adminsList.map(admId => `
+                  <div class="flex justify-between items-center p-2 bg-gray-50 rounded-xl border">
+                    <span class="font-mono text-gray-700">ID: ${admId} ${admId === String(CONFIG.ADMIN_ID) ? '<b>(Bosh Admin)</b>' : ''}</span>
+                    ${admId !== String(CONFIG.ADMIN_ID) ? `
+                      <button onclick="removeAdmin('${admId}')" class="text-red-600 font-bold px-2 py-0.5 bg-red-50 rounded-lg">🗑️</button>
+                    ` : ''}
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
         </div>
       `;
+    }
+
+    function addNewAdmin() {
+      const newId = prompt("Yangi Adminning Telegram ID raqamini kiriting:");
+      if (!newId || isNaN(newId)) return alert("Noto'g'ri ID raqam!");
+      
+      const cleanId = String(newId).trim();
+      if (adminsList.includes(cleanId)) return alert("Ushbu ID allaqachon admin!");
+
+      adminsList.push(cleanId);
+      localStorage.setItem('adminsList', JSON.stringify(adminsList));
+      alert("✅ Yangi Admin biriktirildi!");
+      render();
+    }
+
+    function removeAdmin(admId) {
+      if (!confirm("Ushbu admin huquqini bekor qilmoqchimisiz?")) return;
+      adminsList = adminsList.filter(a => a !== admId);
+      localStorage.setItem('adminsList', JSON.stringify(adminsList));
+      alert("✅ Admin o'chirildi!");
+      render();
     }
 
     // MODAL DIALOGS ENGINE
@@ -847,6 +902,7 @@
       if (selectedProductModal) {
         const p = selectedProductModal;
         const inCart = cart[p.id];
+        const hasDiscount = p.oldPrice && p.oldPrice > p.price;
 
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -861,10 +917,19 @@
               <div>
                 <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">${p.sku}</span>
                 <h2 class="text-lg font-black text-gray-900 mt-1">${p.name}</h2>
-                <p class="text-base font-black text-blue-600 mt-1">${p.price.toLocaleString()} so'm</p>
+                
+                <div class="mt-1">
+                  ${hasDiscount ? `
+                    <div class="flex items-center space-x-2">
+                      <span class="text-xs text-gray-400 line-through font-bold">${Number(p.oldPrice).toLocaleString()} so'm</span>
+                      <span class="text-base text-red-600 font-black">${Number(p.price).toLocaleString()} so'm</span>
+                    </div>
+                  ` : `
+                    <p class="text-base font-black text-blue-600">${Number(p.price).toLocaleString()} so'm</p>
+                  `}
+                </div>
               </div>
 
-              <!-- TAVSIF / IZOH -->
               <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1">
                 <h4 class="font-bold text-gray-700">📝 Tavsif / Izoh:</h4>
                 <p class="text-gray-600 leading-relaxed">${p.desc || 'Tavsif kiritilmagan.'}</p>
@@ -872,24 +937,24 @@
 
               ${isAdminMode ? `
                 <div class="flex space-x-2 border-t pt-2">
-                  <button onclick="selectedProductModal=null; openEditProductModal('${p.id}');" class="flex-1 bg-blue-600 text-white font-bold py-2 rounded-xl text-xs">✏️ Tahrirlash</button>
-                  <button onclick="selectedProductModal=null; deleteProduct('${p.id}');" class="flex-1 bg-red-600 text-white font-bold py-2 rounded-xl text-xs">🗑️ O'chirish</button>
+                  <button onclick="selectedProductModal=null; openGranularEditProductModal('${p.id}');" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs">✏️ Tahrirlash</button>
+                  <button onclick="selectedProductModal=null; deleteProduct('${p.id}');" class="flex-1 bg-red-600 text-white font-bold py-2.5 rounded-xl text-xs">🗑️ O'chirish</button>
                 </div>
-              ` : ''}
-
-              <div>
-                ${p.stock > 0 ? (
-                  inCart ? `
-                    <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-2xl p-2">
-                      <button onclick="changeCartQty('${p.id}', -1, event); openProductDetailModal('${p.id}');" class="w-10 h-10 bg-white font-bold rounded-xl shadow text-base text-blue-600">-</button>
-                      <span class="font-bold text-base text-blue-800">${inCart.qty} ta savatda</span>
-                      <button onclick="changeCartQty('${p.id}', 1, event); openProductDetailModal('${p.id}');" class="w-10 h-10 bg-blue-600 font-bold rounded-xl text-base text-white">+</button>
-                    </div>
-                  ` : `
-                    <button onclick="addToCart('${p.id}', event); openProductDetailModal('${p.id}');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm">🛒 Savatga qo'shish</button>
-                  `
-                ) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-2xl text-sm">❌ Mahsulot tugagan</button>`}
-              </div>
+              ` : `
+                <div>
+                  ${p.stock > 0 ? (
+                    inCart ? `
+                      <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-2xl p-2">
+                        <button onclick="changeCartQty('${p.id}', -1, event); openProductDetailModal('${p.id}');" class="w-10 h-10 bg-white font-bold rounded-xl shadow text-base text-blue-600">-</button>
+                        <span class="font-bold text-base text-blue-800">${inCart.qty} ta savatda</span>
+                        <button onclick="changeCartQty('${p.id}', 1, event); openProductDetailModal('${p.id}');" class="w-10 h-10 bg-blue-600 font-bold rounded-xl text-base text-white">+</button>
+                      </div>
+                    ` : `
+                      <button onclick="addToCart('${p.id}', event); openProductDetailModal('${p.id}');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm">🛒 Savatga qo'shish</button>
+                    `
+                  ) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-2xl text-sm">❌ Mahsulot tugagan</button>`}
+                </div>
+              `}
             </div>
           </div>
         `;
@@ -945,7 +1010,6 @@
       container.innerHTML = '';
     }
 
-    // MODAL TRIGGER HELPERS
     function openProductDetailModal(id) {
       selectedProductModal = products.find(p => p.id === id);
       renderModalContainer();
@@ -964,7 +1028,80 @@
       render();
     }
 
-    // PRODUCT EDIT / MOVE / FEATURED HELPERS
+    // GRANULAR EDIT PRODUCT MODAL (PARCHALAB TAHRIRLASH)
+    function openGranularEditProductModal(id) {
+      const p = products.find(prod => prod.id === id);
+      if (!p) return;
+
+      const choice = prompt(
+        `Qaysi qismini tahrirlaysiz?\n\n1 - Nomini\n2 - Narxini va Chegirmasini\n3 - Rasmini (URL)\n4 - Ombor Qoldig'ini\n5 - Izohini/Tavsifini\n6 - Katalogini\n\n(1-6 raqamini kiriting):`
+      );
+
+      if (choice === '1') {
+        const name = prompt("Yangi nomi:", p.name);
+        if (name) p.name = name;
+      } else if (choice === '2') {
+        const price = parseFloat(prompt("Yangi Asosiy Narxi (so'm):", p.price));
+        const oldPriceInput = prompt("Chegirmadan avvalgi narx (Bo'sh qoldirish mumkin, lekin kiritilsa asosiy narxdan katta bo'lishi shart):", p.oldPrice || '');
+        
+        if (!isNaN(price)) {
+          p.price = price;
+          if (oldPriceInput && oldPriceInput.trim() !== '') {
+            const oldPriceVal = parseFloat(oldPriceInput);
+            if (!isNaN(oldPriceVal) && oldPriceVal > price) {
+              p.oldPrice = oldPriceVal;
+            } else {
+              alert("❌ Xatolik: Chegirmadan avvalgi narx asosiy narxdan KATTA bo'lishi shart! Chegirma saqlanmadi.");
+              p.oldPrice = null;
+            }
+          } else {
+            p.oldPrice = null;
+          }
+        }
+      } else if (choice === '3') {
+        const img = prompt("Yangi Rasm URL havolasi:", p.img);
+        if (img) p.img = img;
+      } else if (choice === '4') {
+        const stock = parseInt(prompt("Yangi Ombor Qoldig'i:", p.stock), 10);
+        if (!isNaN(stock)) {
+          p.stock = stock;
+          p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
+        }
+      } else if (choice === '5') {
+        const desc = prompt("Yangi Izohi / Tavsifi:", p.desc || p.name);
+        if (desc) p.desc = desc;
+      } else if (choice === '6') {
+        const catListStr = categories.map(c => `${c.id}: ${c.name}`).join('\n');
+        const catId = prompt(`Yangi Katalog ID raqamini kiriting:\n\n${catListStr}`, p.categoryId);
+        if (catId && categories.some(c => c.id === catId)) {
+          p.categoryId = catId;
+        }
+      }
+
+      localStorage.setItem('products', JSON.stringify(products));
+      render();
+    }
+
+    // GRANULAR EDIT CATEGORY MODAL
+    function openGranularEditCategoryModal(id, e) {
+      if (e) e.stopPropagation();
+      const c = categories.find(cat => cat.id === id);
+      if (!c) return;
+
+      const choice = prompt(`Qaysi qismini tahrirlaysiz?\n\n1 - Nomini\n2 - Rasmini / Emojisini\n\n(1 yoki 2 raqamini kiriting):`);
+      
+      if (choice === '1') {
+        const name = prompt("Yangi katalog nomi:", c.name);
+        if (name) c.name = name;
+      } else if (choice === '2') {
+        const img = prompt("Yangi Rasm URL havolasi yoki Emojisi:", c.img || '📁');
+        if (img) c.img = img;
+      }
+
+      localStorage.setItem('categories', JSON.stringify(categories));
+      render();
+    }
+
     function moveProductSort(id, dir) {
       const idx = products.findIndex(p => p.id === id);
       if (idx < 0) return;
@@ -990,41 +1127,35 @@
     function openAddProductModal() {
       const name = prompt("Mahsulot nomi:");
       if (!name) return;
-      const price = parseFloat(prompt("Narxi (so'm):")) || 0;
+      const price = parseFloat(prompt("Asosiy sotuv narxi (so'm):")) || 0;
+      const oldPriceInput = prompt("Chegirmadan avvalgi narxi (Ixtiyoriy, kiritilsa asosiy narxdan katta bo'lishi shart):");
+      
+      let oldPrice = null;
+      if (oldPriceInput && oldPriceInput.trim() !== '') {
+        const parsedOld = parseFloat(oldPriceInput);
+        if (!isNaN(parsedOld) && parsedOld > price) {
+          oldPrice = parsedOld;
+        } else {
+          alert("⚠️ Ogohlantirish: Chegirmadan avvalgi narx asosiy narxdan katta bo'lmagani uchun inobatga olinmadi.");
+        }
+      }
+
       const stock = parseInt(prompt("Ombor qoldig'i (soni):"), 10) || 0;
       const desc = prompt("Izoh / Tavsifi:") || name;
+      const img = prompt("Rasm URL havolasi (Ixtiyoriy):") || "https://via.placeholder.com/150";
 
       const newP = {
         id: "p" + Date.now(),
         sku: "SP-" + Math.floor(10000 + Math.random() * 90000),
-        name, price, stock, desc,
+        name, price, oldPrice, stock, desc, img,
         categoryId: adminCatParentId,
         status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
-        img: "https://via.placeholder.com/150",
         isFeatured: true, sortOrder: products.length + 1
       };
 
       products.push(newP);
       localStorage.setItem('products', JSON.stringify(products));
       alert("✅ Yangi tovar qo'shildi va Omborda aks etdi!");
-      render();
-    }
-
-    function openEditProductModal(id) {
-      const p = products.find(prod => prod.id === id);
-      if (!p) return;
-
-      const name = prompt("Mahsulot nomi:", p.name);
-      if (!name) return;
-      const price = parseFloat(prompt("Narxi (so'm):", p.price)) || p.price;
-      const stock = parseInt(prompt("Ombor qoldig'i (soni):", p.stock), 10);
-      const desc = prompt("Izoh / Tavsifi:", p.desc || p.name);
-
-      p.name = name; p.price = price; p.stock = stock; p.desc = desc;
-      p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
-
-      localStorage.setItem('products', JSON.stringify(products));
-      alert("✅ Mahsulot tahrirlandi!");
       render();
     }
 
@@ -1039,12 +1170,12 @@
     function openAddCatModal() {
       const name = prompt("Yangi katalog nomi:");
       if (!name) return;
+      const img = prompt("Katalog rasmi (URL yoki Emoji):") || (adminCatParentId ? "📦" : "📁");
 
       categories.push({
         id: "c" + Date.now(),
-        name,
-        parentId: adminCatParentId,
-        img: adminCatParentId ? "📦" : "📁"
+        name, img,
+        parentId: adminCatParentId
       });
 
       localStorage.setItem('categories', JSON.stringify(categories));
@@ -1091,4 +1222,4 @@
     switchTab('home');
   </script>
 </body>
-  </html>
+</html>
