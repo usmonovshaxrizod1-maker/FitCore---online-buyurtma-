@@ -10,7 +10,7 @@
 </head>
 <body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
-  <!-- HEADER (SINGLE FITCORE LOGO) -->
+  <!-- HEADER -->
   <header class="bg-white sticky top-0 z-40 border-b px-4 py-3 flex items-center justify-between shadow-sm">
     <div class="flex items-center space-x-2">
       <span class="bg-slate-900 text-white font-black px-3 py-1 rounded-xl text-sm tracking-widest border border-amber-400">FITCORE <span id="role-tag" class="text-amber-400 text-[10px]">PRO</span></span>
@@ -28,7 +28,7 @@
 
   <!-- MAIN CONTAINER -->
   <main id="app-content" class="p-4 max-w-md mx-auto min-h-screen">
-    <!-- Dynamic Content -->
+    <!-- Content renders here -->
   </main>
 
   <!-- BOTTOM NAVIGATION -->
@@ -113,23 +113,26 @@
     let orders = JSON.parse(localStorage.getItem('orders'));
     let cartLogs = JSON.parse(localStorage.getItem('cartLogs'));
 
-    // ALWAYS ENSURE CONFIG.ADMIN_ID IS IN ADMINS LIST
     if (!adminsList.includes(String(CONFIG.ADMIN_ID))) {
       adminsList.push(String(CONFIG.ADMIN_ID));
       localStorage.setItem('adminsList', JSON.stringify(adminsList));
     }
 
     const currentTgId = String(tg?.initDataUnsafe?.user?.id || CONFIG.ADMIN_ID);
-    const isUserAnAdmin = adminsList.includes(currentTgId) || currentTgId === String(CONFIG.ADMIN_ID) || true; // Always allow admin toggle for test/owner
+    const isUserAnAdmin = adminsList.includes(currentTgId) || currentTgId === String(CONFIG.ADMIN_ID) || true;
 
     let currentTab = 'home';
-    let isAdminMode = isUserAnAdmin; // ADMINLAR UCHUN AVTOMATIK ADMIN REJIMI
+    let isAdminMode = isUserAnAdmin;
     let adminCatParentId = null;
     let categoryPage = 1;
     let ordersPage = 1;
-    let userOrderFilter = 'ALL'; // 'ALL' | 'NEW' | 'PROCESSING' | 'DELIVERED' | 'CANCELLED'
+    let userOrderFilter = 'ALL';
     let selectedProductModal = null;
     let selectedOrderModal = null;
+    let activePopupModal = null; // 'ADD_PROD' | 'ADD_CAT' | 'EDIT_PROD_FIELD' | 'EDIT_CAT_FIELD' | 'ADD_ADMIN'
+    let editingFieldData = null;
+
+    let tempBase64Image = null;
 
     let adminOrderFilters = {
       statuses: ['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'],
@@ -222,6 +225,22 @@
       } else {
         badge.classList.add('hidden');
       }
+    }
+
+    // IMAGE FILE UPLOAD HELPER
+    function onImagePicked(event, previewId) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        tempBase64Image = e.target.result;
+        const prev = document.getElementById(previewId);
+        if (prev) {
+          prev.src = tempBase64Image;
+          prev.classList.remove('hidden');
+        }
+      };
+      reader.readAsDataURL(file);
     }
 
     // RENDER ROUTER
@@ -327,12 +346,12 @@
                 <button onclick="moveProductSort('${p.id}', -1)" ${idx === 0 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬆️</button>
                 <button onclick="moveProductSort('${p.id}', 1)" ${idx === totalLen - 1 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬇️</button>
                 <button onclick="toggleProductFeatured('${p.id}')" class="px-1.5 py-0.5 ${p.isFeatured ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'} rounded font-bold">📌</button>
-                <button onclick="openGranularEditProductModal('${p.id}')" class="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded font-bold">✏️</button>
+                <button onclick="openProductDetailModal('${p.id}')" class="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded font-bold">✏️</button>
                 <button onclick="deleteProduct('${p.id}')" class="px-1.5 py-0.5 bg-red-100 text-red-600 rounded font-bold">🗑️</button>
               </div>
             </div>
           ` : `
-            <!-- USER CART CONTROLS (ADMINDA KO'RINMAYDI) -->
+            <!-- USER CART CONTROLS -->
             <div class="mt-2" onclick="event.stopPropagation()">
               ${p.stock > 0 ? (
                 inCart ? `
@@ -640,7 +659,7 @@
       orders.unshift(newOrder);
       localStorage.setItem('orders', JSON.stringify(orders));
 
-      // TELEGRAM BOT NOTIFICATION
+      // TELEGRAM NOTIFICATION
       let msg = `🛍 <b>FITCORE - YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
       msg += `👤 <b>Mijoz:</b> ${fullname}\n📞 <b>Tel:</b> ${phone}\n📍 <b>Hudud:</b> ${region} (${district})\n🏠 <b>Manzil:</b> ${address}\n💳 <b>To'lov:</b> ${selectedPayMethod}\n\n📦 <b>Tarkib:</b>\n`;
       orderItems.forEach(i => msg += `• ${i.name} (x${i.qty}) = ${(i.price * i.qty).toLocaleString()} so'm\n`);
@@ -750,14 +769,13 @@
         return;
       }
 
-      // USER ORDERS VIEW (WITH STATUS FILTERS & CANCEL BUTTON)
+      // USER ORDERS VIEW
       let userOrders = orders.filter(o => userOrderFilter === 'ALL' || o.status === userOrderFilter);
 
       container.innerHTML = `
         <div class="space-y-3">
           <h2 class="text-lg font-bold">📦 Buyurtmalarim</h2>
 
-          <!-- USER ORDER FILTERS -->
           <div class="flex space-x-1 overflow-x-auto pb-1 text-xs">
             <button onclick="userOrderFilter='ALL'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='ALL'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Barchasi</button>
             <button onclick="userOrderFilter='NEW'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='NEW'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Yangi</button>
@@ -883,7 +901,9 @@
             <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
               <div class="flex justify-between items-center border-b pb-2">
                 <h3 class="font-bold text-xs text-amber-900">👑 Adminlarni Boshqarish (Bosh Admin)</h3>
-                <button onclick="addNewAdmin()" class="bg-amber-600 text-white font-bold px-2.5 py-1 rounded-xl text-[10px]">+ Admin Qo'shish</button>
+                <button onclick="activePopupModal='ADD_ADMIN'; render();" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs flex items-center space-x-1 shadow-sm">
+                  <span>➕ Yangi Admin Qo'shish</span>
+                </button>
               </div>
 
               <div class="space-y-1 text-xs">
@@ -902,19 +922,6 @@
       `;
     }
 
-    function addNewAdmin() {
-      const newId = prompt("Yangi Adminning Telegram ID raqamini kiriting:");
-      if (!newId || isNaN(newId)) return alert("Noto'g'ri ID raqam!");
-      
-      const cleanId = String(newId).trim();
-      if (adminsList.includes(cleanId)) return alert("Ushbu ID allaqachon admin!");
-
-      adminsList.push(cleanId);
-      localStorage.setItem('adminsList', JSON.stringify(adminsList));
-      alert("✅ Yangi Admin biriktirildi!");
-      render();
-    }
-
     function removeAdmin(admId) {
       if (!confirm("Ushbu admin huquqini bekor qilmoqchimisiz?")) return;
       adminsList = adminsList.filter(a => a !== admId);
@@ -923,10 +930,161 @@
       render();
     }
 
-    // MODALS ENGINE
+    // MODAL DIALOGS ENGINE
     function renderModalContainer() {
       const container = document.getElementById('modal-container');
-      
+
+      // POPUP MODALS (ADD_PROD, ADD_CAT, ADD_ADMIN, EDIT_FIELD)
+      if (activePopupModal === 'ADD_PROD') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">➕ Yangi Tovar Qo'shish</h3>
+              
+              <div>
+                <label class="font-bold text-gray-600">Tovar Nomi *</label>
+                <input type="text" id="m-prod-name" placeholder="Masalan: Whey Protein" class="w-full mt-1 p-2 border rounded-xl">
+              </div>
+
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="font-bold text-gray-600">Sotuv Narxi *</label>
+                  <input type="number" id="m-prod-price" placeholder="400000" class="w-full mt-1 p-2 border rounded-xl">
+                </div>
+                <div>
+                  <label class="font-bold text-gray-600">Eski Narxi (Chegirma)</label>
+                  <input type="number" id="m-prod-oldprice" placeholder="480000" class="w-full mt-1 p-2 border rounded-xl">
+                </div>
+              </div>
+
+              <div>
+                <label class="font-bold text-gray-600">Ombor Qoldig'i (Soni) *</label>
+                <input type="number" id="m-prod-stock" placeholder="15" class="w-full mt-1 p-2 border rounded-xl">
+              </div>
+
+              <div>
+                <label class="font-bold text-gray-600">Izoh / Tavsif</label>
+                <textarea id="m-prod-desc" rows="2" placeholder="Tovar haqida ma'lumot" class="w-full mt-1 p-2 border rounded-xl"></textarea>
+              </div>
+
+              <div>
+                <label class="font-bold text-gray-600">Tovar Rasmi (Xotiradan yuklash)</label>
+                <input type="file" accept="image/*" onchange="onImagePicked(event, 'm-prod-prev')" class="w-full mt-1 text-xs">
+                <img id="m-prod-prev" src="" class="w-20 h-20 object-cover rounded-xl mt-2 hidden border">
+              </div>
+
+              <div class="flex space-x-2 pt-2">
+                <button onclick="saveProductFromModal()" class="flex-1 bg-green-600 text-white font-bold py-2.5 rounded-xl">✅ Saqlash va Omborga Kiritish</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">Yopish</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (activePopupModal === 'ADD_CAT') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📂 Yangi Katalog Qo'shish</h3>
+              <div>
+                <label class="font-bold text-gray-600">Katalog Nomi *</label>
+                <input type="text" id="m-cat-name" placeholder="Masalan: Proteinar" class="w-full mt-1 p-2 border rounded-xl">
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">Katalog Rasmi (Xotiradan yuklash):</label>
+                <input type="file" accept="image/*" onchange="onImagePicked(event, 'm-cat-prev')" class="w-full mt-1 text-xs">
+                <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl mt-2 hidden border">
+              </div>
+              <div class="flex space-x-2 pt-2">
+                <button onclick="saveCategoryFromModal()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">Saqlash</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">Yopish</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (activePopupModal === 'ADD_ADMIN') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">👑 Yangi Admin Qo'shish</h3>
+              <div>
+                <label class="font-bold text-gray-600">Telegram ID Raqami *</label>
+                <input type="number" id="m-admin-id" placeholder="Masalan: 123456789" class="w-full mt-1 p-2 border rounded-xl font-mono">
+              </div>
+              <div class="flex space-x-2 pt-2">
+                <button onclick="saveAdminFromModal()" class="flex-1 bg-amber-600 text-white font-bold py-2.5 rounded-xl">Saqlash</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">Yopish</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (activePopupModal === 'EDIT_PROD_FIELD') {
+        const p = selectedProductModal;
+        const field = editingFieldData;
+
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">✏️ Ma'lumotni Tahrirlash</h3>
+
+              ${field === 'name' ? `
+                <label class="font-bold text-gray-600">Yangi Nomi:</label>
+                <input type="text" id="ef-val" value="${p.name}" class="w-full p-2 border rounded-xl">
+              ` : ''}
+
+              ${field === 'price' ? `
+                <div>
+                  <label class="font-bold text-gray-600">Yangi Sotuv Narxi *</label>
+                  <input type="number" id="ef-price" value="${p.price}" class="w-full p-2 border rounded-xl">
+                </div>
+                <div class="mt-2">
+                  <label class="font-bold text-gray-600">Eski Narxi (Chegirma)</label>
+                  <input type="number" id="ef-oldprice" value="${p.oldPrice || ''}" placeholder="Kattaroq narx" class="w-full p-2 border rounded-xl">
+                </div>
+              ` : ''}
+
+              ${field === 'stock' ? `
+                <label class="font-bold text-gray-600">Yangi Ombor Qoldig'i:</label>
+                <input type="number" id="ef-val" value="${p.stock}" class="w-full p-2 border rounded-xl">
+              ` : ''}
+
+              ${field === 'desc' ? `
+                <label class="font-bold text-gray-600">Yangi Izoh / Tavsif:</label>
+                <textarea id="ef-val" rows="3" class="w-full p-2 border rounded-xl">${p.desc || ''}</textarea>
+              ` : ''}
+
+              ${field === 'img' ? `
+                <label class="font-bold text-gray-600">Yangi Rasm (Xotiradan yuklash):</label>
+                <input type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev')" class="w-full mt-1 text-xs">
+                <img id="ef-img-prev" src="${p.img || ''}" class="w-24 h-24 object-cover rounded-xl mt-2 border">
+              ` : ''}
+
+              ${field === 'cat' ? `
+                <label class="font-bold text-gray-600">Yangi Katalog:</label>
+                <select id="ef-val" class="w-full p-2 border rounded-xl bg-gray-50 font-bold">
+                  ${categories.map(c => `<option value="${c.id}" ${p.categoryId===c.id?'selected':''}>${c.name}</option>`).join('')}
+                </select>
+              ` : ''}
+
+              <div class="flex space-x-2 pt-2">
+                <button onclick="saveFieldEdit('${p.id}', '${field}')" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">Saqlash</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">Bekor qilish</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // PRODUCT DETAILS MODAL (WITH RUCHKACHA PENCILS)
       if (selectedProductModal) {
         const p = selectedProductModal;
         const inCart = cart[p.id];
@@ -940,35 +1098,61 @@
                 <button onclick="selectedProductModal=null; switchTab('home');" class="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-xl">🏠 Bosh sahifa</button>
               </div>
 
-              <img src="${p.img || 'https://via.placeholder.com/300'}" class="w-full h-48 object-cover rounded-2xl">
+              <div class="relative">
+                <img src="${p.img || 'https://via.placeholder.com/300'}" class="w-full h-48 object-cover rounded-2xl border">
+                ${isAdminMode ? `
+                  <button onclick="editingFieldData='img'; activePopupModal='EDIT_PROD_FIELD'; tempBase64Image=p.img; render();" class="absolute bottom-2 right-2 bg-blue-600 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-xl flex items-center space-x-1 shadow">
+                    <span>✏️ Rasmni O'zgartirish</span>
+                  </button>
+                ` : ''}
+              </div>
               
-              <div>
-                <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">${p.sku}</span>
-                <h2 class="text-lg font-black text-gray-900 mt-1">${p.name}</h2>
-                
-                <div class="mt-1">
-                  ${hasDiscount ? `
-                    <div class="flex items-center space-x-2">
-                      <span class="text-xs text-gray-400 line-through font-bold">${Number(p.oldPrice).toLocaleString()} so'm</span>
-                      <span class="text-base text-red-600 font-black">${Number(p.price).toLocaleString()} so'm</span>
-                    </div>
-                  ` : `
-                    <p class="text-base font-black text-blue-600">${Number(p.price).toLocaleString()} so'm</p>
-                  `}
+              <div class="space-y-1">
+                <div class="flex justify-between items-center">
+                  <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">${p.sku}</span>
+                  ${isAdminMode ? `<button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">🗑️ O'chirish</button>` : ''}
                 </div>
+
+                <!-- NAME WITH EDIT -->
+                <div class="flex justify-between items-center pt-1">
+                  <h2 class="text-lg font-black text-gray-900">${p.name}</h2>
+                  ${isAdminMode ? `<button onclick="editingFieldData='name'; activePopupModal='EDIT_PROD_FIELD'; render();" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg">✏️</button>` : ''}
+                </div>
+                
+                <!-- PRICE WITH EDIT -->
+                <div class="flex justify-between items-center pt-1">
+                  <div>
+                    ${hasDiscount ? `
+                      <div class="flex items-center space-x-2">
+                        <span class="text-xs text-gray-400 line-through font-bold">${Number(p.oldPrice).toLocaleString()} so'm</span>
+                        <span class="text-base text-red-600 font-black">${Number(p.price).toLocaleString()} so'm</span>
+                      </div>
+                    ` : `
+                      <p class="text-base font-black text-blue-600">${Number(p.price).toLocaleString()} so'm</p>
+                    `}
+                  </div>
+                  ${isAdminMode ? `<button onclick="editingFieldData='price'; activePopupModal='EDIT_PROD_FIELD'; render();" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg">✏️</button>` : ''}
+                </div>
+
+                <!-- STOCK WITH EDIT -->
+                ${isAdminMode ? `
+                  <div class="flex justify-between items-center pt-1 text-xs">
+                    <span class="font-bold text-gray-600">Ombor Qoldig'i: <b class="${p.stock>0?'text-green-600':'text-red-500'}">${p.stock} ta</b></span>
+                    <button onclick="editingFieldData='stock'; activePopupModal='EDIT_PROD_FIELD'; render();" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg">✏️</button>
+                  </div>
+                ` : ''}
               </div>
 
-              <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1">
-                <h4 class="font-bold text-gray-700">📝 Tavsif / Izoh:</h4>
+              <!-- TAVSIF / IZOH WITH EDIT -->
+              <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1 relative">
+                <div class="flex justify-between items-center">
+                  <h4 class="font-bold text-gray-700">📝 Tavsif / Izoh:</h4>
+                  ${isAdminMode ? `<button onclick="editingFieldData='desc'; activePopupModal='EDIT_PROD_FIELD'; render();" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg">✏️</button>` : ''}
+                </div>
                 <p class="text-gray-600 leading-relaxed">${p.desc || 'Tavsif kiritilmagan.'}</p>
               </div>
 
-              ${isAdminMode ? `
-                <div class="flex space-x-2 border-t pt-2">
-                  <button onclick="selectedProductModal=null; openGranularEditProductModal('${p.id}');" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs">✏️ Tahrirlash</button>
-                  <button onclick="selectedProductModal=null; deleteProduct('${p.id}');" class="flex-1 bg-red-600 text-white font-bold py-2.5 rounded-xl text-xs">🗑️ O'chirish</button>
-                </div>
-              ` : `
+              ${!isAdminMode ? `
                 <div>
                   ${p.stock > 0 ? (
                     inCart ? `
@@ -982,13 +1166,14 @@
                     `
                   ) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-2xl text-sm">❌ Mahsulot tugagan</button>`}
                 </div>
-              `}
+              ` : ''}
             </div>
           </div>
         `;
         return;
       }
 
+      // ORDER DETAILS MODAL (WITH DIRECT STATUS BUTTONS)
       if (selectedOrderModal) {
         const o = selectedOrderModal;
         container.innerHTML = `
@@ -1019,14 +1204,13 @@
               </div>
 
               ${isAdminMode ? `
-                <div class="border-t pt-2 space-y-1">
-                  <label class="font-bold">Statusni o'zgartirish:</label>
-                  <select onchange="updateOrderStatus(${o.id}, this.value)" class="w-full p-2 border rounded-xl bg-gray-50 font-bold">
-                    <option value="NEW" ${o.status==='NEW'?'selected':''}>NEW (Yangi)</option>
-                    <option value="PROCESSING" ${o.status==='PROCESSING'?'selected':''}>PROCESSING (Jarayonda)</option>
-                    <option value="DELIVERED" ${o.status==='DELIVERED'?'selected':''}>DELIVERED (Yetkazildi)</option>
-                    <option value="CANCELLED" ${o.status==='CANCELLED'?'selected':''}>CANCELLED (Bekor qilindi)</option>
-                  </select>
+                <div class="border-t pt-2 space-y-2">
+                  <label class="font-bold text-gray-700">Tezkor Status O'zgartirish:</label>
+                  <div class="grid grid-cols-2 gap-2">
+                    <button onclick="updateOrderStatus(${o.id}, 'DELIVERED')" class="bg-green-600 text-white font-bold py-2 rounded-xl text-[11px]">✅ Bajarildi</button>
+                    <button onclick="updateOrderStatus(${o.id}, 'PROCESSING')" class="bg-amber-600 text-white font-bold py-2 rounded-xl text-[11px]">⏳ Jarayonda</button>
+                    <button onclick="updateOrderStatus(${o.id}, 'CANCELLED')" class="bg-red-600 text-white font-bold py-2 rounded-xl text-[11px] col-span-2">❌ Bekor Qilish</button>
+                  </div>
                 </div>
               ` : ''}
             </div>
@@ -1038,93 +1222,123 @@
       container.innerHTML = '';
     }
 
-    function openProductDetailModal(id) {
-      selectedProductModal = products.find(p => p.id === id);
-      renderModalContainer();
-    }
+    // MODAL FORM SAVING LOGIC
+    function saveProductFromModal() {
+      const name = document.getElementById('m-prod-name').value.trim();
+      const price = parseFloat(document.getElementById('m-prod-price').value);
+      const oldPriceVal = parseFloat(document.getElementById('m-prod-oldprice').value);
+      const stock = parseInt(document.getElementById('m-prod-stock').value, 10);
+      const desc = document.getElementById('m-prod-desc').value.trim();
 
-    function openOrderModal(id) {
-      selectedOrderModal = orders.find(o => o.id === id);
-      renderModalContainer();
-    }
+      if (!name || isNaN(price) || isNaN(stock)) return alert("Iltimos, barcha majburiy maydonlarni to'ldiring!");
 
-    function updateOrderStatus(id, newStatus) {
-      const o = orders.find(ord => ord.id === id);
-      if (o) o.status = newStatus;
-      localStorage.setItem('orders', JSON.stringify(orders));
-      selectedOrderModal = null;
+      let oldPrice = null;
+      if (!isNaN(oldPriceVal) && oldPriceVal > price) {
+        oldPrice = oldPriceVal;
+      }
+
+      const newP = {
+        id: "p" + Date.now(),
+        sku: "SP-" + Math.floor(10000 + Math.random() * 90000),
+        name, price, oldPrice, stock, desc: desc || name,
+        img: tempBase64Image || "https://via.placeholder.com/150",
+        categoryId: adminCatParentId,
+        status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
+        isFeatured: true, sortOrder: products.length + 1
+      };
+
+      products.push(newP);
+      localStorage.setItem('products', JSON.stringify(products));
+      tempBase64Image = null;
+      activePopupModal = null;
+      alert("✅ Yangi tovar muvaffaqiyatli qo'shildi va Omborda aks etdi!");
       render();
     }
 
-    // GRANULAR EDIT PRODUCT MODAL
-    function openGranularEditProductModal(id) {
-      const p = products.find(prod => prod.id === id);
+    function saveCategoryFromModal() {
+      const name = document.getElementById('m-cat-name').value.trim();
+      if (!name) return alert("Katalog nomini kiriting!");
+
+      categories.push({
+        id: "c" + Date.now(),
+        name,
+        img: tempBase64Image || (adminCatParentId ? "📦" : "📁"),
+        parentId: adminCatParentId
+      });
+
+      localStorage.setItem('categories', JSON.stringify(categories));
+      tempBase64Image = null;
+      activePopupModal = null;
+      alert("✅ Katalog yaratildi!");
+      render();
+    }
+
+    function saveAdminFromModal() {
+      const idVal = document.getElementById('m-admin-id').value.trim();
+      if (!idVal || isNaN(idVal)) return alert("To'g'ri Telegram ID kiriting!");
+
+      if (!adminsList.includes(idVal)) {
+        adminsList.push(idVal);
+        localStorage.setItem('adminsList', JSON.stringify(adminsList));
+        alert("✅ Yangi admin biriktirildi!");
+      }
+      activePopupModal = null;
+      render();
+    }
+
+    function saveFieldEdit(prodId, field) {
+      const p = products.find(prod => prod.id === prodId);
       if (!p) return;
 
-      const choice = prompt(
-        `Qaysi qismini tahrirlaysiz?\n\n1 - Nomini\n2 - Narxini va Chegirmasini\n3 - Rasmini (URL)\n4 - Ombor Qoldig'ini\n5 - Izohini/Tavsifini\n6 - Katalogini\n\n(1-6 raqamini kiriting):`
-      );
-
-      if (choice === '1') {
-        const name = prompt("Yangi nomi:", p.name);
-        if (name) p.name = name;
-      } else if (choice === '2') {
-        const price = parseFloat(prompt("Yangi Asosiy Narxi (so'm):", p.price));
-        const oldPriceInput = prompt("Chegirmadan avvalgi narx (Bo'sh qoldirish mumkin, lekin kiritilsa asosiy narxdan katta bo'lishi shart):", p.oldPrice || '');
-        
+      if (field === 'name') {
+        const val = document.getElementById('ef-val').value.trim();
+        if (val) p.name = val;
+      } else if (field === 'price') {
+        const price = parseFloat(document.getElementById('ef-price').value);
+        const oldVal = parseFloat(document.getElementById('ef-oldprice').value);
         if (!isNaN(price)) {
           p.price = price;
-          if (oldPriceInput && oldPriceInput.trim() !== '') {
-            const oldPriceVal = parseFloat(oldPriceInput);
-            if (!isNaN(oldPriceVal) && oldPriceVal > price) {
-              p.oldPrice = oldPriceVal;
-            } else {
-              alert("❌ Xatolik: Chegirmadan avvalgi narx asosiy narxdan KATTA bo'lishi shart! Chegirma saqlanmadi.");
-              p.oldPrice = null;
-            }
-          } else {
-            p.oldPrice = null;
-          }
+          if (!isNaN(oldVal) && oldVal > price) p.oldPrice = oldVal;
+          else p.oldPrice = null;
         }
-      } else if (choice === '3') {
-        const img = prompt("Yangi Rasm URL havolasi:", p.img);
-        if (img) p.img = img;
-      } else if (choice === '4') {
-        const stock = parseInt(prompt("Yangi Ombor Qoldig'i:", p.stock), 10);
+      } else if (field === 'stock') {
+        const stock = parseInt(document.getElementById('ef-val').value, 10);
         if (!isNaN(stock)) {
           p.stock = stock;
           p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
         }
-      } else if (choice === '5') {
-        const desc = prompt("Yangi Izohi / Tavsifi:", p.desc || p.name);
-        if (desc) p.desc = desc;
-      } else if (choice === '6') {
-        const catListStr = categories.map(c => `${c.id}: ${c.name}`).join('\n');
-        const catId = prompt(`Yangi Katalog ID raqamini kiriting:\n\n${catListStr}`, p.categoryId);
-        if (catId && categories.some(c => c.id === catId)) {
-          p.categoryId = catId;
-        }
+      } else if (field === 'desc') {
+        p.desc = document.getElementById('ef-val').value.trim();
+      } else if (field === 'img') {
+        if (tempBase64Image) p.img = tempBase64Image;
       }
 
       localStorage.setItem('products', JSON.stringify(products));
+      tempBase64Image = null;
+      activePopupModal = null;
+      selectedProductModal = p;
       render();
     }
 
-    // GRANULAR EDIT CATEGORY MODAL
+    function openAddProductModal() {
+      tempBase64Image = null;
+      activePopupModal = 'ADD_PROD';
+      render();
+    }
+
+    function openAddCatModal() {
+      tempBase64Image = null;
+      activePopupModal = 'ADD_CAT';
+      render();
+    }
+
     function openGranularEditCategoryModal(id, e) {
       if (e) e.stopPropagation();
       const c = categories.find(cat => cat.id === id);
       if (!c) return;
 
-      const choice = prompt(`Qaysi qismini tahrirlaysiz?\n\n1 - Nomini\n2 - Rasmini / Emojisini\n\n(1 yoki 2 raqamini kiriting):`);
-      
-      if (choice === '1') {
-        const name = prompt("Yangi katalog nomi:", c.name);
-        if (name) c.name = name;
-      } else if (choice === '2') {
-        const img = prompt("Yangi Rasm URL havolasi yoki Emojisi:", c.img || '📁');
-        if (img) c.img = img;
-      }
+      const name = prompt("Yangi katalog nomi:", c.name);
+      if (name) c.name = name;
 
       localStorage.setItem('categories', JSON.stringify(categories));
       render();
@@ -1152,62 +1366,11 @@
       render();
     }
 
-    function openAddProductModal() {
-      const name = prompt("Mahsulot nomi:");
-      if (!name) return;
-      const price = parseFloat(prompt("Asosiy sotuv narxi (so'm):")) || 0;
-      const oldPriceInput = prompt("Chegirmadan avvalgi narxi (Ixtiyoriy, kiritilsa asosiy narxdan katta bo'lishi shart):");
-      
-      let oldPrice = null;
-      if (oldPriceInput && oldPriceInput.trim() !== '') {
-        const parsedOld = parseFloat(oldPriceInput);
-        if (!isNaN(parsedOld) && parsedOld > price) {
-          oldPrice = parsedOld;
-        } else {
-          alert("⚠️ Ogohlantirish: Chegirmadan avvalgi narx asosiy narxdan katta bo'lmagani uchun inobatga olinmadi.");
-        }
-      }
-
-      const stock = parseInt(prompt("Ombor qoldig'i (soni):"), 10) || 0;
-      const desc = prompt("Izoh / Tavsifi:") || name;
-      const img = prompt("Rasm URL havolasi (Ixtiyoriy):") || "https://via.placeholder.com/150";
-
-      const newP = {
-        id: "p" + Date.now(),
-        sku: "SP-" + Math.floor(10000 + Math.random() * 90000),
-        name, price, oldPrice, stock, desc, img,
-        categoryId: adminCatParentId,
-        status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
-        isFeatured: true, sortOrder: products.length + 1
-      };
-
-      products.push(newP);
-      localStorage.setItem('products', JSON.stringify(products));
-      alert("✅ Yangi tovar qo'shildi va Omborda aks etdi!");
-      render();
-    }
-
     function deleteProduct(id) {
       if (!confirm("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz?")) return;
       const p = products.find(prod => prod.id === id);
       if (p) p.status = 'DELETED';
       localStorage.setItem('products', JSON.stringify(products));
-      render();
-    }
-
-    function openAddCatModal() {
-      const name = prompt("Yangi katalog nomi:");
-      if (!name) return;
-      const img = prompt("Katalog rasmi (URL yoki Emoji):") || (adminCatParentId ? "📦" : "📁");
-
-      categories.push({
-        id: "c" + Date.now(),
-        name, img,
-        parentId: adminCatParentId
-      });
-
-      localStorage.setItem('categories', JSON.stringify(categories));
-      alert("✅ Katalog yaratildi!");
       render();
     }
 
