@@ -3,150 +3,608 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Onlayn Do'kon</title>
-  <!-- Telegram Web App va Stiller -->
+  <title>Telegram Mini App - Onlayn Do'kon & Admin</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
 </head>
-<body class="bg-gray-100 p-4 font-sans">
+<body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
-  <div class="max-w-md mx-auto bg-white rounded-2xl shadow-md p-5">
-    <h1 class="text-2xl font-bold text-center text-blue-600 mb-4">🛍️ Online Do'kon</h1>
-    
-    <!-- Mahsulotlar ro'yxati -->
-    <div id="products" class="space-y-4"></div>
-
-    <!-- Savatcha qismi -->
-    <div class="mt-6 border-t pt-4">
-      <h2 class="text-lg font-semibold">Buyurtma ma'lumotlari:</h2>
-      <input type="text" id="phone" placeholder="+998 90 123 45 67" class="w-full mt-2 p-2 border rounded-lg">
-      <input type="text" id="address" placeholder="Manzil (Masalan: Chilonzor 5-mavze)" class="w-full mt-2 p-2 border rounded-lg">
-      
-      <div class="flex justify-between items-center mt-4 text-xl font-bold">
-        <span>Jami:</span>
-        <span id="total-price" class="text-green-600">0 so'm</span>
-      </div>
-
-      <button onclick="sendOrder()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl mt-4">
-        ✅ Buyurtma berish
+  <!-- TOP HEADER -->
+  <header class="bg-white sticky top-0 z-40 border-b px-4 py-3 flex items-center justify-between shadow-sm">
+    <div class="flex items-center space-x-2">
+      <div class="bg-blue-600 text-white font-black px-2.5 py-1 rounded-xl text-lg">PRO</div>
+      <span class="font-bold text-lg text-gray-900">Sport Shop</span>
+    </div>
+    <div class="flex items-center space-x-3">
+      <button onclick="switchTab('cart')" class="relative p-2 bg-gray-100 rounded-full">
+        <i data-lucide="shopping-cart" class="w-5 h-5 text-gray-700"></i>
+        <span id="cart-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full items-center justify-center">0</span>
+      </button>
+      <button onclick="switchTab('profile')" class="p-2 bg-gray-100 rounded-full">
+        <i data-lucide="user" class="w-5 h-5 text-gray-700"></i>
       </button>
     </div>
-  </div>
+  </header>
 
+  <!-- MAIN CONTENT CONTAINER -->
+  <main id="app-content" class="p-4 max-w-md mx-auto">
+    <!-- Kontent JavaScript orqali dinamik yuklanadi -->
+  </main>
+
+  <!-- BOTTOM NAVIGATION -->
+  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t py-2 px-4 flex justify-around items-center z-40 shadow-lg">
+    <button onclick="switchTab('home')" class="nav-btn flex flex-col items-center text-gray-500 active-tab" id="nav-home">
+      <i data-lucide="home" class="w-5 h-5"></i>
+      <span class="text-xs mt-1">Bosh sahifa</span>
+    </button>
+    <button onclick="switchTab('categories')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-categories">
+      <i data-lucide="folder" class="w-5 h-5"></i>
+      <span class="text-xs mt-1">Kataloglar</span>
+    </button>
+    <button onclick="switchTab('cart')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-cart">
+      <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+      <span class="text-xs mt-1">Savatcha</span>
+    </button>
+    <button onclick="switchTab('orders')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-orders">
+      <i data-lucide="package" class="w-5 h-5"></i>
+      <span class="text-xs mt-1">Buyurtmalar</span>
+    </button>
+    <button onclick="switchTab('profile')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-profile">
+      <i data-lucide="user" class="w-5 h-5"></i>
+      <span class="text-xs mt-1">Profil</span>
+    </button>
+  </nav>
+
+  <!-- JAVASCRIPT APP LOGIC -->
   <script>
-    // ⚙️ SOZLAMALAR (Shu yerni o'zgartirasiz)
-    const BOT_TOKEN = "8659743606:AAFcAN91p-6-32yTsPInypX-r1qfXylIYIs"; // BotFather bergan token
-    const ADMIN_ID = "1533504949";   // @userinfobot bergan ID raqamingiz
+    // ⚙️ SOZLAMALAR
+    const CONFIG = {
+      BOT_TOKEN: "BOT_TOKEN_SHUYERGA", // BotFather bergan token
+      ADMIN_ID: "ADMIN_ID_SHUYERGA"    // @userinfobot bergan sizning ID raqamingiz
+    };
 
-    const tg = window.Telegram.WebApp;
-    tg.expand(); // Oynani to'liq ekranga ochish
+    const tg = window.Telegram?.WebApp;
+    if (tg) tg.expand();
 
-    // Mahsulotlar ro'yxati (Xohlagancha qo'shishingiz mumkin)
-    const productsList = [
-      { id: 1, name: "Gamburger", price: 30000, img: "https://via.placeholder.com/80" },
-      { id: 2, name: "Lavash", price: 35000, img: "https://via.placeholder.com/80" },
-      { id: 3, name: "Coca-Cola 0.5L", price: 9000, img: "https://via.placeholder.com/80" }
-    ];
+    // DASTLABKI MA'LUMOTLAR (LocalStorage bazasi)
+    function initStorage() {
+      if (!localStorage.getItem('products')) {
+        const initialProducts = [
+          { id: "1", sku: "SP-00001", name: "Whey Protein Gold", price: 450000, stock: 15, categoryId: "cat-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "Yuqori sifatli zardob proteini 1kg" },
+          { id: "2", sku: "SP-00002", name: "Creatine Monohydrate", price: 220000, stock: 0, categoryId: "cat-1", status: "OUT_OF_STOCK", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "Kuch va chidamlilik uchun mikronizatsiyalangan kreatin" },
+          { id: "3", sku: "SP-00003", name: "Gantel 10kg", price: 320000, stock: 8, categoryId: "cat-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Rezinalangan gantel to'plami" },
+          { id: "4", sku: "SP-00004", name: "Multivitamin Opti-Men", price: 280000, stock: 20, categoryId: "cat-3", status: "ACTIVE", img: "https://images.unsplash.com/photo-1550572017-edd951aa8f72?w=300", desc: "Erkaklar uchun kompleks vitaminlar" }
+        ];
+        localStorage.setItem('products', JSON.stringify(initialProducts));
+      }
 
-    let cart = {};
+      if (!localStorage.getItem('categories')) {
+        const initialCategories = [
+          { id: "cat-1", name: "Sport oziq-ovqatlari", parentId: null, img: "🧪" },
+          { id: "cat-2", name: "Sport buyumlari", parentId: null, img: "🏋️‍♂️" },
+          { id: "cat-3", name: "Vitaminlar", parentId: null, img: "💊" }
+        ];
+        localStorage.setItem('categories', JSON.stringify(initialCategories));
+      }
 
-    // Mahsulotlarni ekranga chiqarish
-    function renderProducts() {
-      const container = document.getElementById('products');
-      container.innerHTML = '';
-      productsList.forEach(p => {
-        container.innerHTML += `
-          <div class="flex items-center justify-between border-b pb-3">
-            <div>
-              <h3 class="font-bold text-gray-800">${p.name}</h3>
-              <p class="text-sm text-gray-500">${p.price.toLocaleString()} so'm</p>
-            </div>
-            <div class="flex items-center space-x-2">
-              <button onclick="changeQty(${p.id}, -1)" class="bg-gray-200 px-3 py-1 rounded-lg font-bold">-</button>
-              <span id="qty-${p.id}" class="font-bold">0</span>
-              <button onclick="changeQty(${p.id}, 1)" class="bg-blue-500 text-white px-3 py-1 rounded-lg font-bold">+</button>
-            </div>
+      if (!localStorage.getItem('branches')) {
+        const initialBranches = [
+          { id: "b-1", name: "Samarqand Markaziy Filial", region: "Samarqand", address: "Registon ko'chasi 12", phone: "+998 91 123 45 67" },
+          { id: "b-2", name: "Farg'ona Filial", region: "Farg'ona", address: "Al-Farg'oniy ko'chasi 45", phone: "+998 93 987 65 43" },
+          { id: "b-3", name: "Namangan Markaziy", region: "Namangan", address: "Navoiy ko'chasi 8", phone: "+998 90 555 44 33" }
+        ];
+        localStorage.setItem('branches', JSON.stringify(initialBranches));
+      }
+
+      if (!localStorage.getItem('cart')) localStorage.setItem('cart', JSON.stringify({}));
+      if (!localStorage.getItem('orders')) localStorage.setItem('orders', JSON.stringify([]));
+      if (!localStorage.getItem('auditLogs')) localStorage.setItem('auditLogs', JSON.stringify([]));
+    }
+
+    initStorage();
+
+    // STATE MANAGEMENT
+    let products = JSON.parse(localStorage.getItem('products'));
+    let categories = JSON.parse(localStorage.getItem('categories'));
+    let branches = JSON.parse(localStorage.getItem('branches'));
+    let cart = JSON.parse(localStorage.getItem('cart'));
+    let orders = JSON.parse(localStorage.getItem('orders'));
+    let auditLogs = JSON.parse(localStorage.getItem('auditLogs'));
+    let currentTab = 'home';
+    let isAdminView = false;
+
+    // LOTIN ↔ KIRILL TRANSLITERATSIYA & SMART SEARCH
+    function normalizeText(text) {
+      if (!text) return '';
+      let str = text.toLowerCase().trim();
+      const map = {
+        'sh': 'ш', 'ch': 'ч', 'yo': 'ё', 'yu': 'ю', 'ya': 'я', 'ye': 'е',
+        'a': 'а', 'b': 'б', 'v': 'в', 'g': 'г', 'd': 'д', 'e': 'е', 'z': 'з', 'i': 'и',
+        'j': 'ж', 'k': 'к', 'l': 'л', 'm': 'м', 'n': 'н', 'o': 'о', 'p': 'п', 'r': 'р',
+        's': 'с', 't': 'т', 'u': 'у', 'f': 'ф', 'x': 'х', 'h': 'ҳ'
+      };
+      let cyr = str;
+      for (let k in map) cyr = cyr.split(k).join(map[k]);
+      return { latin: str, cyrillic: cyr };
+    }
+
+    function searchProducts(query) {
+      if (!query) return products.filter(p => p.status !== 'DELETED');
+      const { latin, cyrillic } = normalizeText(query);
+      return products.filter(p => {
+        if (p.status === 'DELETED') return false;
+        const pNorm = normalizeText(p.name);
+        return pNorm.latin.includes(latin) || pNorm.cyrillic.includes(cyrillic) || p.sku.toLowerCase().includes(latin);
+      });
+    }
+
+    // TAB SWITCHING
+    function switchTab(tab) {
+      currentTab = tab;
+      isAdminView = false;
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-blue-600', 'font-bold'));
+      const activeNav = document.getElementById(`nav-${tab}`);
+      if (activeNav) activeNav.classList.add('text-blue-600', 'font-bold');
+      render();
+    }
+
+    function openAdminPanel() {
+      isAdminView = true;
+      renderAdminPanel();
+    }
+
+    // CART LOGIC
+    function addToCart(id) {
+      const p = products.find(prod => prod.id === id);
+      if (!p || p.stock <= 0) return alert("Mahsulot tugagan!");
+      cart[id] = (cart[id] || 0) + 1;
+      localStorage.setItem('cart', JSON.stringify(cart));
+      updateCartBadge();
+      render();
+    }
+
+    function changeCartQty(id, delta) {
+      if (!cart[id]) return;
+      cart[id] += delta;
+      if (cart[id] <= 0) delete cart[id];
+      localStorage.setItem('cart', JSON.stringify(cart));
+      updateCartBadge();
+      render();
+    }
+
+    function updateCartBadge() {
+      const count = Object.values(cart).reduce((a, b) => a + b, 0);
+      const badge = document.getElementById('cart-badge');
+      if (count > 0) {
+        badge.innerText = count;
+        badge.classList.remove('hidden');
+        badge.classList.add('flex');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+
+    // MAIN RENDER ENGINE
+    function render() {
+      updateCartBadge();
+      const container = document.getElementById('app-content');
+      
+      if (isAdminView) {
+        renderAdminPanel();
+        return;
+      }
+
+      switch (currentTab) {
+        case 'home': renderHome(container); break;
+        case 'categories': renderCategories(container); break;
+        case 'cart': renderCart(container); break;
+        case 'orders': renderOrders(container); break;
+        case 'profile': renderProfile(container); break;
+      }
+      lucide.createIcons();
+    }
+
+    // 1. HOME VIEW (Katalog & Qidiruv)
+    function renderHome(container) {
+      container.innerHTML = `
+        <div class="space-y-4">
+          <!-- SEARCH BAR -->
+          <div class="relative">
+            <input type="text" id="search-input" oninput="handleSearch()" placeholder="Mahsulot qidirish (Lotin / Kirill)..." 
+              class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
+            <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
+          </div>
+
+          <!-- PRODUCTS GRID -->
+          <div id="products-grid" class="grid grid-cols-2 gap-3"></div>
+        </div>
+      `;
+      handleSearch();
+    }
+
+    function handleSearch() {
+      const q = document.getElementById('search-input')?.value || '';
+      const filtered = searchProducts(q);
+      const grid = document.getElementById('products-grid');
+      if (!grid) return;
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-2 text-center py-8 bg-white rounded-2xl p-4">
+            <p class="text-gray-500 font-medium">🔍 Hech narsa topilmadi</p>
+            <p class="text-xs text-gray-400 mt-1">Boshqacha nom bilan qidirib ko'ring yoki kataloglarni ko'ring.</p>
+            <button onclick="switchTab('categories')" class="mt-3 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-bold">
+              📂 Barcha kataloglarni ko'rish
+            </button>
           </div>
         `;
-      });
-    }
-
-    // Miqdorni o'zgartirish
-    function changeQty(id, change) {
-      if (!cart[id]) cart[id] = 0;
-      cart[id] += change;
-      if (cart[id] < 0) cart[id] = 0;
-      
-      document.getElementById(`qty-${id}`).innerText = cart[id];
-      updateTotal();
-    }
-
-    // Jami summani hisoblash
-    function updateTotal() {
-      let total = 0;
-      productsList.forEach(p => {
-        if (cart[p.id]) total += cart[p.id] * p.price;
-      });
-      document.getElementById('total-price').innerText = total.toLocaleString() + " so'm";
-    }
-
-    // Buyurtmani Telegram botga yuborish
-    async function sendOrder() {
-      const phone = document.getElementById('phone').value;
-      const address = document.getElementById('address').value;
-
-      if (!phone || !address) {
-        alert("Iltimos, telefon va manzilingizni kiriting!");
         return;
       }
 
-      let orderText = "📥 <b>YANGI BUYURTMA!</b>\n\n";
-      let total = 0;
-      let itemsCount = 0;
+      grid.innerHTML = filtered.map(p => `
+        <div class="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex flex-col justify-between">
+          <div>
+            <img src="${p.img}" class="w-full h-28 object-cover rounded-xl mb-2">
+            <span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${p.sku}</span>
+            <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${p.name}</h4>
+            <p class="text-xs text-blue-600 font-black mt-1">${p.price.toLocaleString()} so'm</p>
+          </div>
+          <div class="mt-3">
+            ${p.stock > 0 
+              ? `<button onclick="addToCart('${p.id}')" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1">
+                   <i data-lucide="plus" class="w-3.5 h-3.5"></i> <span>Savatga</span>
+                 </button>`
+              : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-2 rounded-xl text-xs">❌ Tugagan</button>`
+            }
+          </div>
+        </div>
+      `).join('');
+      lucide.createIcons();
+    }
 
-      productsList.forEach(p => {
-        if (cart[p.id] && cart[p.id] > 0) {
-          orderText += `• ${p.name} x ${cart[p.id]} ta = ${(cart[p.id] * p.price).toLocaleString()} so'm\n`;
-          total += cart[p.id] * p.price;
-          itemsCount++;
+    // 2. CATEGORIES VIEW
+    function renderCategories(container) {
+      container.innerHTML = `
+        <div class="space-y-3">
+          <h2 class="text-lg font-bold">📂 Kataloglar</h2>
+          <div class="space-y-2">
+            ${categories.map(c => `
+              <div class="bg-white p-4 rounded-2xl border flex items-center justify-between shadow-sm">
+                <div class="flex items-center space-x-3">
+                  <span class="text-2xl">${c.img || '📁'}</span>
+                  <span class="font-bold text-gray-800">${c.name}</span>
+                </div>
+                <i data-lucide="chevron-right" class="w-5 h-5 text-gray-400"></i>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // 3. CART & CHECKOUT VIEW
+    function renderCart(container) {
+      const items = Object.entries(cart).map(([id, qty]) => {
+        const p = products.find(prod => prod.id === id);
+        return p ? { ...p, qty } : null;
+      }).filter(Boolean);
+
+      let total = items.reduce((sum, item) => sum + (item.price * item.qty), 0);
+
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-12 bg-white rounded-2xl p-6">
+            <i data-lucide="shopping-bag" class="w-12 h-12 text-gray-300 mx-auto mb-3"></i>
+            <h3 class="font-bold text-gray-700">Savatchangiz bo'sh</h3>
+            <button onclick="switchTab('home')" class="mt-4 bg-blue-600 text-white text-xs font-bold px-5 py-2.5 rounded-xl">
+              Xarid qilishni boshlash
+            </button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="space-y-4">
+          <h2 class="text-lg font-bold">🛒 Savatcha</h2>
+          <div class="bg-white rounded-2xl p-4 shadow-sm divide-y">
+            ${items.map(item => `
+              <div class="py-3 flex items-center justify-between">
+                <div>
+                  <h4 class="font-bold text-sm text-gray-800">${item.name}</h4>
+                  <p class="text-xs text-gray-500">${item.price.toLocaleString()} so'm</p>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <button onclick="changeCartQty('${item.id}', -1)" class="w-7 h-7 bg-gray-100 rounded-lg font-bold text-sm">-</button>
+                  <span class="font-bold text-sm px-1">${item.qty}</span>
+                  <button onclick="changeCartQty('${item.id}', 1)" class="w-7 h-7 bg-blue-600 text-white rounded-lg font-bold text-sm">+</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <!-- CHECKOUT FORM -->
+          <div class="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+            <h3 class="font-bold text-sm border-b pb-2">📍 Yetkazib berish va To'lov</h3>
+            
+            <div>
+              <label class="text-xs font-bold text-gray-600">Hududni tanlang:</label>
+              <select id="region-type" onchange="toggleRegionFields()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                <option value="TASHKENT">Toshkent shahri (Bepul yetkazib berish)</option>
+                <option value="PROVINCE">Viloyatlar (BeTez Pochta)</option>
+              </select>
+            </div>
+
+            <!-- TASHKENT FIELDS -->
+            <div id="tashkent-fields" class="space-y-2">
+              <input type="text" id="address-input" placeholder="To'liq uy manzili (Ko'cha, uy, xonadon)" class="w-full p-2.5 border rounded-xl text-xs">
+            </div>
+
+            <!-- PROVINCE FIELDS -->
+            <div id="province-fields" class="hidden space-y-2">
+              <label class="text-xs font-bold text-gray-600">BeTez Pochta Filiali:</label>
+              <select id="branch-select" class="w-full p-2.5 border rounded-xl text-xs bg-gray-50">
+                ${branches.map(b => `<option value="${b.id}">${b.name} (${b.region})</option>`).join('')}
+              </select>
+              <p class="text-[10px] text-amber-600 font-medium">⚠️ Viloyat buyurtmalarida yetkazib berish 25,000 so'm va faqat karta orqali to'lov mavjud.</p>
+            </div>
+
+            <div>
+              <label class="text-xs font-bold text-gray-600">To'lov turi:</label>
+              <select id="payment-method" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                <option value="CASH">Naqd pul</option>
+                <option value="CARD">Karta orqali</option>
+              </select>
+            </div>
+
+            <div>
+              <input type="text" id="phone-input" placeholder="+998 90 123 45 67" class="w-full p-2.5 border rounded-xl text-xs">
+            </div>
+
+            <div class="border-t pt-3 flex justify-between items-center text-lg font-black">
+              <span>Jami:</span>
+              <span id="final-total" class="text-green-600">${total.toLocaleString()} so'm</span>
+            </div>
+
+            <button onclick="processOrder()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl text-sm shadow-md">
+              ✅ Buyurtmani tasdiqlash
+            </button>
+          </div>
+        </div>
+      `;
+      toggleRegionFields();
+    }
+
+    function toggleRegionFields() {
+      const region = document.getElementById('region-type')?.value;
+      const tashkentBox = document.getElementById('tashkent-fields');
+      const provinceBox = document.getElementById('province-fields');
+      const paySelect = document.getElementById('payment-method');
+
+      if (region === 'PROVINCE') {
+        tashkentBox?.classList.add('hidden');
+        provinceBox?.classList.remove('hidden');
+        if (paySelect) {
+          paySelect.value = 'CARD';
+          paySelect.disabled = true; // Viloyatga faqat karta
         }
-      });
+      } else {
+        tashkentBox?.classList.remove('hidden');
+        provinceBox?.classList.add('hidden');
+        if (paySelect) paySelect.disabled = false;
+      }
+    }
 
-      if (itemsCount === 0) {
-        alert("Savat bo'sh! Kamida bitta mahsulot tanlang.");
-        return;
+    // ORDER SUBMISSION & TELEGRAM NOTIFICATION
+    async function processOrder() {
+      const region = document.getElementById('region-type').value;
+      const phone = document.getElementById('phone-input').value;
+      const payMethod = document.getElementById('payment-method').value;
+      
+      let address = "";
+      let deliveryFee = 0;
+
+      if (region === 'TASHKENT') {
+        address = document.getElementById('address-input').value;
+        if (!address) return alert("Iltimos, uy manzilingizni kiriting!");
+      } else {
+        const branchId = document.getElementById('branch-select').value;
+        const branch = branches.find(b => b.id === branchId);
+        address = `BeTez Pochta: ${branch.name} (${branch.address})`;
+        deliveryFee = 25000;
       }
 
-      orderText += `\n💰 <b>Jami summa:</b> ${total.toLocaleString()} so'm`;
-      orderText += `\n📞 <b>Tel:</b> ${phone}`;
-      orderText += `\n📍 <b>Manzil:</b> ${address}`;
+      if (!phone) return alert("Iltimos, telefon raqamingizni kiriting!");
 
-      // Xabarni serverga yuborish
-      const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-      
+      const orderItems = Object.entries(cart).map(([id, qty]) => {
+        const p = products.find(prod => prod.id === id);
+        return { name: p.name, qty, price: p.price, sku: p.sku };
+      });
+
+      const itemsPrice = orderItems.reduce((s, i) => s + (i.price * i.qty), 0);
+      const totalPrice = itemsPrice + deliveryFee;
+
+      const newOrder = {
+        id: Math.floor(1000 + Math.random() * 9000),
+        user: tg?.initDataUnsafe?.user?.first_name || "Mijoz",
+        phone,
+        region,
+        address,
+        payMethod,
+        items: orderItems,
+        totalPrice,
+        status: "NEW",
+        date: new Date().toLocaleString()
+      };
+
+      orders.unshift(newOrder);
+      localStorage.setItem('orders', JSON.stringify(orders));
+
+      // TELEGRAM BOT API BILAN XABAR YUBORISH
+      let msg = `🛍 <b>YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
+      msg += `👤 <b>Mijoz:</b> ${newOrder.user}\n📞 <b>Tel:</b> ${phone}\n📍 <b>Manzil:</b> ${address}\n💳 <b>To'lov:</b> ${payMethod}\n\n📦 <b>Tarkib:</b>\n`;
+      orderItems.forEach(i => msg += `• ${i.name} (x${i.qty}) = ${(i.price * i.qty).toLocaleString()} so'm\n`);
+      msg += `\n💰 <b>Jami:</b> ${totalPrice.toLocaleString()} so'm`;
+
       try {
-        const response = await fetch(url, {
+        await fetch(`https://api.telegram.org/bot${CONFIG.BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: ADMIN_ID,
-            text: orderText,
-            parse_mode: 'HTML'
-          })
+          body: JSON.stringify({ chat_id: CONFIG.ADMIN_ID, text: msg, parse_mode: 'HTML' })
         });
+      } catch (e) { console.error("Telegram notification error", e); }
 
-        if (response.ok) {
-          alert(" Buyurtmangiz qabul qilindi!");
-          tg.close(); // Telegram ilovasini yopish
-        } else {
-          alert("Xatolik yuz berdi. Bot Token yoki Admin ID to'g'riligini tekshiring.");
-        }
-      } catch (err) {
-        alert("Internet xatoligi!");
-      }
+      // Clear cart
+      cart = {};
+      localStorage.setItem('cart', JSON.stringify(cart));
+      alert("✅ Buyurtmangiz qabul qilindi!");
+      switchTab('orders');
     }
 
-    renderProducts();
+    // 4. ORDERS VIEW
+    function renderOrders(container) {
+      container.innerHTML = `
+        <div class="space-y-3">
+          <h2 class="text-lg font-bold">📦 Buyurtmalarim</h2>
+          ${orders.length === 0 ? '<p class="text-xs text-gray-500 bg-white p-4 rounded-xl text-center">Xaridlar tarixi yo\'q</p>' : ''}
+          ${orders.map(o => `
+            <div class="bg-white rounded-2xl p-4 shadow-sm space-y-2 border">
+              <div class="flex justify-between items-center border-b pb-2">
+                <span class="font-black text-blue-600">#${o.id}</span>
+                <span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">${o.status}</span>
+              </div>
+              <p class="text-xs text-gray-500">📅 ${o.date}</p>
+              <div class="text-xs space-y-1">
+                ${o.items.map(i => `<p class="font-medium">• ${i.name} x ${i.qty}</p>`).join('')}
+              </div>
+              <div class="border-t pt-2 flex justify-between font-bold text-sm">
+                <span>Summa:</span>
+                <span class="text-green-600">${o.totalPrice.toLocaleString()} so'm</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // 5. PROFILE & ADMIN BUTTON VIEW
+    function renderProfile(container) {
+      const user = tg?.initDataUnsafe?.user;
+      const isAdmin = user?.id == CONFIG.ADMIN_ID || true; // Sinab ko'rish uchun admin tugma ochiq
+
+      container.innerHTML = `
+        <div class="space-y-4">
+          <div class="bg-white p-5 rounded-2xl shadow-sm flex items-center space-x-4 border">
+            <div class="bg-blue-100 p-3 rounded-full text-blue-600">
+              <i data-lucide="user" class="w-8 h-8"></i>
+            </div>
+            <div>
+              <h2 class="text-lg font-bold">${user?.first_name || 'Foydalanuvchi'}</h2>
+              <p class="text-xs text-gray-500">ID: ${user?.id || 'Telegram ID'}</p>
+            </div>
+          </div>
+
+          <!-- ADMIN PANELGA O'TISH TUGMASI -->
+          ${isAdmin ? `
+            <button onclick="openAdminPanel()" class="w-full bg-gradient-to-r from-slate-800 to-slate-900 text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-lg">
+              <div class="flex items-center space-x-3">
+                <i data-lucide="shield-check" class="text-emerald-400 w-6 h-6"></i>
+                <span>Admin Panelga o'tish</span>
+              </div>
+              <span class="text-[10px] bg-slate-700 px-2 py-1 rounded">Boshqaruv</span>
+            </button>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    // 🛠️ ADMIN PANEL VIEW (Dashboard & Warehouse Bulk Stock)
+    function renderAdminPanel() {
+      const container = document.getElementById('app-content');
+      container.innerHTML = `
+        <div class="space-y-4">
+          <div class="flex justify-between items-center bg-slate-900 text-white p-4 rounded-2xl">
+            <div>
+              <h2 class="font-bold">🛡️ ADMIN PANEL</h2>
+              <p class="text-[10px] text-slate-400">Do'kon va Ombor Boshqaruvi</p>
+            </div>
+            <button onclick="switchTab('profile')" class="bg-slate-700 text-xs px-3 py-1.5 rounded-xl font-bold">Chiqish</button>
+          </div>
+
+          <!-- DASHBOARD STATS -->
+          <div class="grid grid-cols-2 gap-2">
+            <div class="bg-white p-3 rounded-2xl border text-center">
+              <p class="text-[10px] text-gray-500 font-bold">JAMI BUYURTMALAR</p>
+              <p class="text-xl font-black text-blue-600">${orders.length}</p>
+            </div>
+            <div class="bg-white p-3 rounded-2xl border text-center">
+              <p class="text-[10px] text-gray-500 font-bold">TUGAGAN MAHSULOTLAR</p>
+              <p class="text-xl font-black text-red-600">${products.filter(p => p.stock <= 0).length}</p>
+            </div>
+          </div>
+
+          <!-- OMBOR TEZKOR YANGILASH (BULK UPDATE) -->
+          <div class="bg-white p-4 rounded-2xl border space-y-3">
+            <h3 class="font-bold text-sm text-gray-800">🏭 Ombor Qoldiqlarini Yangilash</h3>
+            <p class="text-[10px] text-gray-500">Har bir qatorga SKU va yangi sonini kiriting (Masalan: <b>SP-00001 35</b>)</p>
+
+            <textarea id="bulk-input" rows="5" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="SP-00001 35&#10;SP-00002 20"></textarea>
+
+            <button onclick="saveBulkStock()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs">
+              💾 Barchasini saqlash
+            </button>
+          </div>
+
+          <!-- PRODUCTS LIST WITH STOCK EDIT -->
+          <div class="bg-white p-4 rounded-2xl border space-y-2">
+            <h3 class="font-bold text-sm">📦 Ombor Qoldiqlari</h3>
+            <div class="divide-y">
+              ${products.map(p => `
+                <div class="py-2 flex justify-between items-center text-xs">
+                  <div>
+                    <span class="font-mono bg-gray-100 px-1 rounded">${p.sku}</span>
+                    <span class="font-bold ml-1">${p.name}</span>
+                  </div>
+                  <span class="font-bold ${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ta</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+      lucide.createIcons();
+    }
+
+    function saveBulkStock() {
+      const input = document.getElementById('bulk-input').value.trim();
+      if (!input) return alert("Ma'lumot kiriting!");
+
+      const lines = input.split('\n');
+      let count = 0;
+
+      lines.forEach(line => {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          const sku = parts[0].toUpperCase();
+          const stock = parseInt(parts[1], 10);
+          
+          const p = products.find(prod => prod.sku === sku);
+          if (p && !isNaN(stock)) {
+            p.stock = stock;
+            p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
+            count++;
+          }
+        }
+      });
+
+      localStorage.setItem('products', JSON.stringify(products));
+      alert(`✅ ${count} ta mahsulot qoldig'i yangilandi!`);
+      renderAdminPanel();
+    }
+
+    // INITIAL RENDER
+    switchTab('home');
   </script>
 </body>
 </html>
