@@ -28,7 +28,7 @@
 
   <!-- MAIN CONTAINER -->
   <main id="app-content" class="p-4 max-w-md mx-auto min-h-screen">
-    <!-- Content renders here -->
+    <!-- Dynamic Content -->
   </main>
 
   <!-- BOTTOM NAVIGATION -->
@@ -129,7 +129,7 @@
     let userOrderFilter = 'ALL';
     let selectedProductModal = null;
     let selectedOrderModal = null;
-    let activePopupModal = null; // 'ADD_PROD' | 'ADD_CAT' | 'EDIT_PROD_FIELD' | 'EDIT_CAT_FIELD' | 'ADD_ADMIN'
+    let activePopupModal = null; 
     let editingFieldData = null;
 
     let tempBase64Image = null;
@@ -339,7 +339,7 @@
             </div>
           </div>
 
-          <!-- ADMIN CONTROLS ON CARD -->
+          <!-- ADMIN CONTROLS -->
           ${isAdminMode ? `
             <div class="mt-2 pt-2 border-t flex flex-col space-y-1" onclick="event.stopPropagation()">
               <div class="flex justify-between items-center text-[10px]">
@@ -930,11 +930,11 @@
       render();
     }
 
-    // MODAL DIALOGS ENGINE
+    // MODALS ENGINE
     function renderModalContainer() {
       const container = document.getElementById('modal-container');
 
-      // POPUP MODALS (ADD_PROD, ADD_CAT, ADD_ADMIN, EDIT_FIELD)
+      // POPUP MODALS
       if (activePopupModal === 'ADD_PROD') {
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -1067,13 +1067,6 @@
                 <img id="ef-img-prev" src="${p.img || ''}" class="w-24 h-24 object-cover rounded-xl mt-2 border">
               ` : ''}
 
-              ${field === 'cat' ? `
-                <label class="font-bold text-gray-600">Yangi Katalog:</label>
-                <select id="ef-val" class="w-full p-2 border rounded-xl bg-gray-50 font-bold">
-                  ${categories.map(c => `<option value="${c.id}" ${p.categoryId===c.id?'selected':''}>${c.name}</option>`).join('')}
-                </select>
-              ` : ''}
-
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveFieldEdit('${p.id}', '${field}')" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">Saqlash</button>
                 <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">Bekor qilish</button>
@@ -1084,7 +1077,7 @@
         return;
       }
 
-      // PRODUCT DETAILS MODAL (WITH RUCHKACHA PENCILS)
+      // PRODUCT DETAILS MODAL
       if (selectedProductModal) {
         const p = selectedProductModal;
         const inCart = cart[p.id];
@@ -1101,7 +1094,7 @@
               <div class="relative">
                 <img src="${p.img || 'https://via.placeholder.com/300'}" class="w-full h-48 object-cover rounded-2xl border">
                 ${isAdminMode ? `
-                  <button onclick="editingFieldData='img'; activePopupModal='EDIT_PROD_FIELD'; tempBase64Image=p.img; render();" class="absolute bottom-2 right-2 bg-blue-600 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-xl flex items-center space-x-1 shadow">
+                  <button onclick="openEditFieldModal('${p.id}', 'img')" class="absolute bottom-2 right-2 bg-blue-600 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-xl flex items-center space-x-1 shadow">
                     <span>✏️ Rasmni O'zgartirish</span>
                   </button>
                 ` : ''}
@@ -1116,7 +1109,7 @@
                 <!-- NAME WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
                   <h2 class="text-lg font-black text-gray-900">${p.name}</h2>
-                  ${isAdminMode ? `<button onclick="editingFieldData='name'; activePopupModal='EDIT_PROD_FIELD'; render();" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg">✏️</button>` : ''}
+                  ${isAdminMode ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
                 
                 <!-- PRICE WITH EDIT -->
@@ -1131,23 +1124,23 @@
                       <p class="text-base font-black text-blue-600">${Number(p.price).toLocaleString()} so'm</p>
                     `}
                   </div>
-                  ${isAdminMode ? `<button onclick="editingFieldData='price'; activePopupModal='EDIT_PROD_FIELD'; render();" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg">✏️</button>` : ''}
+                  ${isAdminMode ? `<button onclick="openEditFieldModal('${p.id}', 'price')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
 
                 <!-- STOCK WITH EDIT -->
                 ${isAdminMode ? `
                   <div class="flex justify-between items-center pt-1 text-xs">
                     <span class="font-bold text-gray-600">Ombor Qoldig'i: <b class="${p.stock>0?'text-green-600':'text-red-500'}">${p.stock} ta</b></span>
-                    <button onclick="editingFieldData='stock'; activePopupModal='EDIT_PROD_FIELD'; render();" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg">✏️</button>
+                    <button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
                   </div>
                 ` : ''}
               </div>
 
-              <!-- TAVSIF / IZOH WITH EDIT -->
+              <!-- TAVSIF WITH EDIT -->
               <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1 relative">
                 <div class="flex justify-between items-center">
                   <h4 class="font-bold text-gray-700">📝 Tavsif / Izoh:</h4>
-                  ${isAdminMode ? `<button onclick="editingFieldData='desc'; activePopupModal='EDIT_PROD_FIELD'; render();" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg">✏️</button>` : ''}
+                  ${isAdminMode ? `<button onclick="openEditFieldModal('${p.id}', 'desc')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
                 <p class="text-gray-600 leading-relaxed">${p.desc || 'Tavsif kiritilmagan.'}</p>
               </div>
@@ -1173,7 +1166,7 @@
         return;
       }
 
-      // ORDER DETAILS MODAL (WITH DIRECT STATUS BUTTONS)
+      // ORDER DETAILS MODAL
       if (selectedOrderModal) {
         const o = selectedOrderModal;
         container.innerHTML = `
@@ -1222,7 +1215,35 @@
       container.innerHTML = '';
     }
 
-    // MODAL FORM SAVING LOGIC
+    // MODAL OPENERS & HANDLERS
+    function openProductDetailModal(id) {
+      activePopupModal = null;
+      selectedProductModal = products.find(p => p.id === id);
+      renderModalContainer();
+    }
+
+    function openEditFieldModal(prodId, fieldName) {
+      selectedProductModal = products.find(p => p.id === prodId);
+      editingFieldData = fieldName;
+      tempBase64Image = (fieldName === 'img' && selectedProductModal) ? selectedProductModal.img : null;
+      activePopupModal = 'EDIT_PROD_FIELD';
+      render();
+    }
+
+    function openOrderModal(id) {
+      selectedOrderModal = orders.find(o => o.id === id);
+      renderModalContainer();
+    }
+
+    function updateOrderStatus(id, newStatus) {
+      const o = orders.find(ord => ord.id === id);
+      if (o) o.status = newStatus;
+      localStorage.setItem('orders', JSON.stringify(orders));
+      selectedOrderModal = null;
+      render();
+    }
+
+    // MODAL SAVERS
     function saveProductFromModal() {
       const name = document.getElementById('m-prod-name').value.trim();
       const price = parseFloat(document.getElementById('m-prod-price').value);
