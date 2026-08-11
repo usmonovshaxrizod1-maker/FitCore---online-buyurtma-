@@ -77,9 +77,9 @@
     function initStorage() {
       if (!localStorage.getItem('products')) {
         const initialProducts = [
-          { id: "p1", sku: "SP-00001", name: "Whey Protein Gold 1kg", price: 400000, oldPrice: 480000, stock: 15, categoryId: "c1-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "FITCORE zardob proteini.", isFeatured: true, sortOrder: 1 },
-          { id: "p2", sku: "SP-00002", name: "Creatine Monohydrate 300g", price: 220000, oldPrice: null, stock: 5, categoryId: "c1-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "FITCORE mikronizatsiyalangan kreatin.", isFeatured: true, sortOrder: 2 },
-          { id: "p3", sku: "SP-00003", name: "Gantel 10kg Rezina", price: 320000, oldPrice: 350000, stock: 8, categoryId: "c2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Rezinalangan gantel.", isFeatured: false, sortOrder: 3 }
+          { id: "p1", sku: "110001", name: "Whey Protein Gold 1kg", price: 400000, oldPrice: 480000, stock: 15, categoryId: "c1-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "FITCORE zardob proteini.", isFeatured: true, sortOrder: 1 },
+          { id: "p2", sku: "120001", name: "Creatine Monohydrate 300g", price: 220000, oldPrice: null, stock: 5, categoryId: "c1-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "FITCORE mikronizatsiyalangan kreatin.", isFeatured: true, sortOrder: 2 },
+          { id: "p3", sku: "200001", name: "Gantel 10kg Rezina", price: 320000, oldPrice: 350000, stock: 8, categoryId: "c2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Rezinalangan gantel.", isFeatured: false, sortOrder: 3 }
         ];
         localStorage.setItem('products', JSON.stringify(initialProducts));
       }
@@ -112,6 +112,7 @@
     let cart = JSON.parse(localStorage.getItem('cart'));
     let orders = JSON.parse(localStorage.getItem('orders'));
     let cartLogs = JSON.parse(localStorage.getItem('cartLogs'));
+    let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
 
     if (!adminsList.includes(String(CONFIG.ADMIN_ID))) {
       adminsList.push(String(CONFIG.ADMIN_ID));
@@ -141,12 +142,53 @@
       search: ''
     };
 
-    const currentUser = {
-      firstName: tg?.initDataUnsafe?.user?.first_name || "Mijoz",
-      lastName: tg?.initDataUnsafe?.user?.last_name || "",
-      phone: "+998",
+    let currentUser = {
+      firstName: registeredUser?.firstName || tg?.initDataUnsafe?.user?.first_name || "Mijoz",
+      lastName: registeredUser?.lastName || tg?.initDataUnsafe?.user?.last_name || "",
+      phone: registeredUser?.phone || "+998",
       tgId: currentTgId
     };
+
+    // 6-XONALI SKI (ID) HISOBLASH
+    function generateProductSKU(catId) {
+      if (!catId) return "100001";
+
+      let path = [];
+      let current = categories.find(c => c.id === catId);
+      while (current) {
+        path.unshift(current);
+        current = categories.find(c => c.id === current.parentId);
+      }
+
+      let l1 = 1, l2 = 0, l3 = 0;
+
+      // 1-Darajali Katalog
+      if (path.length >= 1) {
+        const rootCats = categories.filter(c => !c.parentId);
+        const idx = rootCats.findIndex(c => c.id === path[0].id);
+        l1 = idx >= 0 ? ((idx + 1) % 10) : 1;
+      }
+
+      // 2-Darajali Katalog
+      if (path.length >= 2) {
+        const subCats = categories.filter(c => c.parentId === path[0].id);
+        const idx = subCats.findIndex(c => c.id === path[1].id);
+        l2 = idx >= 0 ? ((idx + 1) % 10) : 0;
+      }
+
+      // 3-Darajali Katalog
+      if (path.length >= 3) {
+        const subSubCats = categories.filter(c => c.parentId === path[1].id);
+        const idx = subSubCats.findIndex(c => c.id === path[2].id);
+        l3 = idx >= 0 ? ((idx + 1) % 10) : 0;
+      }
+
+      const prefix = `${l1}${l2}${l3}`;
+      const prodsInCat = products.filter(p => p.categoryId === catId);
+      const prodNum = (prodsInCat.length + 1).toString().padStart(3, '0');
+
+      return `${prefix}${prodNum}`; // 6-xonali ID (Masalan: 111001)
+    }
 
     // TRANSLITERATION & SEARCH
     function normalizeText(text) {
@@ -247,6 +289,11 @@
     function render() {
       updateCartBadge();
 
+      // IF USER NOT REGISTERED ON FIRST VISIT, SHOW REGISTRATION MODAL
+      if (!registeredUser && !isAdminMode && activePopupModal !== 'REGISTRATION') {
+        activePopupModal = 'REGISTRATION';
+      }
+
       const roleTag = document.getElementById('role-tag');
       const whBtn = document.getElementById('nav-warehouse-btn');
       
@@ -299,7 +346,6 @@
       const q = document.getElementById('search-input')?.value || '';
       let filtered = searchProducts(q);
 
-      // BOSH SAHIFADA QIDIRUV BO'LMASA FAQAT PIN (📌) BOSILGAN TOVARLAR CHIQADI
       if (currentTab === 'home' && !q.trim()) {
         filtered = filtered.filter(p => p.isFeatured === true);
       }
@@ -535,7 +581,7 @@
 
             <div>
               <label class="text-xs font-bold text-gray-600">Telefon Raqamingiz *</label>
-              <input type="text" id="chk-phone" value="+998 " placeholder="+998 90 123 45 67" class="w-full mt-1 p-2.5 border rounded-xl text-xs font-mono">
+              <input type="text" id="chk-phone" value="${currentUser.phone}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2.5 border rounded-xl text-xs font-mono">
             </div>
 
             <div>
@@ -702,7 +748,6 @@
     // 4. ORDERS TAB (USER & ADMIN)
     function renderOrders(container) {
       if (isAdminMode) {
-        // ADMIN ORDERS VIEW
         let filteredOrders = orders.filter(o => {
           const matchStatus = adminOrderFilters.statuses.includes(o.status);
           const matchRegion = adminOrderFilters.region === 'ALL' || o.region === adminOrderFilters.region;
@@ -849,8 +894,8 @@
 
           <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
             <h3 class="font-bold text-sm text-gray-800">⚡ ID orqali ko'p tovar qoldig'ini yangilash</h3>
-            <p class="text-[10px] text-gray-500">SKU va sonini kiriting (Masalan: <b>SP-00001 35</b>)</p>
-            <textarea id="bulk-input" rows="4" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="SP-00001 35&#10;SP-00002 20"></textarea>
+            <p class="text-[10px] text-gray-500">SKU va sonini kiriting (Masalan: <b>111001 35</b>)</p>
+            <textarea id="bulk-input" rows="4" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="111001 35&#10;111002 20"></textarea>
             <button onclick="saveBulkStock()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs">💾 Barchasini saqlash</button>
           </div>
         </div>
@@ -869,7 +914,7 @@
           </div>
           ${catProds.map(p => `
             <div class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1">
-              <span>${indent}&nbsp;&nbsp;* [${p.sku}] ${p.name}</span>
+              <span>${indent}&nbsp;&nbsp;* [ID: ${p.sku}] ${p.name}</span>
               <b class="${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ta</b>
             </div>
           `).join('')}
@@ -878,7 +923,7 @@
       `;
     }
 
-    // 6. PROFIL TAB (ADMIN MANAGEMENT ALWAYS VISIBLE WHEN IN ADMIN MODE)
+    // 6. PROFIL TAB (REGISTRATION & ADMIN MANAGEMENT)
     function renderProfile(container) {
       container.innerHTML = `
         <div class="space-y-4">
@@ -888,10 +933,8 @@
             </div>
             <div>
               <h2 class="text-lg font-bold">${currentUser.firstName} ${currentUser.lastName}</h2>
-              <p class="text-xs text-gray-500">TG ID: ${currentUser.tgId}</p>
-              <span class="inline-block mt-1 px-2 py-0.5 text-[10px] font-bold rounded ${isAdminMode ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}">
-                ${isAdminMode ? '🛡️ ADMIN REJIMI' : '👤 USER REJIMI'}
-              </span>
+              <p class="text-xs text-gray-500">Tel: ${currentUser.phone}</p>
+              <button onclick="activePopupModal='REGISTRATION'; render();" class="mt-1 text-[10px] text-blue-600 font-bold underline">Ma'lumotlarni tahrirlash</button>
             </div>
           </div>
 
@@ -900,7 +943,6 @@
             <i data-lucide="refresh-cw" class="w-5 h-5"></i>
           </button>
 
-          <!-- ADMINLARNI BOSHQARISH -->
           ${isAdminMode ? `
             <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
               <div class="flex justify-between items-center border-b pb-2">
@@ -938,7 +980,34 @@
     function renderModalContainer() {
       const container = document.getElementById('modal-container');
 
-      // POPUP MODALS
+      // REGISTRATION MODAL
+      if (activePopupModal === 'REGISTRATION') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2 text-center">📝 FITCORE Ro'yxatdan O'tish</h3>
+              <p class="text-[11px] text-gray-500 text-center">Buyurtmalar tezkor rasmiylashtirilishi uchun ma'lumotlaringizni kiriting:</p>
+              <div>
+                <label class="font-bold text-gray-600">Ismingiz *</label>
+                <input type="text" id="reg-fname" value="${currentUser.firstName}" placeholder="Ali" class="w-full mt-1 p-2 border rounded-xl">
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">Familiyangiz *</label>
+                <input type="text" id="reg-lname" value="${currentUser.lastName}" placeholder="Valiyev" class="w-full mt-1 p-2 border rounded-xl">
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">Telefon Raqamingiz *</label>
+                <input type="text" id="reg-phone" value="${currentUser.phone}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2 border rounded-xl font-mono">
+              </div>
+              <div class="pt-2">
+                <button onclick="saveRegistrationFromModal()" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ Saqlash</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
       if (activePopupModal === 'ADD_PROD') {
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -1106,7 +1175,7 @@
               
               <div class="space-y-1">
                 <div class="flex justify-between items-center">
-                  <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">${p.sku}</span>
+                  <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: ${p.sku}</span>
                   ${isAdminMode ? `<button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">🗑️ O'chirish</button>` : ''}
                 </div>
 
@@ -1248,6 +1317,24 @@
     }
 
     // MODAL SAVERS
+    function saveRegistrationFromModal() {
+      const fn = document.getElementById('reg-fname').value.trim();
+      const ln = document.getElementById('reg-lname').value.trim();
+      const ph = document.getElementById('reg-phone').value.trim();
+
+      if (!fn || !ph || ph === '+998') return alert("Iltimos, ismingiz va telefon raqamingizni kiriting!");
+
+      registeredUser = { firstName: fn, lastName: ln, phone: ph };
+      localStorage.setItem('registeredUser', JSON.stringify(registeredUser));
+      currentUser.firstName = fn;
+      currentUser.lastName = ln;
+      currentUser.phone = ph;
+
+      activePopupModal = null;
+      alert("✅ Ro'yxatdan o'tdingiz!");
+      render();
+    }
+
     function saveProductFromModal() {
       const name = document.getElementById('m-prod-name').value.trim();
       const price = parseFloat(document.getElementById('m-prod-price').value);
@@ -1262,9 +1349,12 @@
         oldPrice = oldPriceVal;
       }
 
+      // AVTOMATIK 6-XONALI ID (SKU) BERISH
+      const sku = generateProductSKU(adminCatParentId);
+
       const newP = {
         id: "p" + Date.now(),
-        sku: "SP-" + Math.floor(10000 + Math.random() * 90000),
+        sku,
         name, price, oldPrice, stock, desc: desc || name,
         img: tempBase64Image || "https://via.placeholder.com/150",
         categoryId: adminCatParentId,
@@ -1276,7 +1366,7 @@
       localStorage.setItem('products', JSON.stringify(products));
       tempBase64Image = null;
       activePopupModal = null;
-      alert("✅ Yangi tovar muvaffaqiyatli qo'shildi va Omborda aks etdi!");
+      alert(`✅ Yangi tovar (ID: ${sku}) muvaffaqiyatli qo'shildi!`);
       render();
     }
 
