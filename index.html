@@ -284,9 +284,8 @@
           </div>
 
           ${isAdminMode ? `
-            <div class="bg-amber-50 border border-amber-200 p-3 rounded-2xl text-xs flex justify-between items-center text-amber-900 font-bold shadow-sm">
-              <span>🛡️ Admin Rejimi: Bosh sahifa boshqaruvi</span>
-              <button onclick="openAddProductModal()" class="bg-amber-600 text-white px-3 py-1.5 rounded-xl">+ Tovar Qo'shish</button>
+            <div class="bg-amber-50 border border-amber-200 p-3 rounded-2xl text-xs font-bold text-amber-900 shadow-sm flex items-center justify-between">
+              <span>🛡️ Admin Rejimi: Bosh sahifa (Pin 📌 orqali tanlangan tovarlar)</span>
             </div>
           ` : ''}
 
@@ -298,12 +297,18 @@
 
     function handleSearch() {
       const q = document.getElementById('search-input')?.value || '';
-      const filtered = searchProducts(q);
+      let filtered = searchProducts(q);
+
+      // BOSH SAHIFADA QIDIRUV BO'LMASA FAQAT PIN (📌) BOSILGAN TOVARLAR CHIQADI
+      if (currentTab === 'home' && !q.trim()) {
+        filtered = filtered.filter(p => p.isFeatured === true);
+      }
+
       const grid = document.getElementById('products-grid');
       if (!grid) return;
 
       if (filtered.length === 0) {
-        grid.innerHTML = `<div class="col-span-2 text-center py-8 bg-white rounded-2xl p-4 text-xs text-gray-500">🔍 Mahsulot topilmadi</div>`;
+        grid.innerHTML = `<div class="col-span-2 text-center py-8 bg-white rounded-2xl p-4 text-xs text-gray-500">🔍 Bosh sahifa uchun tovar biriktirilmagan yoki topilmadi</div>`;
         return;
       }
 
@@ -873,10 +878,8 @@
       `;
     }
 
-    // 6. PROFIL TAB (SUPER ADMIN & ADMIN MANAGEMENT)
+    // 6. PROFIL TAB (ADMIN MANAGEMENT ALWAYS VISIBLE WHEN IN ADMIN MODE)
     function renderProfile(container) {
-      const isSuperAdmin = currentTgId === String(CONFIG.ADMIN_ID);
-
       container.innerHTML = `
         <div class="space-y-4">
           <div class="bg-white p-5 rounded-2xl shadow-sm flex items-center space-x-4 border">
@@ -897,10 +900,11 @@
             <i data-lucide="refresh-cw" class="w-5 h-5"></i>
           </button>
 
-          ${isSuperAdmin ? `
+          <!-- ADMINLARNI BOSHQARISH -->
+          ${isAdminMode ? `
             <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
               <div class="flex justify-between items-center border-b pb-2">
-                <h3 class="font-bold text-xs text-amber-900">👑 Adminlarni Boshqarish (Bosh Admin)</h3>
+                <h3 class="font-bold text-xs text-amber-900">👑 Adminlarni Boshqarish</h3>
                 <button onclick="activePopupModal='ADD_ADMIN'; render();" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs flex items-center space-x-1 shadow-sm">
                   <span>➕ Yangi Admin Qo'shish</span>
                 </button>
@@ -1382,9 +1386,11 @@
 
     function toggleProductFeatured(id) {
       const p = products.find(prod => prod.id === id);
-      if (p) p.isFeatured = !p.isFeatured;
-      localStorage.setItem('products', JSON.stringify(products));
-      render();
+      if (p) {
+        p.isFeatured = !p.isFeatured;
+        localStorage.setItem('products', JSON.stringify(products));
+        render();
+      }
     }
 
     function deleteProduct(id) {
