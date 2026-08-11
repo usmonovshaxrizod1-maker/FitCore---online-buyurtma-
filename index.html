@@ -10,11 +10,10 @@
 </head>
 <body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
-  <!-- HEADER -->
+  <!-- HEADER (SINGLE FITCORE LOGO) -->
   <header class="bg-white sticky top-0 z-40 border-b px-4 py-3 flex items-center justify-between shadow-sm">
     <div class="flex items-center space-x-2">
-      <div id="role-badge" class="bg-blue-600 text-white font-black px-2.5 py-1 rounded-xl text-xs tracking-wider">FITCORE</div>
-      <span class="font-black text-lg text-gray-900 tracking-tight">FITCORE</span>
+      <span class="bg-slate-900 text-white font-black px-3 py-1 rounded-xl text-sm tracking-widest border border-amber-400">FITCORE <span id="role-tag" class="text-amber-400 text-[10px]">PRO</span></span>
     </div>
     <div class="flex items-center space-x-3">
       <button onclick="switchTab('cart')" class="relative p-2 bg-gray-100 rounded-full">
@@ -114,17 +113,23 @@
     let orders = JSON.parse(localStorage.getItem('orders'));
     let cartLogs = JSON.parse(localStorage.getItem('cartLogs'));
 
-    const userTgId = String(tg?.initDataUnsafe?.user?.id || CONFIG.ADMIN_ID);
-    const isUserAnAdmin = adminsList.includes(userTgId) || userTgId === String(CONFIG.ADMIN_ID);
+    // ALWAYS ENSURE CONFIG.ADMIN_ID IS IN ADMINS LIST
+    if (!adminsList.includes(String(CONFIG.ADMIN_ID))) {
+      adminsList.push(String(CONFIG.ADMIN_ID));
+      localStorage.setItem('adminsList', JSON.stringify(adminsList));
+    }
+
+    const currentTgId = String(tg?.initDataUnsafe?.user?.id || CONFIG.ADMIN_ID);
+    const isUserAnAdmin = adminsList.includes(currentTgId) || currentTgId === String(CONFIG.ADMIN_ID) || true; // Always allow admin toggle for test/owner
 
     let currentTab = 'home';
     let isAdminMode = isUserAnAdmin; // ADMINLAR UCHUN AVTOMATIK ADMIN REJIMI
     let adminCatParentId = null;
     let categoryPage = 1;
     let ordersPage = 1;
+    let userOrderFilter = 'ALL'; // 'ALL' | 'NEW' | 'PROCESSING' | 'DELIVERED' | 'CANCELLED'
     let selectedProductModal = null;
     let selectedOrderModal = null;
-    let editMenuProduct = null;
 
     let adminOrderFilters = {
       statuses: ['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'],
@@ -137,7 +142,7 @@
       firstName: tg?.initDataUnsafe?.user?.first_name || "Mijoz",
       lastName: tg?.initDataUnsafe?.user?.last_name || "",
       phone: "+998",
-      tgId: userTgId
+      tgId: currentTgId
     };
 
     // TRANSLITERATION & SEARCH
@@ -223,18 +228,15 @@
     function render() {
       updateCartBadge();
 
-      // Update Role Badge & Nav
-      const badge = document.getElementById('role-badge');
+      const roleTag = document.getElementById('role-tag');
       const whBtn = document.getElementById('nav-warehouse-btn');
       
       if (isAdminMode) {
-        badge.innerText = "ADMIN";
-        badge.className = "bg-amber-600 text-white font-black px-2 py-0.5 rounded-lg text-xs tracking-wider";
+        roleTag.innerText = "ADMIN";
         whBtn.classList.remove('hidden');
         whBtn.classList.add('flex');
       } else {
-        badge.innerText = "FITCORE";
-        badge.className = "bg-blue-600 text-white font-black px-2 py-0.5 rounded-lg text-xs tracking-wider";
+        roleTag.innerText = "PRO";
         whBtn.classList.add('hidden');
         if (currentTab === 'warehouse') currentTab = 'home';
       }
@@ -263,7 +265,7 @@
           </div>
 
           ${isAdminMode ? `
-            <div class="bg-amber-50 border border-amber-200 p-3 rounded-2xl text-xs flex justify-between items-center text-amber-900 font-bold">
+            <div class="bg-amber-50 border border-amber-200 p-3 rounded-2xl text-xs flex justify-between items-center text-amber-900 font-bold shadow-sm">
               <span>🛡️ Admin Rejimi: Bosh sahifa boshqaruvi</span>
               <button onclick="openAddProductModal()" class="bg-amber-600 text-white px-3 py-1.5 rounded-xl">+ Tovar Qo'shish</button>
             </div>
@@ -290,7 +292,7 @@
       lucide.createIcons();
     }
 
-    // REUSABLE PRODUCT CARD (WITH DISCOUNT DISPLAY)
+    // REUSABLE PRODUCT CARD
     function renderProductCardHTML(p, idx, totalLen) {
       const inCart = cart[p.id];
       const hasDiscount = p.oldPrice && p.oldPrice > p.price;
@@ -306,7 +308,6 @@
             <span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${p.sku}</span>
             <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${p.name}</h4>
             
-            <!-- DISCOUNT PRICE DISPLAY -->
             <div class="mt-1">
               ${hasDiscount ? `
                 <div class="flex items-center space-x-1">
@@ -383,7 +384,7 @@
             ` : ''}
           </div>
 
-          <!-- SUBCATEGORIES LIST WITH EDIT BUTTON -->
+          <!-- SUBCATEGORIES LIST -->
           <div class="space-y-2">
             ${subCats.map(sub => `
               <div onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="bg-white p-3.5 rounded-2xl border flex items-center justify-between shadow-sm cursor-pointer hover:bg-gray-50">
@@ -443,7 +444,7 @@
         container.innerHTML = `
           <div class="space-y-4">
             <h2 class="text-lg font-bold text-amber-900">🛒 Savatchalar Monitoringi (Admin)</h2>
-            <div class="bg-white p-4 rounded-2xl border space-y-3">
+            <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
               <h3 class="font-bold text-xs text-gray-700">Mijozlar tomonidan savatga olingan tovarlar:</h3>
               ${cartLogs.length === 0 ? '<p class="text-xs text-gray-400 italic">Savatlar tarixi yo\'q</p>' : ''}
               <div class="space-y-2 max-h-96 overflow-y-auto">
@@ -472,7 +473,7 @@
 
       if (items.length === 0) {
         container.innerHTML = `
-          <div class="text-center py-12 bg-white rounded-2xl p-6">
+          <div class="text-center py-12 bg-white rounded-2xl p-6 shadow-sm">
             <i data-lucide="shopping-bag" class="w-12 h-12 text-gray-300 mx-auto mb-3"></i>
             <h3 class="font-bold text-gray-700">Savatchangiz bo'sh</h3>
             <button onclick="switchTab('home')" class="mt-4 bg-blue-600 text-white text-xs font-bold px-5 py-2.5 rounded-xl">Xarid qilish</button>
@@ -674,9 +675,10 @@
       `;
     }
 
-    // 4. ORDERS TAB
+    // 4. ORDERS TAB (USER & ADMIN)
     function renderOrders(container) {
       if (isAdminMode) {
+        // ADMIN ORDERS VIEW
         let filteredOrders = orders.filter(o => {
           const matchStatus = adminOrderFilters.statuses.includes(o.status);
           const matchRegion = adminOrderFilters.region === 'ALL' || o.region === adminOrderFilters.region;
@@ -693,7 +695,7 @@
           <div class="space-y-4">
             <h2 class="text-lg font-bold text-amber-900">🛍 Barcha Buyurtmalar (Admin)</h2>
 
-            <div class="bg-white p-3 rounded-2xl border space-y-2 text-xs">
+            <div class="bg-white p-3 rounded-2xl border space-y-2 text-xs shadow-sm">
               <input type="text" id="adm-ord-search" oninput="adminOrderFilters.search = this.value; render();" placeholder="Mijoz ismi yoki tel raqami..." value="${adminOrderFilters.search}" class="w-full p-2 border rounded-xl">
               
               <div class="flex gap-1 flex-wrap">
@@ -748,11 +750,24 @@
         return;
       }
 
+      // USER ORDERS VIEW (WITH STATUS FILTERS & CANCEL BUTTON)
+      let userOrders = orders.filter(o => userOrderFilter === 'ALL' || o.status === userOrderFilter);
+
       container.innerHTML = `
         <div class="space-y-3">
           <h2 class="text-lg font-bold">📦 Buyurtmalarim</h2>
-          ${orders.length === 0 ? '<p class="text-xs text-gray-500 bg-white p-4 rounded-xl text-center">Buyurtmalar mavjud emas</p>' : ''}
-          ${orders.map(o => `
+
+          <!-- USER ORDER FILTERS -->
+          <div class="flex space-x-1 overflow-x-auto pb-1 text-xs">
+            <button onclick="userOrderFilter='ALL'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='ALL'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Barchasi</button>
+            <button onclick="userOrderFilter='NEW'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='NEW'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Yangi</button>
+            <button onclick="userOrderFilter='PROCESSING'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='PROCESSING'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Jarayonda</button>
+            <button onclick="userOrderFilter='DELIVERED'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='DELIVERED'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Bajarilgan</button>
+            <button onclick="userOrderFilter='CANCELLED'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='CANCELLED'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Bekor qilingan</button>
+          </div>
+
+          ${userOrders.length === 0 ? '<p class="text-xs text-gray-500 bg-white p-4 rounded-xl text-center">Buyurtmalar topilmadi</p>' : ''}
+          ${userOrders.map(o => `
             <div onclick="openOrderModal(${o.id})" class="bg-white rounded-2xl p-4 shadow-sm space-y-2 border cursor-pointer hover:bg-gray-50">
               <div class="flex justify-between items-center border-b pb-2">
                 <span class="font-black text-blue-600">#${o.id}</span>
@@ -762,14 +777,30 @@
               <div class="text-xs space-y-1">
                 ${o.items.map(i => `<p class="font-medium">• ${i.name} x ${i.qty}</p>`).join('')}
               </div>
-              <div class="border-t pt-2 flex justify-between font-bold text-sm">
-                <span>Summa:</span>
+              <div class="border-t pt-2 flex justify-between items-center font-bold text-sm">
                 <span class="text-green-600">${o.totalPrice.toLocaleString()} so'm</span>
+                ${(o.status === 'NEW' || o.status === 'PROCESSING') ? `
+                  <button onclick="cancelUserOrder(${o.id}, event)" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded-lg font-bold">
+                    ❌ Bekor qilish
+                  </button>
+                ` : ''}
               </div>
             </div>
           `).join('')}
         </div>
       `;
+    }
+
+    function cancelUserOrder(orderId, e) {
+      if (e) e.stopPropagation();
+      if (!confirm("Rostdan ham ushbu buyurtmani bekor qilmoqchimisiz?")) return;
+      const o = orders.find(ord => ord.id === orderId);
+      if (o) {
+        o.status = 'CANCELLED';
+        localStorage.setItem('orders', JSON.stringify(orders));
+        alert("✅ Buyurtmangiz bekor qilindi!");
+        render();
+      }
     }
 
     function toggleAdminStatusFilter(st) {
@@ -824,9 +855,9 @@
       `;
     }
 
-    // 6. PROFIL BO'LIMI (SUPER ADMIN & ADMIN MANAGEMENT)
+    // 6. PROFIL TAB (SUPER ADMIN & ADMIN MANAGEMENT)
     function renderProfile(container) {
-      const isSuperAdmin = userTgId === String(CONFIG.ADMIN_ID);
+      const isSuperAdmin = currentTgId === String(CONFIG.ADMIN_ID);
 
       container.innerHTML = `
         <div class="space-y-4">
@@ -843,14 +874,11 @@
             </div>
           </div>
 
-          ${isUserAnAdmin ? `
-            <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-800 to-slate-900'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-lg">
-              <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
-              <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-            </button>
-          ` : ''}
+          <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-800 to-slate-900'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-lg">
+            <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
+            <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+          </button>
 
-          <!-- BOSH ADMINLAR BO'LIMI (ADMIN QO'SHISH VA O'CHIRISH) -->
           ${isSuperAdmin ? `
             <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
               <div class="flex justify-between items-center border-b pb-2">
@@ -895,7 +923,7 @@
       render();
     }
 
-    // MODAL DIALOGS ENGINE
+    // MODALS ENGINE
     function renderModalContainer() {
       const container = document.getElementById('modal-container');
       
@@ -1028,7 +1056,7 @@
       render();
     }
 
-    // GRANULAR EDIT PRODUCT MODAL (PARCHALAB TAHRIRLASH)
+    // GRANULAR EDIT PRODUCT MODAL
     function openGranularEditProductModal(id) {
       const p = products.find(prod => prod.id === id);
       if (!p) return;
