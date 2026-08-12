@@ -7,6 +7,8 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- SUPABASE DATABASE SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
@@ -28,7 +30,10 @@
 
   <!-- MAIN CONTAINER -->
   <main id="app-content" class="p-4 max-w-md mx-auto min-h-screen">
-    <!-- Dynamic Content -->
+    <div id="loading-spinner" class="py-12 text-center text-xs font-bold text-gray-500">
+      <i data-lucide="loader-2" class="w-8 h-8 animate-spin mx-auto mb-2 text-blue-600"></i>
+      <span>Markaziy bazadan yuklanmoqda...</span>
+    </div>
   </main>
 
   <!-- BOTTOM NAVIGATION -->
@@ -64,68 +69,35 @@
 
   <!-- JAVASCRIPT LOGIC -->
   <script>
-    // ⚙️ CONFIGURATION
+    // ⚙️ CONFIGURATION & SUPABASE DATABASE CONNECTION
     const CONFIG = {
-      BOT_TOKEN: "BOT_TOKEN_SHUYERGA",
-      ADMIN_ID: "1533504949" // Bosh Admin Telegram ID
+      BOT_TOKEN: "8659743606:AAFcAN91p-6-32yTsPInypX-r1qfXylIYIs",
+      ADMIN_ID: "1533504949",
+      SUPABASE_URL: "https://mvgbqggrzshwjhmwqcyp.supabase.co",
+      SUPABASE_KEY: "sb_publishable_f86Xiu8_yFR_kkZNU95P-g_inE5zCyA"
     };
 
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
-    // INITIALIZATION & STORAGE
-    function initStorage() {
-      if (!localStorage.getItem('products')) {
-        const initialProducts = [
-          { id: "p1", sku: "110001", name: "Whey Protein Gold 1kg", price: 400000, oldPrice: 480000, stock: 15, categoryId: "c1-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "FITCORE zardob proteini.", isFeatured: true, sortOrder: 1 },
-          { id: "p2", sku: "120001", name: "Creatine Monohydrate 300g", price: 220000, oldPrice: null, stock: 5, categoryId: "c1-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "FITCORE mikronizatsiyalangan kreatin.", isFeatured: true, sortOrder: 2 },
-          { id: "p3", sku: "200001", name: "Gantel 10kg Rezina", price: 320000, oldPrice: 350000, stock: 8, categoryId: "c2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Rezinalangan gantel.", isFeatured: false, sortOrder: 3 }
-        ];
-        localStorage.setItem('products', JSON.stringify(initialProducts));
-      }
-
-      if (!localStorage.getItem('categories')) {
-        const initialCategories = [
-          { id: "c1", name: "Sport oziq-ovqatlari", parentId: null, img: "🧪" },
-          { id: "c1-1", name: "Protein", parentId: "c1", img: "🥛" },
-          { id: "c1-2", name: "Kreatin", parentId: "c1", img: "⚡" },
-          { id: "c2", name: "Sport buyumlari", parentId: null, img: "🏋️‍♂️" }
-        ];
-        localStorage.setItem('categories', JSON.stringify(initialCategories));
-      }
-
-      if (!localStorage.getItem('adminsList')) {
-        localStorage.setItem('adminsList', JSON.stringify([String(CONFIG.ADMIN_ID)]));
-      }
-
-      if (!localStorage.getItem('cart')) localStorage.setItem('cart', JSON.stringify({}));
-      if (!localStorage.getItem('orders')) localStorage.setItem('orders', JSON.stringify([]));
-      if (!localStorage.getItem('cartLogs')) localStorage.setItem('cartLogs', JSON.stringify([]));
-    }
-
-    initStorage();
+    // SUPABASE CLIENT INITIALIZATION
+    const supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 
     // STATE VARIABLES
-    let products = JSON.parse(localStorage.getItem('products'));
-    let categories = JSON.parse(localStorage.getItem('categories'));
-    let adminsList = JSON.parse(localStorage.getItem('adminsList'));
-    let cart = JSON.parse(localStorage.getItem('cart'));
-    let orders = JSON.parse(localStorage.getItem('orders'));
-    let cartLogs = JSON.parse(localStorage.getItem('cartLogs'));
+    let products = [];
+    let categories = [];
+    let adminsList = [String(CONFIG.ADMIN_ID)];
+    let cart = JSON.parse(localStorage.getItem('cart') || "{}");
+    let orders = [];
+    let cartLogs = [];
     let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
 
-    if (!adminsList.includes(String(CONFIG.ADMIN_ID))) {
-      adminsList.push(String(CONFIG.ADMIN_ID));
-      localStorage.setItem('adminsList', JSON.stringify(adminsList));
-    }
-
-    // AUTHENTICATION SECURITY CHECK
     const currentTgId = String(tg?.initDataUnsafe?.user?.id || CONFIG.ADMIN_ID);
-    const isSuperAdmin = (currentTgId === String(CONFIG.ADMIN_ID));
-    const isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
+    let isSuperAdmin = (currentTgId === String(CONFIG.ADMIN_ID));
+    let isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
 
     let currentTab = 'home';
-    let isAdminMode = isUserAnAdmin; // Adminlar uchun avtomatik Admin rejimi
+    let isAdminMode = isUserAnAdmin;
     let adminCatParentId = null;
     let categoryPage = 1;
     let ordersPage = 1;
@@ -134,7 +106,6 @@
     let selectedOrderModal = null;
     let activePopupModal = null; 
     let editingFieldData = null;
-
     let tempBase64Image = null;
 
     let adminOrderFilters = {
@@ -150,6 +121,83 @@
       phone: registeredUser?.phone || "+998",
       tgId: currentTgId
     };
+
+    // LOAD CENTRAL DATA FROM SUPABASE DATABASE
+    async function loadDatabaseData() {
+      try {
+        // 1. Fetch Products
+        const { data: pData } = await supabase.from('products').select('*').order('sort_order', { ascending: true });
+        if (pData && pData.length > 0) {
+          products = pData.map(p => ({
+            id: p.id,
+            sku: p.sku,
+            name: p.name,
+            price: Number(p.price),
+            oldPrice: p.old_price ? Number(p.old_price) : null,
+            stock: p.stock,
+            desc: p.description,
+            img: p.image,
+            categoryId: p.category_id,
+            status: p.status,
+            isFeatured: p.is_featured,
+            sortOrder: p.sort_order
+          }));
+        }
+
+        // 2. Fetch Categories
+        const { data: cData } = await supabase.from('categories').select('*');
+        if (cData && cData.length > 0) {
+          categories = cData.map(c => ({
+            id: c.id,
+            name: c.name,
+            parentId: c.parent_id,
+            img: c.image
+          }));
+        }
+
+        // 3. Fetch Admins List
+        const { data: aData } = await supabase.from('admins').select('*');
+        if (aData && aData.length > 0) {
+          adminsList = aData.map(a => String(a.telegram_id));
+        }
+
+        // 4. Fetch Orders
+        const { data: oData } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+        if (oData && oData.length > 0) {
+          orders = oData.map(o => ({
+            id: o.id,
+            user: o.user_name,
+            phone: o.phone,
+            region: o.region,
+            district: o.district,
+            address: o.address,
+            payMethod: o.payment_method,
+            items: o.items,
+            totalPrice: Number(o.total_price),
+            status: o.status,
+            date: new Date(o.created_at).toLocaleString()
+          }));
+        }
+
+        // 5. Fetch Cart Logs
+        const { data: clData } = await supabase.from('cart_logs').select('*').order('created_at', { ascending: false }).limit(50);
+        if (clData && clData.length > 0) {
+          cartLogs = clData.map(cl => ({
+            user: cl.user_name,
+            productName: cl.product_name,
+            time: new Date(cl.created_at).toLocaleString()
+          }));
+        }
+
+        isSuperAdmin = (currentTgId === String(CONFIG.ADMIN_ID));
+        isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
+        isAdminMode = isUserAnAdmin;
+
+      } catch (err) {
+        console.error("Database connection error:", err);
+      }
+      render();
+    }
 
     // 6-XONALI SKU (ID) GENERATOR
     function generateProductSKU(catId) {
@@ -229,19 +277,19 @@
     }
 
     // CART LOGIC
-    function addToCart(id, e) {
+    async function addToCart(id, e) {
       if (e) e.stopPropagation();
       const p = products.find(prod => prod.id === id);
       if (!p || p.stock <= 0) return alert("Mahsulot tugagan!");
 
       if (!cart[id]) {
         cart[id] = { qty: 1, addedAt: new Date().toLocaleString() };
-        cartLogs.unshift({
-          user: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
-          productName: p.name,
-          time: new Date().toLocaleString()
-        });
-        localStorage.setItem('cartLogs', JSON.stringify(cartLogs));
+        
+        const userTitle = `${currentUser.firstName} ${currentUser.lastName}`.trim();
+        cartLogs.unshift({ user: userTitle, productName: p.name, time: new Date().toLocaleString() });
+        
+        // Sync cart log to Supabase DB
+        await supabase.from('cart_logs').insert([{ user_name: userTitle, product_name: p.name }]);
       } else {
         cart[id].qty += 1;
       }
@@ -698,9 +746,21 @@
       });
 
       const totalPrice = orderItems.reduce((s, i) => s + (i.price * i.qty), 0);
+      const newOrderId = Math.floor(1000 + Math.random() * 9000);
+
+      // Save Order to Supabase DB
+      await supabase.from('orders').insert([{
+        id: newOrderId,
+        user_name: fullname,
+        phone, region, district, address,
+        payment_method: selectedPayMethod,
+        items: orderItems,
+        total_price: totalPrice,
+        status: "NEW"
+      }]);
 
       const newOrder = {
-        id: Math.floor(1000 + Math.random() * 9000),
+        id: newOrderId,
         user: fullname,
         phone, region, district, address,
         payMethod: selectedPayMethod,
@@ -711,7 +771,6 @@
       };
 
       orders.unshift(newOrder);
-      localStorage.setItem('orders', JSON.stringify(orders));
 
       // TELEGRAM NOTIFICATION
       let msg = `🛍 <b>FITCORE - YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
@@ -751,7 +810,6 @@
     // 4. ORDERS TAB (USER & ADMIN)
     function renderOrders(container) {
       if (isAdminMode && isUserAnAdmin) {
-        // ADMIN ORDERS VIEW
         let filteredOrders = orders.filter(o => {
           const matchStatus = adminOrderFilters.statuses.includes(o.status);
           const matchRegion = adminOrderFilters.region === 'ALL' || o.region === adminOrderFilters.region;
@@ -863,13 +921,13 @@
       `;
     }
 
-    function cancelUserOrder(orderId, e) {
+    async function cancelUserOrder(orderId, e) {
       if (e) e.stopPropagation();
       if (!confirm("Rostdan ham ushbu buyurtmani bekor qilmoqchimisiz?")) return;
       const o = orders.find(ord => ord.id === orderId);
       if (o) {
         o.status = 'CANCELLED';
-        localStorage.setItem('orders', JSON.stringify(orders));
+        await supabase.from('orders').update({ status: 'CANCELLED' }).eq('id', orderId);
         alert("✅ Buyurtmangiz bekor qilindi!");
         render();
       }
@@ -927,7 +985,7 @@
       `;
     }
 
-    // 6. PROFIL TAB (SUPER ADMIN & ADMIN MANAGEMENT)
+    // 6. PROFIL TAB
     function renderProfile(container) {
       container.innerHTML = `
         <div class="space-y-4">
@@ -949,7 +1007,6 @@
             </button>
           ` : ''}
 
-          <!-- BOSH ADMINGA VA ADMINLARGA KO'RINADIGAN BO'LIM -->
           ${(isSuperAdmin && isAdminMode) ? `
             <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
               <div class="flex justify-between items-center border-b pb-2">
@@ -975,10 +1032,10 @@
       `;
     }
 
-    function removeAdmin(admId) {
+    async function removeAdmin(admId) {
       if (!confirm("Ushbu admin huquqini bekor qilmoqchimisiz?")) return;
       adminsList = adminsList.filter(a => a !== admId);
-      localStorage.setItem('adminsList', JSON.stringify(adminsList));
+      await supabase.from('admins').delete().eq('telegram_id', admId);
       alert("✅ Admin o'chirildi!");
       render();
     }
@@ -987,7 +1044,6 @@
     function renderModalContainer() {
       const container = document.getElementById('modal-container');
 
-      // REGISTRATION MODAL
       if (activePopupModal === 'REGISTRATION') {
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -1186,13 +1242,11 @@
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">🗑️ O'chirish</button>` : ''}
                 </div>
 
-                <!-- NAME WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
                   <h2 class="text-lg font-black text-gray-900">${p.name}</h2>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
                 
-                <!-- PRICE WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
                   <div>
                     ${hasDiscount ? `
@@ -1207,7 +1261,6 @@
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'price')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
 
-                <!-- STOCK WITH EDIT -->
                 ${(isAdminMode && isUserAnAdmin) ? `
                   <div class="flex justify-between items-center pt-1 text-xs">
                     <span class="font-bold text-gray-600">Ombor Qoldig'i: <b class="${p.stock>0?'text-green-600':'text-red-500'}">${p.stock} ta</b></span>
@@ -1216,7 +1269,6 @@
                 ` : ''}
               </div>
 
-              <!-- TAVSIF WITH EDIT -->
               <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1 relative">
                 <div class="flex justify-between items-center">
                   <h4 class="font-bold text-gray-700">📝 Tavsif / Izoh:</h4>
@@ -1315,15 +1367,15 @@
       renderModalContainer();
     }
 
-    function updateOrderStatus(id, newStatus) {
+    async function updateOrderStatus(id, newStatus) {
       const o = orders.find(ord => ord.id === id);
       if (o) o.status = newStatus;
-      localStorage.setItem('orders', JSON.stringify(orders));
+      await supabase.from('orders').update({ status: newStatus }).eq('id', id);
       selectedOrderModal = null;
       render();
     }
 
-    // MODAL SAVERS
+    // MODAL SAVERS WITH SUPABASE SYNC
     function saveRegistrationFromModal() {
       const fn = document.getElementById('reg-fname').value.trim();
       const ln = document.getElementById('reg-lname').value.trim();
@@ -1342,7 +1394,7 @@
       render();
     }
 
-    function saveProductFromModal() {
+    async function saveProductFromModal() {
       const name = document.getElementById('m-prod-name').value.trim();
       const price = parseFloat(document.getElementById('m-prod-price').value);
       const oldPriceVal = parseFloat(document.getElementById('m-prod-oldprice').value);
@@ -1357,9 +1409,10 @@
       }
 
       const sku = generateProductSKU(adminCatParentId);
+      const newProdId = "p" + Date.now();
 
       const newP = {
-        id: "p" + Date.now(),
+        id: newProdId,
         sku,
         name, price, oldPrice, stock, desc: desc || name,
         img: tempBase64Image || "https://via.placeholder.com/150",
@@ -1368,73 +1421,93 @@
         isFeatured: true, sortOrder: products.length + 1
       };
 
+      // Save to Supabase DB
+      await supabase.from('products').insert([{
+        id: newP.id,
+        sku: newP.sku,
+        name: newP.name,
+        price: newP.price,
+        old_price: newP.oldPrice,
+        stock: newP.stock,
+        description: newP.desc,
+        image: newP.img,
+        category_id: newP.categoryId,
+        status: newP.status,
+        is_featured: newP.isFeatured,
+        sort_order: newP.sortOrder
+      }]);
+
       products.push(newP);
-      localStorage.setItem('products', JSON.stringify(products));
       tempBase64Image = null;
       activePopupModal = null;
-      alert(`✅ Yangi tovar (ID: ${sku}) muvaffaqiyatli qo'shildi!`);
+      alert(`✅ Yangi tovar (ID: ${sku}) bazaga saqlandi va omborda aks etdi!`);
       render();
     }
 
-    function saveCategoryFromModal() {
+    async function saveCategoryFromModal() {
       const name = document.getElementById('m-cat-name').value.trim();
       if (!name) return alert("Katalog nomini kiriting!");
 
-      categories.push({
-        id: "c" + Date.now(),
-        name,
-        img: tempBase64Image || (adminCatParentId ? "📦" : "📁"),
-        parentId: adminCatParentId
-      });
+      const newCatId = "c" + Date.now();
+      const newCatImg = tempBase64Image || (adminCatParentId ? "📦" : "📁");
 
-      localStorage.setItem('categories', JSON.stringify(categories));
+      // Save to Supabase DB
+      await supabase.from('categories').insert([{
+        id: newCatId,
+        name,
+        parent_id: adminCatParentId,
+        image: newCatImg
+      }]);
+
+      categories.push({ id: newCatId, name, img: newCatImg, parentId: adminCatParentId });
       tempBase64Image = null;
       activePopupModal = null;
-      alert("✅ Katalog yaratildi!");
+      alert("✅ Katalog bazaga saqlandi!");
       render();
     }
 
-    function saveAdminFromModal() {
+    async function saveAdminFromModal() {
       const idVal = document.getElementById('m-admin-id').value.trim();
       if (!idVal || isNaN(idVal)) return alert("To'g'ri Telegram ID kiriting!");
 
       if (!adminsList.includes(idVal)) {
         adminsList.push(idVal);
-        localStorage.setItem('adminsList', JSON.stringify(adminsList));
-        alert("✅ Yangi admin biriktirildi!");
+        await supabase.from('admins').insert([{ telegram_id: idVal }]);
+        alert("✅ Yangi admin bazaga qo'shildi!");
       }
       activePopupModal = null;
       render();
     }
 
-    function saveFieldEdit(prodId, field) {
+    async function saveFieldEdit(prodId, field) {
       const p = products.find(prod => prod.id === prodId);
       if (!p) return;
 
       if (field === 'name') {
         const val = document.getElementById('ef-val').value.trim();
-        if (val) p.name = val;
+        if (val) { p.name = val; await supabase.from('products').update({ name: val }).eq('id', prodId); }
       } else if (field === 'price') {
         const price = parseFloat(document.getElementById('ef-price').value);
         const oldVal = parseFloat(document.getElementById('ef-oldprice').value);
         if (!isNaN(price)) {
           p.price = price;
-          if (!isNaN(oldVal) && oldVal > price) p.oldPrice = oldVal;
-          else p.oldPrice = null;
+          p.oldPrice = (!isNaN(oldVal) && oldVal > price) ? oldVal : null;
+          await supabase.from('products').update({ price: p.price, old_price: p.oldPrice }).eq('id', prodId);
         }
       } else if (field === 'stock') {
         const stock = parseInt(document.getElementById('ef-val').value, 10);
         if (!isNaN(stock)) {
           p.stock = stock;
           p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
+          await supabase.from('products').update({ stock: p.stock, status: p.status }).eq('id', prodId);
         }
       } else if (field === 'desc') {
         p.desc = document.getElementById('ef-val').value.trim();
+        await supabase.from('products').update({ description: p.desc }).eq('id', prodId);
       } else if (field === 'img') {
-        if (tempBase64Image) p.img = tempBase64Image;
+        if (tempBase64Image) { p.img = tempBase64Image; await supabase.from('products').update({ image: p.img }).eq('id', prodId); }
       }
 
-      localStorage.setItem('products', JSON.stringify(products));
       tempBase64Image = null;
       activePopupModal = null;
       selectedProductModal = p;
@@ -1453,19 +1526,20 @@
       render();
     }
 
-    function openGranularEditCategoryModal(id, e) {
+    async function openGranularEditCategoryModal(id, e) {
       if (e) e.stopPropagation();
       const c = categories.find(cat => cat.id === id);
       if (!c) return;
 
       const name = prompt("Yangi katalog nomi:", c.name);
-      if (name) c.name = name;
-
-      localStorage.setItem('categories', JSON.stringify(categories));
+      if (name) {
+        c.name = name;
+        await supabase.from('categories').update({ name }).eq('id', id);
+      }
       render();
     }
 
-    function moveProductSort(id, dir) {
+    async function moveProductSort(id, dir) {
       const idx = products.findIndex(p => p.id === id);
       if (idx < 0) return;
       const targetIdx = idx + dir;
@@ -1475,44 +1549,48 @@
       products[idx] = products[targetIdx];
       products[targetIdx] = temp;
 
-      products.forEach((p, i) => p.sortOrder = i + 1);
-      localStorage.setItem('products', JSON.stringify(products));
+      for (let i = 0; i < products.length; i++) {
+        products[i].sortOrder = i + 1;
+        await supabase.from('products').update({ sort_order: i + 1 }).eq('id', products[i].id);
+      }
       render();
     }
 
-    function toggleProductFeatured(id) {
+    async function toggleProductFeatured(id) {
       const p = products.find(prod => prod.id === id);
       if (p) {
         p.isFeatured = !p.isFeatured;
-        localStorage.setItem('products', JSON.stringify(products));
+        await supabase.from('products').update({ is_featured: p.isFeatured }).eq('id', id);
         render();
       }
     }
 
-    function deleteProduct(id) {
+    async function deleteProduct(id) {
       if (!confirm("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz?")) return;
       const p = products.find(prod => prod.id === id);
-      if (p) p.status = 'DELETED';
-      localStorage.setItem('products', JSON.stringify(products));
+      if (p) {
+        p.status = 'DELETED';
+        await supabase.from('products').update({ status: 'DELETED' }).eq('id', id);
+      }
       render();
     }
 
-    function deleteCategory(id, e) {
+    async function deleteCategory(id, e) {
       if (e) e.stopPropagation();
       if (!confirm("Katalog o'chirilsinmi?")) return;
       categories = categories.filter(c => c.id !== id);
-      localStorage.setItem('categories', JSON.stringify(categories));
+      await supabase.from('categories').delete().eq('id', id);
       render();
     }
 
-    function saveBulkStock() {
+    async function saveBulkStock() {
       const input = document.getElementById('bulk-input').value.trim();
       if (!input) return alert("Ma'lumot kiriting!");
 
       const lines = input.split('\n');
       let count = 0;
 
-      lines.forEach(line => {
+      for (const line of lines) {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 2) {
           const sku = parts[0].toUpperCase();
@@ -1522,18 +1600,18 @@
           if (p && !isNaN(stock)) {
             p.stock = stock;
             p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
+            await supabase.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id);
             count++;
           }
         }
-      });
+      }
 
-      localStorage.setItem('products', JSON.stringify(products));
-      alert(`✅ ${count} ta mahsulot qoldig'i yangilandi!`);
+      alert(`✅ ${count} ta mahsulot qoldig'i bazada yangilandi!`);
       render();
     }
 
-    // INITIAL LAUNCH
-    switchTab('home');
+    // INITIAL LAUNCH: LOAD FROM SUPABASE DB FIRST
+    loadDatabaseData();
   </script>
 </body>
 </html>
