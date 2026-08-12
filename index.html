@@ -7,6 +7,7 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
@@ -28,7 +29,10 @@
 
   <!-- MAIN CONTAINER -->
   <main id="app-content" class="p-4 max-w-md mx-auto min-h-screen">
-    <!-- Dynamic Content -->
+    <div class="flex flex-col items-center justify-center py-20 text-gray-400">
+      <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+      <p class="text-xs font-bold">Yuklanmoqda...</p>
+    </div>
   </main>
 
   <!-- BOTTOM NAVIGATION -->
@@ -67,65 +71,55 @@
     // ⚙️ CONFIGURATION
     const CONFIG = {
       BOT_TOKEN: "8659743606:AAFcAN91p-6-32yTsPInypX-r1qfXylIYIs",
-      ADMIN_ID: "1533504949" // Bosh Admin Telegram ID
+      ADMIN_ID: "1533504949", // Bosh Admin Telegram ID
+      SUPABASE_URL: "https://mvgbqggrzhswjhmwqcyp.supabase.co",
+      SUPABASE_KEY: "sb_publishable_f86Xiu8_yFR_kkZNU95P-g_inE5zCyA"
     };
+
+    const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
-    // INITIALIZATION & STORAGE
-    function initStorage() {
-      if (!localStorage.getItem('products')) {
-        const initialProducts = [
-          { id: "p1", sku: "110001", name: "Whey Protein Gold 1kg", price: 400000, oldPrice: 480000, stock: 15, categoryId: "c1-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "FITCORE zardob proteini.", isFeatured: true, sortOrder: 1 },
-          { id: "p2", sku: "120001", name: "Creatine Monohydrate 300g", price: 220000, oldPrice: null, stock: 5, categoryId: "c1-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "FITCORE mikronizatsiyalangan kreatin.", isFeatured: true, sortOrder: 2 },
-          { id: "p3", sku: "200001", name: "Gantel 10kg Rezina", price: 320000, oldPrice: 350000, stock: 8, categoryId: "c2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Rezinalangan gantel.", isFeatured: false, sortOrder: 3 }
-        ];
-        localStorage.setItem('products', JSON.stringify(initialProducts));
-      }
-
-      if (!localStorage.getItem('categories')) {
-        const initialCategories = [
-          { id: "c1", name: "Sport oziq-ovqatlari", parentId: null, img: "🧪" },
-          { id: "c1-1", name: "Protein", parentId: "c1", img: "🥛" },
-          { id: "c1-2", name: "Kreatin", parentId: "c1", img: "⚡" },
-          { id: "c2", name: "Sport buyumlari", parentId: null, img: "🏋️‍♂️" }
-        ];
-        localStorage.setItem('categories', JSON.stringify(initialCategories));
-      }
-
-      if (!localStorage.getItem('adminsList')) {
-        localStorage.setItem('adminsList', JSON.stringify([String(CONFIG.ADMIN_ID)]));
-      }
-
-      if (!localStorage.getItem('cart')) localStorage.setItem('cart', JSON.stringify({}));
-      if (!localStorage.getItem('orders')) localStorage.setItem('orders', JSON.stringify([]));
-      if (!localStorage.getItem('cartLogs')) localStorage.setItem('cartLogs', JSON.stringify([]));
+    // ============ DB <-> JS MAPPERS ============
+    function mapProductFromDB(r) {
+      return {
+        id: r.id, sku: r.sku, name: r.name, price: Number(r.price),
+        oldPrice: r.old_price !== null ? Number(r.old_price) : null,
+        stock: r.stock, categoryId: r.category_id, status: r.status,
+        img: r.img, desc: r.description, isFeatured: r.is_featured, sortOrder: r.sort_order
+      };
+    }
+    function mapCategoryFromDB(r) {
+      return { id: r.id, name: r.name, parentId: r.parent_id, img: r.img };
+    }
+    function mapOrderFromDB(r) {
+      return {
+        id: r.id, tgId: r.tg_id, user: r.user_name, phone: r.phone, region: r.region,
+        district: r.district, address: r.address, payMethod: r.pay_method,
+        items: r.items || [], totalPrice: Number(r.total_price), status: r.status,
+        date: new Date(r.created_at).toLocaleString()
+      };
+    }
+    function mapCartLogFromDB(r) {
+      return { user: r.user_name, productName: r.product_name, time: new Date(r.created_at).toLocaleString() };
     }
 
-    initStorage();
-
-    // STATE VARIABLES
-    let products = JSON.parse(localStorage.getItem('products'));
-    let categories = JSON.parse(localStorage.getItem('categories'));
-    let adminsList = JSON.parse(localStorage.getItem('adminsList'));
-    let cart = JSON.parse(localStorage.getItem('cart'));
-    let orders = JSON.parse(localStorage.getItem('orders'));
-    let cartLogs = JSON.parse(localStorage.getItem('cartLogs'));
+    // STATE VARIABLES (bo'sh boshlanadi, Supabase'dan yuklanadi)
+    let products = [];
+    let categories = [];
+    let adminsList = [];
+    let orders = [];
+    let cartLogs = [];
+    let cart = JSON.parse(localStorage.getItem('cart') || "{}");
     let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
 
-    if (!adminsList.includes(String(CONFIG.ADMIN_ID))) {
-      adminsList.push(String(CONFIG.ADMIN_ID));
-      localStorage.setItem('adminsList', JSON.stringify(adminsList));
-    }
-
-    // AUTHENTICATION SECURITY CHECK
     const currentTgId = String(tg?.initDataUnsafe?.user?.id || CONFIG.ADMIN_ID);
     const isSuperAdmin = (currentTgId === String(CONFIG.ADMIN_ID));
-    const isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
+    let isUserAnAdmin = isSuperAdmin; // aniq javob Supabase'dan yuklangach yangilanadi
 
     let currentTab = 'home';
-    let isAdminMode = isUserAnAdmin; // Adminlar uchun avtomatik Admin rejimi
+    let isAdminMode = isUserAnAdmin;
     let adminCatParentId = null;
     let categoryPage = 1;
     let ordersPage = 1;
@@ -236,12 +230,10 @@
 
       if (!cart[id]) {
         cart[id] = { qty: 1, addedAt: new Date().toLocaleString() };
-        cartLogs.unshift({
-          user: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
-          productName: p.name,
-          time: new Date().toLocaleString()
-        });
-        localStorage.setItem('cartLogs', JSON.stringify(cartLogs));
+        const logUser = `${currentUser.firstName} ${currentUser.lastName}`.trim();
+        cartLogs.unshift({ user: logUser, productName: p.name, time: new Date().toLocaleString() });
+        // Adminlar ko'ra olishi uchun Supabase'ga ham yozamiz (fon rejimida)
+        sb.from('cart_logs').insert({ tg_id: currentTgId, user_name: logUser, product_name: p.name }).then();
       } else {
         cart[id].qty += 1;
       }
@@ -671,6 +663,7 @@
       }
     }
 
+    let submittingOrder = false;
     async function submitOrder() {
       const fullname = document.getElementById('chk-fullname').value.trim();
       const phone = document.getElementById('chk-phone').value.trim();
@@ -691,6 +684,8 @@
       });
 
       if (hasError) return alert("Iltimos, barcha qizil maydonlarni to'ldiring!");
+      if (submittingOrder) return;
+      submittingOrder = true;
 
       const orderItems = Object.entries(cart).map(([id, itemData]) => {
         const p = products.find(prod => prod.id === id);
@@ -699,19 +694,26 @@
 
       const totalPrice = orderItems.reduce((s, i) => s + (i.price * i.qty), 0);
 
-      const newOrder = {
-        id: Math.floor(1000 + Math.random() * 9000),
-        user: fullname,
+      const dbRow = {
+        tg_id: currentTgId,
+        user_name: fullname,
         phone, region, district, address,
-        payMethod: selectedPayMethod,
+        pay_method: selectedPayMethod,
         items: orderItems,
-        totalPrice,
-        status: "NEW",
-        date: new Date().toLocaleString()
+        total_price: totalPrice,
+        status: "NEW"
       };
 
+      const { data, error } = await sb.from('orders').insert(dbRow).select().single();
+      submittingOrder = false;
+
+      if (error) {
+        console.error(error);
+        return alert("❌ Buyurtmani yuborishda xatolik yuz berdi. Qayta urinib ko'ring.");
+      }
+
+      const newOrder = mapOrderFromDB(data);
       orders.unshift(newOrder);
-      localStorage.setItem('orders', JSON.stringify(orders));
 
       // TELEGRAM NOTIFICATION
       let msg = `🛍 <b>FITCORE - YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
@@ -863,16 +865,16 @@
       `;
     }
 
-    function cancelUserOrder(orderId, e) {
+    async function cancelUserOrder(orderId, e) {
       if (e) e.stopPropagation();
       if (!confirm("Rostdan ham ushbu buyurtmani bekor qilmoqchimisiz?")) return;
       const o = orders.find(ord => ord.id === orderId);
-      if (o) {
-        o.status = 'CANCELLED';
-        localStorage.setItem('orders', JSON.stringify(orders));
-        alert("✅ Buyurtmangiz bekor qilindi!");
-        render();
-      }
+      if (!o) return;
+      const { error } = await sb.from('orders').update({ status: 'CANCELLED' }).eq('id', orderId);
+      if (error) return alert("❌ Xatolik yuz berdi, qayta urinib ko'ring.");
+      o.status = 'CANCELLED';
+      alert("✅ Buyurtmangiz bekor qilindi!");
+      render();
     }
 
     function toggleAdminStatusFilter(st) {
@@ -975,10 +977,11 @@
       `;
     }
 
-    function removeAdmin(admId) {
+    async function removeAdmin(admId) {
       if (!confirm("Ushbu admin huquqini bekor qilmoqchimisiz?")) return;
+      const { error } = await sb.from('admins').delete().eq('tg_id', admId);
+      if (error) { console.error(error); return alert("❌ Xatolik yuz berdi."); }
       adminsList = adminsList.filter(a => a !== admId);
-      localStorage.setItem('adminsList', JSON.stringify(adminsList));
       alert("✅ Admin o'chirildi!");
       render();
     }
@@ -1315,10 +1318,11 @@
       renderModalContainer();
     }
 
-    function updateOrderStatus(id, newStatus) {
+    async function updateOrderStatus(id, newStatus) {
+      const { error } = await sb.from('orders').update({ status: newStatus }).eq('id', id);
+      if (error) return alert("❌ Statusni o'zgartirishda xatolik yuz berdi.");
       const o = orders.find(ord => ord.id === id);
       if (o) o.status = newStatus;
-      localStorage.setItem('orders', JSON.stringify(orders));
       selectedOrderModal = null;
       render();
     }
@@ -1342,7 +1346,7 @@
       render();
     }
 
-    function saveProductFromModal() {
+    async function saveProductFromModal() {
       const name = document.getElementById('m-prod-name').value.trim();
       const price = parseFloat(document.getElementById('m-prod-price').value);
       const oldPriceVal = parseFloat(document.getElementById('m-prod-oldprice').value);
@@ -1358,83 +1362,97 @@
 
       const sku = generateProductSKU(adminCatParentId);
 
-      const newP = {
-        id: "p" + Date.now(),
-        sku,
-        name, price, oldPrice, stock, desc: desc || name,
+      const dbRow = {
+        sku, name, price, old_price: oldPrice, stock,
+        description: desc || name,
         img: tempBase64Image || "https://via.placeholder.com/150",
-        categoryId: adminCatParentId,
+        category_id: adminCatParentId,
         status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
-        isFeatured: true, sortOrder: products.length + 1
+        is_featured: true, sort_order: products.length + 1
       };
 
-      products.push(newP);
-      localStorage.setItem('products', JSON.stringify(products));
+      const { data, error } = await sb.from('products').insert(dbRow).select().single();
+      if (error) { console.error(error); return alert("❌ Tovarni saqlashda xatolik yuz berdi."); }
+
+      products.push(mapProductFromDB(data));
       tempBase64Image = null;
       activePopupModal = null;
       alert(`✅ Yangi tovar (ID: ${sku}) muvaffaqiyatli qo'shildi!`);
       render();
     }
 
-    function saveCategoryFromModal() {
+    async function saveCategoryFromModal() {
       const name = document.getElementById('m-cat-name').value.trim();
       if (!name) return alert("Katalog nomini kiriting!");
 
-      categories.push({
-        id: "c" + Date.now(),
+      const dbRow = {
         name,
         img: tempBase64Image || (adminCatParentId ? "📦" : "📁"),
-        parentId: adminCatParentId
-      });
+        parent_id: adminCatParentId
+      };
 
-      localStorage.setItem('categories', JSON.stringify(categories));
+      const { data, error } = await sb.from('categories').insert(dbRow).select().single();
+      if (error) { console.error(error); return alert("❌ Katalogni saqlashda xatolik yuz berdi."); }
+
+      categories.push(mapCategoryFromDB(data));
       tempBase64Image = null;
       activePopupModal = null;
       alert("✅ Katalog yaratildi!");
       render();
     }
 
-    function saveAdminFromModal() {
+    async function saveAdminFromModal() {
       const idVal = document.getElementById('m-admin-id').value.trim();
       if (!idVal || isNaN(idVal)) return alert("To'g'ri Telegram ID kiriting!");
 
       if (!adminsList.includes(idVal)) {
+        const { error } = await sb.from('admins').insert({ tg_id: idVal });
+        if (error) { console.error(error); return alert("❌ Adminni qo'shishda xatolik yuz berdi."); }
         adminsList.push(idVal);
-        localStorage.setItem('adminsList', JSON.stringify(adminsList));
         alert("✅ Yangi admin biriktirildi!");
       }
       activePopupModal = null;
       render();
     }
 
-    function saveFieldEdit(prodId, field) {
+    async function saveFieldEdit(prodId, field) {
       const p = products.find(prod => prod.id === prodId);
       if (!p) return;
 
+      const dbUpdate = {};
+
       if (field === 'name') {
         const val = document.getElementById('ef-val').value.trim();
-        if (val) p.name = val;
+        if (val) { p.name = val; dbUpdate.name = val; }
       } else if (field === 'price') {
         const price = parseFloat(document.getElementById('ef-price').value);
         const oldVal = parseFloat(document.getElementById('ef-oldprice').value);
         if (!isNaN(price)) {
           p.price = price;
-          if (!isNaN(oldVal) && oldVal > price) p.oldPrice = oldVal;
-          else p.oldPrice = null;
+          p.oldPrice = (!isNaN(oldVal) && oldVal > price) ? oldVal : null;
+          dbUpdate.price = p.price;
+          dbUpdate.old_price = p.oldPrice;
         }
       } else if (field === 'stock') {
         const stock = parseInt(document.getElementById('ef-val').value, 10);
         if (!isNaN(stock)) {
           p.stock = stock;
           p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
+          dbUpdate.stock = p.stock;
+          dbUpdate.status = p.status;
         }
       } else if (field === 'desc') {
         p.desc = document.getElementById('ef-val').value.trim();
+        dbUpdate.description = p.desc;
       } else if (field === 'img') {
-        if (tempBase64Image) p.img = tempBase64Image;
+        if (tempBase64Image) { p.img = tempBase64Image; dbUpdate.img = p.img; }
       }
 
-      localStorage.setItem('products', JSON.stringify(products));
+      if (Object.keys(dbUpdate).length > 0) {
+        const { error } = await sb.from('products').update(dbUpdate).eq('id', prodId);
+        if (error) { console.error(error); return alert("❌ Saqlashda xatolik yuz berdi."); }
+      }
+
       tempBase64Image = null;
       activePopupModal = null;
       selectedProductModal = p;
@@ -1453,19 +1471,21 @@
       render();
     }
 
-    function openGranularEditCategoryModal(id, e) {
+    async function openGranularEditCategoryModal(id, e) {
       if (e) e.stopPropagation();
       const c = categories.find(cat => cat.id === id);
       if (!c) return;
 
       const name = prompt("Yangi katalog nomi:", c.name);
-      if (name) c.name = name;
+      if (!name) return;
 
-      localStorage.setItem('categories', JSON.stringify(categories));
+      const { error } = await sb.from('categories').update({ name }).eq('id', id);
+      if (error) { console.error(error); return alert("❌ Xatolik yuz berdi."); }
+      c.name = name;
       render();
     }
 
-    function moveProductSort(id, dir) {
+    async function moveProductSort(id, dir) {
       const idx = products.findIndex(p => p.id === id);
       if (idx < 0) return;
       const targetIdx = idx + dir;
@@ -1476,64 +1496,125 @@
       products[targetIdx] = temp;
 
       products.forEach((p, i) => p.sortOrder = i + 1);
-      localStorage.setItem('products', JSON.stringify(products));
+      render();
+
+      // Fon rejimida bazani yangilaymiz
+      await Promise.all(products.map(p => sb.from('products').update({ sort_order: p.sortOrder }).eq('id', p.id)));
+    }
+
+    async function toggleProductFeatured(id) {
+      const p = products.find(prod => prod.id === id);
+      if (!p) return;
+      const newVal = !p.isFeatured;
+      const { error } = await sb.from('products').update({ is_featured: newVal }).eq('id', id);
+      if (error) { console.error(error); return alert("❌ Xatolik yuz berdi."); }
+      p.isFeatured = newVal;
       render();
     }
 
-    function toggleProductFeatured(id) {
-      const p = products.find(prod => prod.id === id);
-      if (p) {
-        p.isFeatured = !p.isFeatured;
-        localStorage.setItem('products', JSON.stringify(products));
-        render();
-      }
-    }
-
-    function deleteProduct(id) {
+    async function deleteProduct(id) {
       if (!confirm("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz?")) return;
-      const p = products.find(prod => prod.id === id);
-      if (p) p.status = 'DELETED';
-      localStorage.setItem('products', JSON.stringify(products));
+      const { error } = await sb.from('products').update({ status: 'DELETED' }).eq('id', id);
+      if (error) { console.error(error); return alert("❌ O'chirishda xatolik yuz berdi."); }
+      products = products.filter(prod => prod.id !== id);
       render();
     }
 
-    function deleteCategory(id, e) {
+    async function deleteCategory(id, e) {
       if (e) e.stopPropagation();
       if (!confirm("Katalog o'chirilsinmi?")) return;
+      const { error } = await sb.from('categories').delete().eq('id', id);
+      if (error) { console.error(error); return alert("❌ O'chirishda xatolik yuz berdi. Ehtimol bu katalogda pastki kataloglar/tovarlar bog'langan."); }
       categories = categories.filter(c => c.id !== id);
-      localStorage.setItem('categories', JSON.stringify(categories));
       render();
     }
 
-    function saveBulkStock() {
+    async function saveBulkStock() {
       const input = document.getElementById('bulk-input').value.trim();
       if (!input) return alert("Ma'lumot kiriting!");
 
       const lines = input.split('\n');
-      let count = 0;
+      const updates = [];
 
       lines.forEach(line => {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 2) {
           const sku = parts[0].toUpperCase();
           const stock = parseInt(parts[1], 10);
-          
+
           const p = products.find(prod => prod.sku === sku);
           if (p && !isNaN(stock)) {
             p.stock = stock;
             p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
-            count++;
+            updates.push(p);
           }
         }
       });
 
-      localStorage.setItem('products', JSON.stringify(products));
-      alert(`✅ ${count} ta mahsulot qoldig'i yangilandi!`);
+      await Promise.all(updates.map(p => sb.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id)));
+
+      alert(`✅ ${updates.length} ta mahsulot qoldig'i yangilandi!`);
       render();
     }
 
+    // ============ BOOT: SUPABASE'DAN MA'LUMOTLARNI YUKLASH ============
+    async function loadInitialData() {
+      try {
+        // 1) Avval adminlar ro'yxatini yuklaymiz (rol aniqlash uchun)
+        const { data: adminRows, error: admErr } = await sb.from('admins').select('tg_id');
+        if (admErr) throw admErr;
+        adminsList = (adminRows || []).map(r => r.tg_id);
+
+        // Bosh admin har doim adminlar ro'yxatida bo'lishi kerak
+        if (isSuperAdmin && !adminsList.includes(currentTgId)) {
+          await sb.from('admins').insert({ tg_id: currentTgId });
+          adminsList.push(currentTgId);
+        }
+
+        isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
+        isAdminMode = isUserAnAdmin;
+
+        // 2) Tovarlar va kataloglarni yuklaymiz
+        const [prodRes, catRes] = await Promise.all([
+          sb.from('products').select('*').neq('status', 'DELETED').order('sort_order', { ascending: true }),
+          sb.from('categories').select('*')
+        ]);
+        if (prodRes.error) throw prodRes.error;
+        if (catRes.error) throw catRes.error;
+        products = (prodRes.data || []).map(mapProductFromDB);
+        categories = (catRes.data || []).map(mapCategoryFromDB);
+
+        // 3) Buyurtmalarni yuklaymiz: admin -> hammasini, user -> faqat o'zinikini
+        let ordQuery = sb.from('orders').select('*').order('id', { ascending: false });
+        if (!isUserAnAdmin) ordQuery = ordQuery.eq('tg_id', currentTgId);
+        const { data: ordRows, error: ordErr } = await ordQuery;
+        if (ordErr) throw ordErr;
+        orders = (ordRows || []).map(mapOrderFromDB);
+
+        // 4) Admin bo'lsa — savatga qo'shish tarixini yuklaymiz
+        if (isUserAnAdmin) {
+          const { data: logRows, error: logErr } = await sb.from('cart_logs').select('*').order('id', { ascending: false }).limit(100);
+          if (!logErr) cartLogs = (logRows || []).map(mapCartLogFromDB);
+        }
+
+      } catch (err) {
+        console.error('Supabase yuklash xatosi:', err);
+        document.getElementById('app-content').innerHTML = `
+          <div class="bg-red-50 border border-red-200 text-red-700 text-xs p-4 rounded-2xl">
+            ⚠️ Ma'lumotlarni yuklashda xatolik yuz berdi. Internetni tekshiring yoki keyinroq urinib ko'ring.<br><br>
+            <span class="font-mono text-[10px]">${(err && err.message) || err}</span>
+          </div>`;
+        throw err;
+      }
+    }
+
+    async function boot() {
+      await loadInitialData();
+      switchTab('home');
+    }
+
     // INITIAL LAUNCH
-    switchTab('home');
+    boot();
   </script>
 </body>
 </html>
