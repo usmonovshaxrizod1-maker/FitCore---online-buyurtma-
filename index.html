@@ -79,29 +79,9 @@
 
     // INITIALIZATION & STORAGE
     function initStorage() {
-      if (!localStorage.getItem('products')) {
-        const initialProducts = [
-          { id: "p1", sku: "110001", name: "Whey Protein Gold 1kg", price: 400000, oldPrice: 480000, stock: 15, categoryId: "c1-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "FITCORE zardob proteini.", isFeatured: true, sortOrder: 1 },
-          { id: "p2", sku: "120001", name: "Creatine Monohydrate 300g", price: 220000, oldPrice: null, stock: 5, categoryId: "c1-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "FITCORE mikronizatsiyalangan kreatin.", isFeatured: true, sortOrder: 2 },
-          { id: "p3", sku: "200001", name: "Gantel 10kg Rezina", price: 320000, oldPrice: 350000, stock: 8, categoryId: "c2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Rezinalangan gantel.", isFeatured: false, sortOrder: 3 }
-        ];
-        localStorage.setItem('products', JSON.stringify(initialProducts));
-      }
-
-      if (!localStorage.getItem('categories')) {
-        const initialCategories = [
-          { id: "c1", name: "Sport oziq-ovqatlari", parentId: null, img: "🧪" },
-          { id: "c1-1", name: "Protein", parentId: "c1", img: "🥛" },
-          { id: "c1-2", name: "Kreatin", parentId: "c1", img: "⚡" },
-          { id: "c2", name: "Sport buyumlari", parentId: null, img: "🏋️‍♂️" }
-        ];
-        localStorage.setItem('categories', JSON.stringify(initialCategories));
-      }
-
-      if (!localStorage.getItem('adminsList')) {
-        localStorage.setItem('adminsList', JSON.stringify([String(CONFIG.ADMIN_ID)]));
-      }
-
+      if (!localStorage.getItem('products')) localStorage.setItem('products', JSON.stringify([]));
+      if (!localStorage.getItem('categories')) localStorage.setItem('categories', JSON.stringify([]));
+      if (!localStorage.getItem('adminsList')) localStorage.setItem('adminsList', JSON.stringify([String(CONFIG.ADMIN_ID)]));
       if (!localStorage.getItem('cart')) localStorage.setItem('cart', JSON.stringify({}));
       if (!localStorage.getItem('orders')) localStorage.setItem('orders', JSON.stringify([]));
       if (!localStorage.getItem('cartLogs')) localStorage.setItem('cartLogs', JSON.stringify([]));
@@ -163,14 +143,14 @@
 
       render();
 
-      if (!window.supabase || !CONFIG.SUPABASE_URL) return;
+      if (!window.supabase || !CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_KEY) return;
 
       try {
         const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 
         // Fetch Products
-        const { data: pData } = await supabaseClient.from('products').select('*').order('sort_order', { ascending: true });
-        if (pData && pData.length > 0) {
+        const { data: pData, error: pErr } = await supabaseClient.from('products').select('*').order('sort_order', { ascending: true });
+        if (!pErr && pData) {
           products = pData.map(p => ({
             id: p.id, sku: p.sku, name: p.name, price: Number(p.price),
             oldPrice: p.old_price ? Number(p.old_price) : null,
@@ -181,22 +161,22 @@
         }
 
         // Fetch Categories
-        const { data: cData } = await supabaseClient.from('categories').select('*');
-        if (cData && cData.length > 0) {
+        const { data: cData, error: cErr } = await supabaseClient.from('categories').select('*');
+        if (!cErr && cData) {
           categories = cData.map(c => ({ id: c.id, name: c.name, parentId: c.parent_id, img: c.image }));
           localStorage.setItem('categories', JSON.stringify(categories));
         }
 
         // Fetch Admins
-        const { data: aData } = await supabaseClient.from('admins').select('*');
-        if (aData && aData.length > 0) {
+        const { data: aData, error: aErr } = await supabaseClient.from('admins').select('*');
+        if (!aErr && aData) {
           adminsList = aData.map(a => String(a.telegram_id));
           localStorage.setItem('adminsList', JSON.stringify(adminsList));
         }
 
         // Fetch Orders
-        const { data: oData } = await supabaseClient.from('orders').select('*').order('created_at', { ascending: false });
-        if (oData && oData.length > 0) {
+        const { data: oData, error: oErr } = await supabaseClient.from('orders').select('*').order('created_at', { ascending: false });
+        if (!oErr && oData) {
           orders = oData.map(o => ({
             id: o.id, user: o.user_name, phone: o.phone, region: o.region,
             district: o.district, address: o.address, payMethod: o.payment_method,
@@ -341,7 +321,7 @@
       }
     }
 
-    // AUTOMATIC CANVAS IMAGE COMPRESSOR (100X LIGHTWEIGHT BASE64)
+    // CANVAS IMAGE COMPRESSOR (LIGHTWEIGHT BASE64)
     function onImagePicked(event, previewId) {
       const file = event.target.files[0];
       if (!file) return;
@@ -373,7 +353,6 @@
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
 
-          // Compress to lightweight JPEG (under 30KB!)
           tempBase64Image = canvas.toDataURL('image/jpeg', 0.7);
 
           const prev = document.getElementById(previewId);
@@ -812,7 +791,7 @@
       orders.unshift(newOrder);
       localStorage.setItem('orders', JSON.stringify(orders));
 
-      if (window.supabase && CONFIG.SUPABASE_URL) {
+      if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
         try {
           const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
           await supabaseClient.from('orders').insert([{
@@ -979,7 +958,7 @@
         o.status = 'CANCELLED';
         localStorage.setItem('orders', JSON.stringify(orders));
 
-        if (window.supabase && CONFIG.SUPABASE_URL) {
+        if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
           try {
             const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
             await supabaseClient.from('orders').update({ status: 'CANCELLED' }).eq('id', orderId);
@@ -1095,7 +1074,7 @@
       adminsList = adminsList.filter(a => a !== admId);
       localStorage.setItem('adminsList', JSON.stringify(adminsList));
 
-      if (window.supabase && CONFIG.SUPABASE_URL) {
+      if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
         try {
           const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
           await supabaseClient.from('admins').delete().eq('telegram_id', admId);
@@ -1439,7 +1418,7 @@
       selectedOrderModal = null;
       render();
 
-      if (window.supabase && CONFIG.SUPABASE_URL) {
+      if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
         try {
           const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
           await supabaseClient.from('orders').update({ status: newStatus }).eq('id', id);
@@ -1493,7 +1472,7 @@
         isFeatured: true, sortOrder: products.length + 1
       };
 
-      if (window.supabase && CONFIG.SUPABASE_URL) {
+      if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
         try {
           const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
           const { error } = await supabaseClient.from('products').insert([{
@@ -1536,7 +1515,7 @@
       const newCatId = "c" + Date.now();
       const newCatImg = tempBase64Image || (adminCatParentId ? "📦" : "📁");
 
-      if (window.supabase && CONFIG.SUPABASE_URL) {
+      if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
         try {
           const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
           const { error } = await supabaseClient.from('categories').insert([{
@@ -1569,7 +1548,7 @@
       if (!idVal || isNaN(idVal)) return alert("To'g'ri Telegram ID kiriting!");
 
       if (!adminsList.includes(idVal)) {
-        if (window.supabase && CONFIG.SUPABASE_URL) {
+        if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
           try {
             const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
             const { error } = await supabaseClient.from('admins').insert([{ telegram_id: idVal }]);
@@ -1618,7 +1597,7 @@
         if (tempBase64Image) { p.img = tempBase64Image; updatePayload.image = p.img; }
       }
 
-      if (window.supabase && CONFIG.SUPABASE_URL && Object.keys(updatePayload).length > 0) {
+      if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable") && Object.keys(updatePayload).length > 0) {
         try {
           const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
           const { error } = await supabaseClient.from('products').update(updatePayload).eq('id', prodId);
@@ -1654,7 +1633,7 @@
       if (name) {
         c.name = name;
         localStorage.setItem('categories', JSON.stringify(categories));
-        if (window.supabase && CONFIG.SUPABASE_URL) {
+        if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
           try {
             const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
             await supabaseClient.from('categories').update({ name }).eq('id', id);
@@ -1678,7 +1657,7 @@
       localStorage.setItem('products', JSON.stringify(products));
       render();
 
-      if (window.supabase && CONFIG.SUPABASE_URL) {
+      if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
         try {
           const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
           for (let i = 0; i < products.length; i++) {
@@ -1695,7 +1674,7 @@
         localStorage.setItem('products', JSON.stringify(products));
         render();
 
-        if (window.supabase && CONFIG.SUPABASE_URL) {
+        if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
           try {
             const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
             await supabaseClient.from('products').update({ is_featured: p.isFeatured }).eq('id', id);
@@ -1712,7 +1691,7 @@
         localStorage.setItem('products', JSON.stringify(products));
         render();
 
-        if (window.supabase && CONFIG.SUPABASE_URL) {
+        if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
           try {
             const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
             await supabaseClient.from('products').update({ status: 'DELETED' }).eq('id', id);
@@ -1728,7 +1707,7 @@
       localStorage.setItem('categories', JSON.stringify(categories));
       render();
 
-      if (window.supabase && CONFIG.SUPABASE_URL) {
+      if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
         try {
           const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
           await supabaseClient.from('categories').delete().eq('id', id);
@@ -1755,7 +1734,7 @@
             p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
             count++;
 
-            if (window.supabase && CONFIG.SUPABASE_URL) {
+            if (window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY.startsWith("sb_publishable")) {
               try {
                 const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
                 await supabaseClient.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id);
@@ -1770,7 +1749,7 @@
       render();
     }
 
-    // LAUNCH INSTANT LOAD WITH SAFE BACKGROUND SYNC
+    // INITIAL LAUNCH
     loadDatabaseData();
   </script>
 </body>
