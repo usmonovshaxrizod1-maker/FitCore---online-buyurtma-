@@ -77,7 +77,24 @@
     };
 
     const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'bek","Olmazor","Sergeli","Shayxontohur","Uchtepa","Yakkasaroy","Yashnobod","Yunusobod"];
 
+    const UZ_REGIONS = {
+      "Andijon viloyati": ["Andijon shahri","Andijon tumani","Asaka","Baliqchi","Bo'z","Buloqboshi","Izboskan","Jalaquduq","Marhamat","Oltinko'l","Paxtaobod","Qo'rg'ontepa","Shahrixon","Ulug'nor","Xo'jaobod","Xonobod shahri"],
+      "Buxoro viloyati": ["Buxoro shahri","Buxoro tumani","G'ijduvon","Jondor","Kogon shahri","Kogon tumani","Olot","Peshku","Qorako'l","Qorovulbozor","Romitan","Shofirkon","Vobkent"],
+      "Farg'ona viloyati": ["Farg'ona shahri","Marg'ilon shahri","Qo'qon shahri","Farg'ona tumani","Bag'dod","Beshariq","Buvayda","Dang'ara","Furqat","Oltiariq","O'zbekiston","Quva","Qo'shtepa","Rishton","So'x","Toshloq","Uchko'prik","Yozyovon"],
+      "Jizzax viloyati": ["Jizzax shahri","Jizzax tumani","Arnasoy","Baxmal","Do'stlik","Forish","G'allaorol","Mirzacho'l","Paxtakor","Sh.Rashidov tumani","Yangiobod","Zafarobod","Zarbdor","Zomin"],
+      "Xorazm viloyati": ["Urganch shahri","Urganch tumani","Bog'ot","Gurlan","Hazorasp","Xiva","Xonqa","Qo'shko'pir","Shovot","Yangiariq","Yangibozor"],
+      "Namangan viloyati": ["Namangan shahri","Namangan tumani","Chortoq","Chust","Kosonsoy","Mingbuloq","Norin","Pop","To'raqo'rg'on","Uchqo'rg'on","Uychi","Yangiqo'rg'on"],
+      "Navoiy viloyati": ["Navoiy shahri","Zarafshon shahri","Karmana","Konimex","Navbahor","Nurota","Qiziltepa","Tomdi","Uchquduq","Xatirchi"],
+      "Qashqadaryo viloyati": ["Qarshi shahri","Shahrisabz shahri","Qarshi tumani","Shahrisabz tumani","Chiroqchi","Dehqonobod","G'uzor","Kasbi","Kitob","Koson","Mirishkor","Muborak","Nishon","Qamashi","Yakkabog'"],
+      "Qoraqalpog'iston Respublikasi": ["Nukus shahri","Nukus tumani","Amudaryo","Beruniy","Chimboy","Ellikqal'a","Kegeyli","Mo'ynoq","Qanliko'l","Qorao'zak","Qo'ng'irot","Shumanay","Taxtako'pir","To'rtko'l","Xo'jayli"],
+      "Samarqand viloyati": ["Samarqand shahri","Samarqand tumani","Bulung'ur","Ishtixon","Jomboy","Kattaqo'rg'on","Narpay","Nurobod","Oqdaryo","Pastdarg'om","Paxtachi","Payariq","Qo'shrabot","Toyloq","Urgut"],
+      "Sirdaryo viloyati": ["Guliston shahri","Guliston tumani","Yangiyer shahri","Boyovut","Mirzaobod","Oqoltin","Sardoba","Sayxunobod","Sirdaryo tumani","Xovos"],
+      "Surxondaryo viloyati": ["Termiz shahri","Termiz tumani","Angor","Bandixon","Boysun","Denov","Jarqo'rg'on","Muzrabot","Oltinsoy","Qiziriq","Qumqo'rg'on","Sariosiyo","Sherobod","Sho'rchi","Uzun"],
+      "Toshkent viloyati": ["Angren shahri","Bekobod shahri","Bekobod tumani","Bo'ka","Bo'stonliq","Chinoz","Chirchiq shahri","Ohangaron shahri","Ohangaron tumani","Olmaliq shahri","Oqqo'rg'on","Parkent","Piskent","Qibray","Quyichirchiq","Toshkent tumani","O'rtachirchiq","Yangiyo'l shahri","Yangiyo'l tumani","Yuqorichirchiq","Zangiota"]
+    };
+    
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
@@ -579,7 +596,7 @@
               <input type="text" id="chk-phone" value="${currentUser.phone}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2.5 border rounded-xl text-xs font-mono">
             </div>
 
-            <div>
+          <div>
               <label class="text-xs font-bold text-gray-600">Hududni Tanlang *</label>
               <select id="chk-region" onchange="handleRegionChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
                 <option value="TASHKENT">Toshkent shahri (Bepul yetkazib berish)</option>
@@ -591,21 +608,33 @@
               ⚠️ Viloyatlarga BTS pochta orqali jo'natiladi. Yo'l kira mijoz tomonidan to'lanadi.
             </div>
 
+            <div id="chk-viloyat-wrap" class="hidden">
+              <label class="text-xs font-bold text-gray-600">Viloyatni Tanlang *</label>
+              <select id="chk-viloyat" onchange="handleViloyatChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                <option value="">— Tanlang —</option>
+              </select>
+            </div>
+
             <div>
-              <label class="text-xs font-bold text-gray-600">Tuman / Shaharingiz *</label>
-              <input type="text" id="chk-district" placeholder="Masalan: Chilonzor yoki Samarqand sh." class="w-full mt-1 p-2.5 border rounded-xl text-xs">
+              <label class="text-xs font-bold text-gray-600">Tumanni Tanlang *</label>
+              <select id="chk-district" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                <option value="">— Tanlang —</option>
+              </select>
             </div>
 
             <div>
               <label id="chk-address-label" class="text-xs font-bold text-gray-600">Manzil *</label>
               <input type="text" id="chk-address" placeholder="Ko'cha, mahalla va uy raqami" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
             </div>
-
-            <div>
+            
+           <div>
               <label class="text-xs font-bold text-gray-600">To'lov Turi *</label>
-              <div class="grid grid-cols-2 gap-2 mt-1">
+              <div id="pay-method-wrap" class="grid grid-cols-2 gap-2 mt-1">
                 <button type="button" id="pay-cash-btn" onclick="selectPayment('CASH')" class="py-2.5 border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold rounded-xl text-xs">💵 Naqd pul</button>
-                <button type="button" id="pay-card-btn" onclick="selectPayment('CARD')" class="py-2.5 border rounded-xl font-bold text-xs text-gray-600">💳 Karta orqali</button>
+                <button type="button" id="pay-card-btn" onclick="selectPayment('CARD')" class="py-2.5 border rounded-xl font-bold text-xs text-gray-400 bg-gray-50">
+                  💳 Karta orqali
+                  <span class="block text-[9px] text-gray-400">(Tez kunda)</span>
+                </button>
               </div>
             </div>
 
@@ -620,60 +649,92 @@
           </div>
         </div>
       `;
+      handleRegionChange();
     }
 
     let selectedPayMethod = 'CASH';
 
-    function handleRegionChange() {
+   function handleRegionChange() {
       const region = document.getElementById('chk-region').value;
       const btsWarn = document.getElementById('bts-warning');
+      const viloyatWrap = document.getElementById('chk-viloyat-wrap');
+      const viloyatSelect = document.getElementById('chk-viloyat');
+      const districtSelect = document.getElementById('chk-district');
       const addrLabel = document.getElementById('chk-address-label');
       const addrInput = document.getElementById('chk-address');
-
-      if (region === 'PROVINCE') {
-        btsWarn.classList.remove('hidden');
-        addrLabel.innerText = "BTS Pochta Manzili *";
-        addrInput.placeholder = "Hududingizdagi BTS pochta manzilini kiriting";
-        selectPayment('CARD');
-      } else {
-        btsWarn.classList.add('hidden');
-        addrLabel.innerText = "Manzil *";
-        addrInput.placeholder = "Ko'cha/qishloq/mahalla va uy raqami";
-      }
-    }
-
-    function selectPayment(type) {
-      const region = document.getElementById('chk-region')?.value;
-      if (region === 'PROVINCE' && type === 'CASH') {
-        alert("Viloyat buyurtmalarida faqat karta orqali to'lov mavjud!");
-        return;
-      }
-
-      selectedPayMethod = type;
+      const payWrap = document.getElementById('pay-method-wrap');
       const cashBtn = document.getElementById('pay-cash-btn');
       const cardBtn = document.getElementById('pay-card-btn');
 
-      if (type === 'CARD') {
-        alert("ℹ️ Karta orqali to'lov moduli ustida ishlanmoqda (Hozircha test rejimi)");
+      if (region === 'PROVINCE') {
+        btsWarn.classList.remove('hidden');
+        viloyatWrap.classList.remove('hidden');
+        addrLabel.innerText = "BTS Pochta Manzili *";
+        addrInput.placeholder = "Hududingizdagi BTS pochta manzilini kiriting";
+
+        viloyatSelect.innerHTML = '<option value="">— Tanlang —</option>' +
+          Object.keys(UZ_REGIONS).map(v => `<option value="${v}">${v}</option>`).join('');
+        districtSelect.innerHTML = '<option value="">— Avval viloyatni tanlang —</option>';
+
+        // Viloyatda faqat KARTA ko'rsatiladi (hozircha ishlamaydi)
+        payWrap.className = "grid grid-cols-1 gap-2 mt-1";
+        cashBtn.classList.add('hidden');
+        selectedPayMethod = 'CARD';
         cardBtn.className = "py-2.5 border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold rounded-xl text-xs";
-        cashBtn.className = "py-2.5 border rounded-xl font-bold text-xs text-gray-600";
       } else {
+        btsWarn.classList.add('hidden');
+        viloyatWrap.classList.add('hidden');
+        addrLabel.innerText = "Manzil *";
+        addrInput.placeholder = "Ko'cha/qishloq/mahalla va uy raqami";
+
+        districtSelect.innerHTML = '<option value="">— Tanlang —</option>' +
+          TASHKENT_CITY_DISTRICTS.map(d => `<option value="${d}">${d}</option>`).join('');
+
+        // Toshkent shahrida ikkalasi ko'rinadi, karta o'chiq
+        payWrap.className = "grid grid-cols-2 gap-2 mt-1";
+        cashBtn.classList.remove('hidden');
+        selectedPayMethod = 'CASH';
         cashBtn.className = "py-2.5 border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold rounded-xl text-xs";
-        cardBtn.className = "py-2.5 border rounded-xl font-bold text-xs text-gray-600";
+        cardBtn.className = "py-2.5 border rounded-xl font-bold text-xs text-gray-400 bg-gray-50";
       }
+    }
+
+    function handleViloyatChange() {
+      const viloyat = document.getElementById('chk-viloyat').value;
+      const districtSelect = document.getElementById('chk-district');
+      const tumanlar = UZ_REGIONS[viloyat] || [];
+      districtSelect.innerHTML = '<option value="">— Tanlang —</option>' +
+        tumanlar.map(d => `<option value="${d}">${d}</option>`).join('');
+    }
+
+    function selectPayment(type) {
+      if (type === 'CARD') {
+        alert("ℹ️ Karta orqali to'lov hozircha ishlab chiqilmoqda. Tez orada faollashtiriladi.");
+        return;
+      }
+      selectedPayMethod = 'CASH';
+      const cashBtn = document.getElementById('pay-cash-btn');
+      const cardBtn = document.getElementById('pay-card-btn');
+      if (cashBtn) cashBtn.className = "py-2.5 border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold rounded-xl text-xs";
+      if (cardBtn) cardBtn.className = "py-2.5 border rounded-xl font-bold text-xs text-gray-400 bg-gray-50";
     }
 
     let submittingOrder = false;
     async function submitOrder() {
-      const fullname = document.getElementById('chk-fullname').value.trim();
+    const fullname = document.getElementById('chk-fullname').value.trim();
       const phone = document.getElementById('chk-phone').value.trim();
       const region = document.getElementById('chk-region').value;
-      const district = document.getElementById('chk-district').value.trim();
+      const viloyat = region === 'PROVINCE' ? document.getElementById('chk-viloyat').value : '';
+      const tuman = document.getElementById('chk-district').value.trim();
+      const district = region === 'PROVINCE' ? `${viloyat}, ${tuman}` : tuman;
       const address = document.getElementById('chk-address').value.trim();
 
       let hasError = false;
 
-      [['chk-fullname', fullname], ['chk-phone', phone], ['chk-district', district], ['chk-address', address]].forEach(([id, val]) => {
+      const requiredFields = [['chk-fullname', fullname], ['chk-phone', phone], ['chk-district', tuman], ['chk-address', address]];
+      if (region === 'PROVINCE') requiredFields.push(['chk-viloyat', viloyat]);
+
+      requiredFields.forEach(([id, val]) => {
         const el = document.getElementById(id);
         if (!val || val === '+998') {
           el.classList.add('border-red-500', 'bg-red-50');
@@ -684,6 +745,13 @@
       });
 
       if (hasError) return alert("Iltimos, barcha qizil maydonlarni to'ldiring!");
+
+      if (region === 'PROVINCE') {
+        return alert("❌ Hozircha viloyatlarga faqat karta orqali to'lov mumkin, u esa hali ishlamayapti. Tez orada faollashtiriladi.");
+      }
+      if (selectedPayMethod !== 'CASH') {
+        return alert("❌ Hozircha faqat naqd pul bilan buyurtma qabul qilinadi.");
+      }
       if (submittingOrder) return;
       submittingOrder = true;
 
