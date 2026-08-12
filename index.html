@@ -1032,7 +1032,34 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
               <h2 class="text-lg font-bold">${currentUser.firstName} ${currentUser.lastName}</h2>
               <p class="text-xs text-gray-500">Tel: ${currentUser.phone}</p>
               <button onclick="activePopupModal='REGISTRATION'; render();" class="mt-1 text-[10px] text-blue-600 font-bold underline">Ma'lumotlarni tahrirlash</button>
+          </div>
+          </div>
+
+          <div class="bg-white p-4 rounded-2xl shadow-sm border space-y-3">
+            <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📍 Do'kon haqida</h3>
+
+            <a href="https://www.google.com/maps?q=41.217408,69.211225" target="_blank" class="flex items-start space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
+              <i data-lucide="map-pin" class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0"></i>
+              <div>
+                <p class="text-xs font-bold text-gray-800">Sergeli tumani, Mirzo Tursunzoda ko'chasi</p>
+                <p class="text-[11px] text-gray-500">Mo'ljal: 3-bekat · Lokatsiyani ochish uchun bosing →</p>
+              </div>
+            </a>
+
+            <div class="flex items-center space-x-3">
+              <i data-lucide="clock" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
+              <p class="text-xs font-bold text-gray-800">Ish vaqti: 10:00 – 22:00</p>
             </div>
+
+            <a href="tel:+998977840512" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
+              <i data-lucide="phone" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
+              <p class="text-xs font-bold text-gray-800">+998 97 784 05 12</p>
+            </a>
+
+            <a href="https://instagram.com/fitcore.sergeli.uz" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
+              <i data-lucide="instagram" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
+              <p class="text-xs font-bold text-gray-800">@fitcore.sergeli.uz</p>
+            </a>
           </div>
 
           ${isUserAnAdmin ? `
