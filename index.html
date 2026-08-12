@@ -34,7 +34,16 @@
       <p class="text-xs font-bold">Yuklanmoqda...</p>
     </div>
   </main>
+ </main>
 
+  <!-- GLOBAL LOADING OVERLAY -->
+  <div id="global-loader" class="hidden fixed inset-0 bg-black/40 z-[999] flex items-center justify-center">
+    <div class="bg-white rounded-2xl px-6 py-5 flex flex-col items-center gap-3 shadow-xl">
+      <div class="w-9 h-9 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      <p id="global-loader-text" class="text-xs font-bold text-gray-700">Yuklanmoqda...</p>
+    </div>
+  </div>
+  
   <!-- BOTTOM NAVIGATION -->
   <nav class="fixed bottom-0 left-0 right-0 bg-white border-t py-2 px-3 flex justify-around items-center z-40 shadow-lg">
     <button onclick="switchTab('home')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-home">
@@ -68,6 +77,18 @@
 
   <!-- JAVASCRIPT LOGIC -->
   <script>
+    // GLOBAL LOADER
+    function showLoader(text) {
+      const el = document.getElementById('global-loader');
+      const txt = document.getElementById('global-loader-text');
+      if (txt) txt.innerText = text || "Yuklanmoqda...";
+      if (el) el.classList.remove('hidden');
+    }
+    function hideLoader() {
+      const el = document.getElementById('global-loader');
+      if (el) el.classList.add('hidden');
+    }
+
     // ⚙️ CONFIGURATION
     const CONFIG = {
       BOT_TOKEN: "8659743606:AAFcAN91p-6-32yTsPInypX-r1qfXylIYIs",
@@ -754,6 +775,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       }
       if (submittingOrder) return;
       submittingOrder = true;
+      showLoader("Buyurtma qabul qilinmoqda...");
 
       const orderItems = Object.entries(cart).map(([id, itemData]) => {
         const p = products.find(prod => prod.id === id);
@@ -772,8 +794,9 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         status: "NEW"
       };
 
-      const { data, error } = await sb.from('orders').insert(dbRow).select().single();
+     const { data, error } = await sb.from('orders').insert(dbRow).select().single();
       submittingOrder = false;
+      hideLoader();
 
       if (error) {
         console.error(error);
@@ -1428,7 +1451,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         oldPrice = oldPriceVal;
       }
 
-      const sku = generateProductSKU(adminCatParentId);
+    const sku = generateProductSKU(adminCatParentId);
 
       const dbRow = {
         sku, name, price, old_price: oldPrice, stock,
@@ -1439,7 +1462,9 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         is_featured: true, sort_order: products.length + 1
       };
 
+      showLoader("Tovar saqlanmoqda...");
       const { data, error } = await sb.from('products').insert(dbRow).select().single();
+      hideLoader();
       if (error) { console.error(error); return alert("❌ Tovarni saqlashda xatolik yuz berdi."); }
 
       products.push(mapProductFromDB(data));
@@ -1453,15 +1478,17 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       const name = document.getElementById('m-cat-name').value.trim();
       if (!name) return alert("Katalog nomini kiriting!");
 
-      const dbRow = {
+     const dbRow = {
         name,
         img: tempBase64Image || (adminCatParentId ? "📦" : "📁"),
         parent_id: adminCatParentId
       };
 
+      showLoader("Katalog saqlanmoqda...");
       const { data, error } = await sb.from('categories').insert(dbRow).select().single();
+      hideLoader();
       if (error) { console.error(error); return alert("❌ Katalogni saqlashda xatolik yuz berdi."); }
-
+      
       categories.push(mapCategoryFromDB(data));
       tempBase64Image = null;
       activePopupModal = null;
