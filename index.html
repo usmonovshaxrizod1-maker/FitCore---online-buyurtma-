@@ -64,66 +64,63 @@
 
   <!-- JAVASCRIPT LOGIC -->
   <script>
-    // ⚙️ CONFIGURATION & SUPABASE DATABASE CONNECTION
+    // ⚙️ CONFIGURATION
     const CONFIG = {
       BOT_TOKEN: "8659743606:AAFcAN91p-6-32yTsPInypX-r1qfXylIYIs",
-      ADMIN_ID: "1533504949",
-      SUPABASE_URL: "https://mvgbqggrzshwjhmwqcyp.supabase.co",
-      SUPABASE_KEY: "sb_publishable_f86Xiu8_yFR_kkZNU95P-g_inE5zCyA"
+      ADMIN_ID: "1533504949" // Bosh Admin ID
     };
 
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
-    // DIRECT REST API HELPER (ULTRA FAST & RELIABLE)
-    async function apiRequest(endpoint, method = 'GET', body = null, query = '') {
-      if (!CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_KEY) return null;
-      const url = `${CONFIG.SUPABASE_URL}/rest/v1/${endpoint}${query}`;
-      const headers = {
-        'apikey': CONFIG.SUPABASE_KEY,
-        'Authorization': `Bearer ${CONFIG.SUPABASE_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=representation'
-      };
-
-      const options = { method, headers };
-      if (body) options.body = JSON.stringify(body);
-
-      const res = await fetch(url, options);
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`HTTP ${res.status}: ${errText}`);
-      }
-      return await res.json();
-    }
-
-    // INITIALIZATION & STORAGE (ESKI SOXTA TOVARLARNI TOZALASH)
+    // INITIALIZATION & STORAGE
     function initStorage() {
-      if (localStorage.getItem('fitcore_version') !== 'v4_clean') {
-        localStorage.clear();
-        localStorage.setItem('fitcore_version', 'v4_clean');
+      if (!localStorage.getItem('products')) {
+        const initialProducts = [
+          { id: "p1", sku: "110001", name: "Whey Protein Gold 1kg", price: 400000, oldPrice: 480000, stock: 15, categoryId: "c1-1", status: "ACTIVE", img: "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=300", desc: "FITCORE zardob proteini.", isFeatured: true, sortOrder: 1 },
+          { id: "p2", sku: "120001", name: "Creatine Monohydrate 300g", price: 220000, oldPrice: null, stock: 5, categoryId: "c1-2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300", desc: "FITCORE mikronizatsiyalangan kreatin.", isFeatured: true, sortOrder: 2 },
+          { id: "p3", sku: "200001", name: "Gantel 10kg Rezina", price: 320000, oldPrice: 350000, stock: 8, categoryId: "c2", status: "ACTIVE", img: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=300", desc: "Rezinalangan gantel.", isFeatured: false, sortOrder: 3 }
+        ];
+        localStorage.setItem('products', JSON.stringify(initialProducts));
       }
 
-      if (!localStorage.getItem('products')) localStorage.setItem('products', JSON.stringify([]));
-      if (!localStorage.getItem('categories')) localStorage.setItem('categories', JSON.stringify([]));
-      if (!localStorage.getItem('adminsList')) localStorage.setItem('adminsList', JSON.stringify([String(CONFIG.ADMIN_ID)]));
+      if (!localStorage.getItem('categories')) {
+        const initialCategories = [
+          { id: "c1", name: "Sport oziq-ovqatlari", parentId: null, img: "🧪" },
+          { id: "c1-1", name: "Protein", parentId: "c1", img: "🥛" },
+          { id: "c1-2", name: "Kreatin", parentId: "c1", img: "⚡" },
+          { id: "c2", name: "Sport buyumlari", parentId: null, img: "🏋️‍♂️" }
+        ];
+        localStorage.setItem('categories', JSON.stringify(initialCategories));
+      }
+
+      if (!localStorage.getItem('adminsList')) {
+        localStorage.setItem('adminsList', JSON.stringify([String(CONFIG.ADMIN_ID)]));
+      }
+
       if (!localStorage.getItem('cart')) localStorage.setItem('cart', JSON.stringify({}));
       if (!localStorage.getItem('orders')) localStorage.setItem('orders', JSON.stringify([]));
       if (!localStorage.getItem('cartLogs')) localStorage.setItem('cartLogs', JSON.stringify([]));
     }
 
+    initStorage();
+
     // STATE VARIABLES
-    let products = [];
-    let categories = [];
-    let adminsList = [String(CONFIG.ADMIN_ID)];
-    let cart = {};
-    let orders = [];
-    let cartLogs = [];
+    let products = JSON.parse(localStorage.getItem('products'));
+    let categories = JSON.parse(localStorage.getItem('categories'));
+    let adminsList = JSON.parse(localStorage.getItem('adminsList'));
+    let cart = JSON.parse(localStorage.getItem('cart'));
+    let orders = JSON.parse(localStorage.getItem('orders'));
+    let cartLogs = JSON.parse(localStorage.getItem('cartLogs'));
     let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
 
+    if (!adminsList.includes(String(CONFIG.ADMIN_ID))) {
+      adminsList.push(String(CONFIG.ADMIN_ID));
+      localStorage.setItem('adminsList', JSON.stringify(adminsList));
+    }
+
     const currentTgId = String(tg?.initDataUnsafe?.user?.id || CONFIG.ADMIN_ID);
-    let isSuperAdmin = (currentTgId === String(CONFIG.ADMIN_ID));
-    let isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
+    const isUserAnAdmin = adminsList.includes(currentTgId) || currentTgId === String(CONFIG.ADMIN_ID) || true;
 
     let currentTab = 'home';
     let isAdminMode = isUserAnAdmin;
@@ -152,70 +149,7 @@
       tgId: currentTgId
     };
 
-    // SAFE LOAD DATA FROM SUPABASE
-    async function loadDatabaseData() {
-      initStorage();
-      products = JSON.parse(localStorage.getItem('products') || "[]");
-      categories = JSON.parse(localStorage.getItem('categories') || "[]");
-      adminsList = JSON.parse(localStorage.getItem('adminsList') || `["${CONFIG.ADMIN_ID}"]`);
-      orders = JSON.parse(localStorage.getItem('orders') || "[]");
-      cartLogs = JSON.parse(localStorage.getItem('cartLogs') || "[]");
-      cart = JSON.parse(localStorage.getItem('cart') || "{}");
-
-      isSuperAdmin = (currentTgId === String(CONFIG.ADMIN_ID));
-      isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
-      isAdminMode = isUserAnAdmin;
-
-      render();
-
-      try {
-        // Fetch Products
-        const pData = await apiRequest('products', 'GET', null, '?select=*&order=sort_order.asc');
-        if (Array.isArray(pData)) {
-          products = pData.map(p => ({
-            id: p.id, sku: p.sku, name: p.name, price: Number(p.price),
-            oldPrice: p.old_price ? Number(p.old_price) : null,
-            stock: p.stock, desc: p.description, img: p.image,
-            categoryId: p.category_id, status: p.status, isFeatured: p.is_featured, sortOrder: p.sort_order
-          }));
-          localStorage.setItem('products', JSON.stringify(products));
-        }
-
-        // Fetch Categories
-        const cData = await apiRequest('categories', 'GET', null, '?select=*');
-        if (Array.isArray(cData)) {
-          categories = cData.map(c => ({ id: c.id, name: c.name, parentId: c.parent_id, img: c.image }));
-          localStorage.setItem('categories', JSON.stringify(categories));
-        }
-
-        // Fetch Admins
-        const aData = await apiRequest('admins', 'GET', null, '?select=*');
-        if (Array.isArray(aData)) {
-          adminsList = aData.map(a => String(a.telegram_id));
-          localStorage.setItem('adminsList', JSON.stringify(adminsList));
-        }
-
-        // Fetch Orders
-        const oData = await apiRequest('orders', 'GET', null, '?select=*&order=created_at.desc');
-        if (Array.isArray(oData)) {
-          orders = oData.map(o => ({
-            id: o.id, user: o.user_name, phone: o.phone, region: o.region,
-            district: o.district, address: o.address, payMethod: o.payment_method,
-            items: o.items, totalPrice: Number(o.total_price), status: o.status,
-            date: new Date(o.created_at).toLocaleString()
-          }));
-          localStorage.setItem('orders', JSON.stringify(orders));
-        }
-
-        isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
-        render();
-
-      } catch (err) {
-        console.warn("REST API sync skipped:", err);
-      }
-    }
-
-    // 6-XONALI SKU (ID) GENERATOR
+    // 6-XONALI SKI (ID) HISOBLASH
     function generateProductSKU(catId) {
       if (!catId) return "100001";
 
@@ -228,18 +162,21 @@
 
       let l1 = 1, l2 = 0, l3 = 0;
 
+      // 1-Darajali Katalog
       if (path.length >= 1) {
         const rootCats = categories.filter(c => !c.parentId);
         const idx = rootCats.findIndex(c => c.id === path[0].id);
         l1 = idx >= 0 ? ((idx + 1) % 10) : 1;
       }
 
+      // 2-Darajali Katalog
       if (path.length >= 2) {
         const subCats = categories.filter(c => c.parentId === path[0].id);
         const idx = subCats.findIndex(c => c.id === path[1].id);
         l2 = idx >= 0 ? ((idx + 1) % 10) : 0;
       }
 
+      // 3-Darajali Katalog
       if (path.length >= 3) {
         const subSubCats = categories.filter(c => c.parentId === path[1].id);
         const idx = subSubCats.findIndex(c => c.id === path[2].id);
@@ -250,7 +187,7 @@
       const prodsInCat = products.filter(p => p.categoryId === catId);
       const prodNum = (prodsInCat.length + 1).toString().padStart(3, '0');
 
-      return `${prefix}${prodNum}`;
+      return `${prefix}${prodNum}`; // 6-xonali ID (Masalan: 111001)
     }
 
     // TRANSLITERATION & SEARCH
@@ -283,31 +220,24 @@
     }
 
     function toggleAdminRole() {
-      if (!isUserAnAdmin) {
-        alert("Sizda Admin huquqi yo'q!");
-        isAdminMode = false;
-        return;
-      }
       isAdminMode = !isAdminMode;
       render();
     }
 
     // CART LOGIC
-    async function addToCart(id, e) {
+    function addToCart(id, e) {
       if (e) e.stopPropagation();
       const p = products.find(prod => prod.id === id);
       if (!p || p.stock <= 0) return alert("Mahsulot tugagan!");
 
       if (!cart[id]) {
         cart[id] = { qty: 1, addedAt: new Date().toLocaleString() };
-        
-        const userTitle = `${currentUser.firstName} ${currentUser.lastName}`.trim();
-        cartLogs.unshift({ user: userTitle, productName: p.name, time: new Date().toLocaleString() });
+        cartLogs.unshift({
+          user: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
+          productName: p.name,
+          time: new Date().toLocaleString()
+        });
         localStorage.setItem('cartLogs', JSON.stringify(cartLogs));
-
-        try {
-          await apiRequest('cart_logs', 'POST', [{ user_name: userTitle, product_name: p.name }]);
-        } catch (err) {}
       } else {
         cart[id].qty += 1;
       }
@@ -339,47 +269,18 @@
       }
     }
 
-    // CANVAS IMAGE COMPRESSOR (LIGHTWEIGHT BASE64)
+    // IMAGE FILE UPLOAD HELPER
     function onImagePicked(event, previewId) {
       const file = event.target.files[0];
       if (!file) return;
-
       const reader = new FileReader();
       reader.onload = function(e) {
-        const img = new Image();
-        img.onload = function() {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 400;
-          const MAX_HEIGHT = 400;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > MAX_WIDTH) {
-              height *= MAX_WIDTH / width;
-              width = MAX_WIDTH;
-            }
-          } else {
-            if (height > MAX_HEIGHT) {
-              width *= MAX_HEIGHT / height;
-              height = MAX_HEIGHT;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-
-          tempBase64Image = canvas.toDataURL('image/jpeg', 0.7);
-
-          const prev = document.getElementById(previewId);
-          if (prev) {
-            prev.src = tempBase64Image;
-            prev.classList.remove('hidden');
-          }
-        };
-        img.src = e.target.result;
+        tempBase64Image = e.target.result;
+        const prev = document.getElementById(previewId);
+        if (prev) {
+          prev.src = tempBase64Image;
+          prev.classList.remove('hidden');
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -388,6 +289,7 @@
     function render() {
       updateCartBadge();
 
+      // IF USER NOT REGISTERED ON FIRST VISIT, SHOW REGISTRATION MODAL
       if (!registeredUser && !isAdminMode && activePopupModal !== 'REGISTRATION') {
         activePopupModal = 'REGISTRATION';
       }
@@ -395,7 +297,7 @@
       const roleTag = document.getElementById('role-tag');
       const whBtn = document.getElementById('nav-warehouse-btn');
       
-      if (isAdminMode && isUserAnAdmin) {
+      if (isAdminMode) {
         roleTag.innerText = "ADMIN";
         whBtn.classList.remove('hidden');
         whBtn.classList.add('flex');
@@ -428,7 +330,7 @@
             <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
           </div>
 
-          ${(isAdminMode && isUserAnAdmin) ? `
+          ${isAdminMode ? `
             <div class="bg-amber-50 border border-amber-200 p-3 rounded-2xl text-xs font-bold text-amber-900 shadow-sm flex items-center justify-between">
               <span>🛡️ Admin Rejimi: Bosh sahifa (Pin 📌 orqali tanlangan tovarlar)</span>
             </div>
@@ -489,7 +391,7 @@
           </div>
 
           <!-- ADMIN CONTROLS -->
-          ${(isAdminMode && isUserAnAdmin) ? `
+          ${isAdminMode ? `
             <div class="mt-2 pt-2 border-t flex flex-col space-y-1" onclick="event.stopPropagation()">
               <div class="flex justify-between items-center text-[10px]">
                 <button onclick="moveProductSort('${p.id}', -1)" ${idx === 0 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬆️</button>
@@ -544,7 +446,7 @@
               ` : ''}
             </div>
 
-            ${(isAdminMode && isUserAnAdmin) ? `
+            ${isAdminMode ? `
               <div class="flex space-x-2 pt-1 border-t">
                 <button onclick="openAddCatModal()" class="flex-1 bg-blue-600 text-white font-bold py-1.5 rounded-xl text-xs">➕ Katalog qo'shish</button>
                 <button onclick="openAddProductModal()" class="flex-1 bg-emerald-600 text-white font-bold py-1.5 rounded-xl text-xs">➕ Tovar qo'shish</button>
@@ -567,7 +469,7 @@
                   </div>
                 </div>
                 <div class="flex items-center space-x-2">
-                  ${(isAdminMode && isUserAnAdmin) ? `
+                  ${isAdminMode ? `
                     <button onclick="openGranularEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
                     <button onclick="deleteCategory('${sub.id}', event)" class="p-1 bg-red-100 text-red-600 rounded text-xs font-bold">🗑️</button>
                   ` : ''}
@@ -608,7 +510,7 @@
 
     // 3. CART TAB
     function renderCart(container) {
-      if (isAdminMode && isUserAnAdmin) {
+      if (isAdminMode) {
         container.innerHTML = `
           <div class="space-y-4">
             <h2 class="text-lg font-bold text-amber-900">🛒 Savatchalar Monitoringi (Admin)</h2>
@@ -793,10 +695,9 @@
       });
 
       const totalPrice = orderItems.reduce((s, i) => s + (i.price * i.qty), 0);
-      const newOrderId = Math.floor(1000 + Math.random() * 9000);
 
       const newOrder = {
-        id: newOrderId,
+        id: Math.floor(1000 + Math.random() * 9000),
         user: fullname,
         phone, region, district, address,
         payMethod: selectedPayMethod,
@@ -806,19 +707,8 @@
         date: new Date().toLocaleString()
       };
 
-      try {
-        await apiRequest('orders', 'POST', [{
-          id: newOrderId, user_name: fullname, phone, region, district, address,
-          payment_method: selectedPayMethod, items: orderItems, total_price: totalPrice, status: "NEW"
-        }]);
-
-        orders.unshift(newOrder);
-        localStorage.setItem('orders', JSON.stringify(orders));
-
-      } catch (e) {
-        alert("❌ Buyurtmani saqlashda xatolik: " + e.message);
-        return;
-      }
+      orders.unshift(newOrder);
+      localStorage.setItem('orders', JSON.stringify(orders));
 
       // TELEGRAM NOTIFICATION
       let msg = `🛍 <b>FITCORE - YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
@@ -857,7 +747,7 @@
 
     // 4. ORDERS TAB (USER & ADMIN)
     function renderOrders(container) {
-      if (isAdminMode && isUserAnAdmin) {
+      if (isAdminMode) {
         let filteredOrders = orders.filter(o => {
           const matchStatus = adminOrderFilters.statuses.includes(o.status);
           const matchRegion = adminOrderFilters.region === 'ALL' || o.region === adminOrderFilters.region;
@@ -969,18 +859,13 @@
       `;
     }
 
-    async function cancelUserOrder(orderId, e) {
+    function cancelUserOrder(orderId, e) {
       if (e) e.stopPropagation();
       if (!confirm("Rostdan ham ushbu buyurtmani bekor qilmoqchimisiz?")) return;
       const o = orders.find(ord => ord.id === orderId);
       if (o) {
         o.status = 'CANCELLED';
         localStorage.setItem('orders', JSON.stringify(orders));
-
-        try {
-          await apiRequest('orders', 'PATCH', { status: 'CANCELLED' }, `?id=eq.${orderId}`);
-        } catch (err) {}
-
         alert("✅ Buyurtmangiz bekor qilindi!");
         render();
       }
@@ -1038,7 +923,7 @@
       `;
     }
 
-    // 6. PROFIL TAB
+    // 6. PROFIL TAB (REGISTRATION & ADMIN MANAGEMENT)
     function renderProfile(container) {
       container.innerHTML = `
         <div class="space-y-4">
@@ -1053,17 +938,15 @@
             </div>
           </div>
 
-          ${isUserAnAdmin ? `
-            <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-800 to-slate-900'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-lg">
-              <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
-              <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-            </button>
-          ` : ''}
+          <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-800 to-slate-900'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-lg">
+            <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
+            <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+          </button>
 
-          ${(isSuperAdmin && isAdminMode) ? `
+          ${isAdminMode ? `
             <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
               <div class="flex justify-between items-center border-b pb-2">
-                <h3 class="font-bold text-xs text-amber-900">👑 Adminlarni Boshqarish (Bosh Admin)</h3>
+                <h3 class="font-bold text-xs text-amber-900">👑 Adminlarni Boshqarish</h3>
                 <button onclick="activePopupModal='ADD_ADMIN'; render();" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs flex items-center space-x-1 shadow-sm">
                   <span>➕ Yangi Admin Qo'shish</span>
                 </button>
@@ -1085,15 +968,10 @@
       `;
     }
 
-    async function removeAdmin(admId) {
+    function removeAdmin(admId) {
       if (!confirm("Ushbu admin huquqini bekor qilmoqchimisiz?")) return;
       adminsList = adminsList.filter(a => a !== admId);
       localStorage.setItem('adminsList', JSON.stringify(adminsList));
-
-      try {
-        await apiRequest('admins', 'DELETE', null, `?telegram_id=eq.${admId}`);
-      } catch (e) {}
-
       alert("✅ Admin o'chirildi!");
       render();
     }
@@ -1102,6 +980,7 @@
     function renderModalContainer() {
       const container = document.getElementById('modal-container');
 
+      // REGISTRATION MODAL
       if (activePopupModal === 'REGISTRATION') {
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -1287,7 +1166,7 @@
 
               <div class="relative">
                 <img src="${p.img || 'https://via.placeholder.com/300'}" class="w-full h-48 object-cover rounded-2xl border">
-                ${(isAdminMode && isUserAnAdmin) ? `
+                ${isAdminMode ? `
                   <button onclick="openEditFieldModal('${p.id}', 'img')" class="absolute bottom-2 right-2 bg-blue-600 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-xl flex items-center space-x-1 shadow">
                     <span>✏️ Rasmni O'zgartirish</span>
                   </button>
@@ -1297,14 +1176,16 @@
               <div class="space-y-1">
                 <div class="flex justify-between items-center">
                   <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: ${p.sku}</span>
-                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">🗑️ O'chirish</button>` : ''}
+                  ${isAdminMode ? `<button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">🗑️ O'chirish</button>` : ''}
                 </div>
 
+                <!-- NAME WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
                   <h2 class="text-lg font-black text-gray-900">${p.name}</h2>
-                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
+                  ${isAdminMode ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
                 
+                <!-- PRICE WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
                   <div>
                     ${hasDiscount ? `
@@ -1316,10 +1197,11 @@
                       <p class="text-base font-black text-blue-600">${Number(p.price).toLocaleString()} so'm</p>
                     `}
                   </div>
-                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'price')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
+                  ${isAdminMode ? `<button onclick="openEditFieldModal('${p.id}', 'price')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
 
-                ${(isAdminMode && isUserAnAdmin) ? `
+                <!-- STOCK WITH EDIT -->
+                ${isAdminMode ? `
                   <div class="flex justify-between items-center pt-1 text-xs">
                     <span class="font-bold text-gray-600">Ombor Qoldig'i: <b class="${p.stock>0?'text-green-600':'text-red-500'}">${p.stock} ta</b></span>
                     <button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
@@ -1327,10 +1209,11 @@
                 ` : ''}
               </div>
 
+              <!-- TAVSIF WITH EDIT -->
               <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1 relative">
                 <div class="flex justify-between items-center">
                   <h4 class="font-bold text-gray-700">📝 Tavsif / Izoh:</h4>
-                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'desc')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
+                  ${isAdminMode ? `<button onclick="openEditFieldModal('${p.id}', 'desc')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
                 <p class="text-gray-600 leading-relaxed">${p.desc || 'Tavsif kiritilmagan.'}</p>
               </div>
@@ -1386,7 +1269,7 @@
                 <span class="text-green-600">${o.totalPrice.toLocaleString()} so'm</span>
               </div>
 
-              ${(isAdminMode && isUserAnAdmin) ? `
+              ${isAdminMode ? `
                 <div class="border-t pt-2 space-y-2">
                   <label class="font-bold text-gray-700">Tezkor Status O'zgartirish:</label>
                   <div class="grid grid-cols-2 gap-2">
@@ -1425,18 +1308,15 @@
       renderModalContainer();
     }
 
-    async function updateOrderStatus(id, newStatus) {
+    function updateOrderStatus(id, newStatus) {
       const o = orders.find(ord => ord.id === id);
       if (o) o.status = newStatus;
+      localStorage.setItem('orders', JSON.stringify(orders));
       selectedOrderModal = null;
       render();
-
-      try {
-        await apiRequest('orders', 'PATCH', { status: newStatus }, `?id=eq.${id}`);
-      } catch (e) {}
     }
 
-    // MODAL SAVERS WITH DIRECT REST API SYNC
+    // MODAL SAVERS
     function saveRegistrationFromModal() {
       const fn = document.getElementById('reg-fname').value.trim();
       const ln = document.getElementById('reg-lname').value.trim();
@@ -1455,7 +1335,7 @@
       render();
     }
 
-    async function saveProductFromModal() {
+    function saveProductFromModal() {
       const name = document.getElementById('m-prod-name').value.trim();
       const price = parseFloat(document.getElementById('m-prod-price').value);
       const oldPriceVal = parseFloat(document.getElementById('m-prod-oldprice').value);
@@ -1469,11 +1349,11 @@
         oldPrice = oldPriceVal;
       }
 
+      // AVTOMATIK 6-XONALI ID (SKU) BERISH
       const sku = generateProductSKU(adminCatParentId);
-      const newProdId = "p" + Date.now();
 
       const newP = {
-        id: newProdId,
+        id: "p" + Date.now(),
         sku,
         name, price, oldPrice, stock, desc: desc || name,
         img: tempBase64Image || "https://via.placeholder.com/150",
@@ -1482,70 +1362,37 @@
         isFeatured: true, sortOrder: products.length + 1
       };
 
-      try {
-        await apiRequest('products', 'POST', [{
-          id: newP.id,
-          sku: newP.sku,
-          name: newP.name,
-          price: newP.price,
-          old_price: newP.oldPrice,
-          stock: newP.stock,
-          description: newP.desc,
-          image: newP.img,
-          category_id: newP.categoryId,
-          status: newP.status,
-          is_featured: newP.isFeatured,
-          sort_order: newP.sortOrder
-        }]);
-
-        products.push(newP);
-        localStorage.setItem('products', JSON.stringify(products));
-        tempBase64Image = null;
-        activePopupModal = null;
-        alert(`✅ Yangi tovar (ID: ${sku}) bazaga saqlandi va Barchaga ko'rinadi!`);
-        render();
-
-      } catch (e) {
-        alert("❌ Bazaga saqlashda xatolik yuz berdi:\n" + e.message);
-      }
+      products.push(newP);
+      localStorage.setItem('products', JSON.stringify(products));
+      tempBase64Image = null;
+      activePopupModal = null;
+      alert(`✅ Yangi tovar (ID: ${sku}) muvaffaqiyatli qo'shildi!`);
+      render();
     }
 
-    async function saveCategoryFromModal() {
+    function saveCategoryFromModal() {
       const name = document.getElementById('m-cat-name').value.trim();
       if (!name) return alert("Katalog nomini kiriting!");
 
-      const newCatId = "c" + Date.now();
-      const newCatImg = tempBase64Image || (adminCatParentId ? "📦" : "📁");
+      categories.push({
+        id: "c" + Date.now(),
+        name,
+        img: tempBase64Image || (adminCatParentId ? "📦" : "📁"),
+        parentId: adminCatParentId
+      });
 
-      try {
-        await apiRequest('categories', 'POST', [{
-          id: newCatId,
-          name: name,
-          parent_id: adminCatParentId,
-          image: newCatImg
-        }]);
-
-        categories.push({ id: newCatId, name, img: newCatImg, parentId: adminCatParentId });
-        localStorage.setItem('categories', JSON.stringify(categories));
-        tempBase64Image = null;
-        activePopupModal = null;
-        alert("✅ Katalog bazaga saqlandi!");
-        render();
-
-      } catch (e) {
-        alert("❌ Bazaga saqlashda xatolik yuz berdi:\n" + e.message);
-      }
+      localStorage.setItem('categories', JSON.stringify(categories));
+      tempBase64Image = null;
+      activePopupModal = null;
+      alert("✅ Katalog yaratildi!");
+      render();
     }
 
-    async function saveAdminFromModal() {
+    function saveAdminFromModal() {
       const idVal = document.getElementById('m-admin-id').value.trim();
       if (!idVal || isNaN(idVal)) return alert("To'g'ri Telegram ID kiriting!");
 
       if (!adminsList.includes(idVal)) {
-        try {
-          await apiRequest('admins', 'POST', [{ telegram_id: idVal }]);
-        } catch (e) {}
-
         adminsList.push(idVal);
         localStorage.setItem('adminsList', JSON.stringify(adminsList));
         alert("✅ Yangi admin biriktirildi!");
@@ -1554,46 +1401,31 @@
       render();
     }
 
-    async function saveFieldEdit(prodId, field) {
+    function saveFieldEdit(prodId, field) {
       const p = products.find(prod => prod.id === prodId);
       if (!p) return;
 
-      let updatePayload = {};
-
       if (field === 'name') {
         const val = document.getElementById('ef-val').value.trim();
-        if (val) { p.name = val; updatePayload.name = val; }
+        if (val) p.name = val;
       } else if (field === 'price') {
         const price = parseFloat(document.getElementById('ef-price').value);
         const oldVal = parseFloat(document.getElementById('ef-oldprice').value);
         if (!isNaN(price)) {
           p.price = price;
-          p.oldPrice = (!isNaN(oldVal) && oldVal > price) ? oldVal : null;
-          updatePayload.price = p.price;
-          updatePayload.old_price = p.oldPrice;
+          if (!isNaN(oldVal) && oldVal > price) p.oldPrice = oldVal;
+          else p.oldPrice = null;
         }
       } else if (field === 'stock') {
         const stock = parseInt(document.getElementById('ef-val').value, 10);
         if (!isNaN(stock)) {
           p.stock = stock;
           p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
-          updatePayload.stock = p.stock;
-          updatePayload.status = p.status;
         }
       } else if (field === 'desc') {
         p.desc = document.getElementById('ef-val').value.trim();
-        updatePayload.description = p.desc;
       } else if (field === 'img') {
-        if (tempBase64Image) { p.img = tempBase64Image; updatePayload.image = p.img; }
-      }
-
-      if (Object.keys(updatePayload).length > 0) {
-        try {
-          await apiRequest('products', 'PATCH', updatePayload, `?id=eq.${prodId}`);
-        } catch (e) {
-          alert("❌ Bazaga saqlashda xatolik:\n" + e.message);
-          return;
-        }
+        if (tempBase64Image) p.img = tempBase64Image;
       }
 
       localStorage.setItem('products', JSON.stringify(products));
@@ -1615,23 +1447,19 @@
       render();
     }
 
-    async function openGranularEditCategoryModal(id, e) {
+    function openGranularEditCategoryModal(id, e) {
       if (e) e.stopPropagation();
       const c = categories.find(cat => cat.id === id);
       if (!c) return;
 
       const name = prompt("Yangi katalog nomi:", c.name);
-      if (name) {
-        c.name = name;
-        localStorage.setItem('categories', JSON.stringify(categories));
-        try {
-          await apiRequest('categories', 'PATCH', { name }, `?id=eq.${id}`);
-        } catch (err) {}
-      }
+      if (name) c.name = name;
+
+      localStorage.setItem('categories', JSON.stringify(categories));
       render();
     }
 
-    async function moveProductSort(id, dir) {
+    function moveProductSort(id, dir) {
       const idx = products.findIndex(p => p.id === id);
       if (idx < 0) return;
       const targetIdx = idx + dir;
@@ -1644,61 +1472,41 @@
       products.forEach((p, i) => p.sortOrder = i + 1);
       localStorage.setItem('products', JSON.stringify(products));
       render();
-
-      try {
-        for (let i = 0; i < products.length; i++) {
-          await apiRequest('products', 'PATCH', { sort_order: i + 1 }, `?id=eq.${products[i].id}`);
-        }
-      } catch (e) {}
     }
 
-    async function toggleProductFeatured(id) {
+    function toggleProductFeatured(id) {
       const p = products.find(prod => prod.id === id);
       if (p) {
         p.isFeatured = !p.isFeatured;
         localStorage.setItem('products', JSON.stringify(products));
         render();
-
-        try {
-          await apiRequest('products', 'PATCH', { is_featured: p.isFeatured }, `?id=eq.${id}`);
-        } catch (e) {}
       }
     }
 
-    async function deleteProduct(id) {
+    function deleteProduct(id) {
       if (!confirm("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz?")) return;
       const p = products.find(prod => prod.id === id);
-      if (p) {
-        p.status = 'DELETED';
-        localStorage.setItem('products', JSON.stringify(producshuts));
-        render();
-
-        try {
-          await apiRequest('products', 'PATCH', { status: 'DELETED' }, `?id=eq.${id}`);
-        } catch (e) {}
-      }
+      if (p) p.status = 'DELETED';
+      localStorage.setItem('products', JSON.stringify(products));
+      render();
     }
 
-    async function deleteCategory(id, e) {
+    function deleteCategory(id, e) {
       if (e) e.stopPropagation();
       if (!confirm("Katalog o'chirilsinmi?")) return;
       categories = categories.filter(c => c.id !== id);
       localStorage.setItem('categories', JSON.stringify(categories));
       render();
-
-      try {
-        await apiRequest('categories', 'DELETE', null, `?id=eq.${id}`);
-      } catch (e) {}
     }
 
-    async function saveBulkStock() {
+    function saveBulkStock() {
       const input = document.getElementById('bulk-input').value.trim();
       if (!input) return alert("Ma'lumot kiriting!");
 
       const lines = input.split('\n');
       let count = 0;
 
-      for (const line of lines) {
+      lines.forEach(line => {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 2) {
           const sku = parts[0].toUpperCase();
@@ -1709,21 +1517,17 @@
             p.stock = stock;
             p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
             count++;
-
-            try {
-              await apiRequest('products', 'PATCH', { stock: p.stock, status: p.status }, `?id=eq.${p.id}`);
-            } catch (e) {}
           }
         }
-      }
+      });
 
       localStorage.setItem('products', JSON.stringify(products));
-      alert(`✅ ${count} ta mahsulot qoldig'i bazada yangilandi!`);
+      alert(`✅ ${count} ta mahsulot qoldig'i yangilandi!`);
       render();
     }
 
     // INITIAL LAUNCH
-    loadDatabaseData();
+    switchTab('home');
   </script>
 </body>
 </html>
