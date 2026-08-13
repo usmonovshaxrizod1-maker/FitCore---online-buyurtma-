@@ -150,7 +150,8 @@
         id: r.id, sku: r.sku, name: r.name, price: Number(r.price),
         oldPrice: r.old_price !== null ? Number(r.old_price) : null,
         stock: r.stock, categoryId: r.category_id, status: r.status,
-        img: r.img, desc: r.description, isFeatured: r.is_featured, sortOrder: r.sort_order
+        img: r.img, desc: r.description, isFeatured: r.is_featured, sortOrder: r.sort_order,
+        sizes: Array.isArray(r.sizes) ? r.sizes : null
       };
     }
     function mapCategoryFromDB(r) {
@@ -204,11 +205,22 @@
     let currentVisibleProductIds = [];
 
     let adminOrderFilters = {
-      statuses: ['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'],
+      status: 'ALL',
       region: 'ALL',
       payment: 'ALL',
       search: ''
     };
+
+    // Buyurtma statuslarini o'zbekcha ko'rsatish va har biriga alohida rang
+    const STATUS_LABELS = { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan" };
+    const STATUS_COLORS = {
+      NEW: "bg-amber-100 text-amber-800",
+      PROCESSING: "bg-blue-100 text-blue-800",
+      DELIVERED: "bg-green-100 text-green-800",
+      CANCELLED: "bg-red-100 text-red-800",
+    };
+    function statusLabel(st) { return STATUS_LABELS[st] || st; }
+    function statusColorClass(st) { return STATUS_COLORS[st] || "bg-gray-100 text-gray-600"; }
 
     let currentUser = {
       firstName: registeredUser?.firstName || tg?.initDataUnsafe?.user?.first_name || "Mijoz",
@@ -306,18 +318,40 @@
     }
 
     // CART LOGIC
+    // Savat kalitlarini hosil qilish: o'lchamsiz tovarlar uchun kalit shunchaki
+    // tovar ID'si (avvalgidek), o'lchamli tovarlar uchun "ID::o'lcham" —
+    // shunda bir xil tovarning turli o'lchamlari savatda alohida qatorlar
+    // bo'lib turadi.
+    function cartKey(productId, size) {
+      return size ? `${productId}::${size}` : productId;
+    }
+    function cartEntryProductId(key, entry) {
+      return (entry && entry.productId) || key;
+    }
+    function totalCartQtyForProduct(productId, excludeKey) {
+      return Object.entries(cart)
+        .filter(([k, c]) => k !== excludeKey && cartEntryProductId(k, c) === productId)
+        .reduce((sum, [, c]) => sum + c.qty, 0);
+    }
+
     function addToCart(id, e) {
       if (e) e.stopPropagation();
       const p = products.find(prod => prod.id === id);
       if (!p || p.stock <= 0) return alert("Mahsulot tugagan!");
 
-      if (!cart[id]) {
-        cart[id] = { qty: 1, addedAt: new Date().toLocaleString() };
-      } else {
-        if (p.stock && cart[id].qty >= p.stock) {
+      const key = cartKey(id, null);
+      const existingQty = totalCartQtyForProduct(id, key);
+
+      if (!cart[key]) {
+        if (p.stock && existingQty >= p.stock) {
           return alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
         }
-        cart[id].qty += 1;
+        cart[key] = { productId: id, size: null, qty: 1, addedAt: new Date().toLocaleString() };
+      } else {
+        if (p.stock && existingQty + cart[key].qty + 1 > p.stock) {
+          return alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
+        }
+        cart[key].qty += 1;
       }
 
       localStorage.setItem('cart', JSON.stringify(cart));
@@ -325,24 +359,52 @@
       render();
     }
 
-    function changeCartQty(id, delta, e) {
+    function changeCartQty(key, delta, e) {
       if (e) e.stopPropagation();
-      if (!cart[id]) return;
-      const p = products.find(prod => prod.id === id);
-      const newQty = cart[id].qty + delta;
+      if (!cart[key]) return;
+      const productId = cartEntryProductId(key, cart[key]);
+      const p = products.find(prod => prod.id === productId);
+      const newQty = cart[key].qty + delta;
 
       if (newQty <= 0) {
-        delete cart[id];
-      } else if (p && p.stock && newQty > p.stock) {
-        alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
-        return; // qty o'zgarmaydi
+        delete cart[key];
+      } else if (p && p.stock) {
+        const otherQty = totalCartQtyForProduct(productId, key);
+        if (otherQty + newQty > p.stock) {
+          alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
+          return; // qty o'zgarmaydi
+        }
+        cart[key].qty = newQty;
       } else {
-        cart[id].qty = newQty;
+        cart[key].qty = newQty;
       }
 
       localStorage.setItem('cart', JSON.stringify(cart));
       updateCartBadge();
       render();
+    }
+
+    // Bir nechta o'lchamni bir vaqtda savatga qo'shish uchun
+    // (masalan 40-dan 1ta, 42-dan 2ta — barchasi bir bosishda qo'shiladi).
+    function addSizedItemsToCart(productId, sizeQtyMap) {
+      const p = products.find(prod => prod.id === productId);
+      if (!p) return;
+      const totalRequested = Object.values(sizeQtyMap).reduce((s, q) => s + q, 0);
+      if (totalRequested <= 0) return alert("Kamida bitta o'lcham va sonini tanlang!");
+
+      const existingQty = totalCartQtyForProduct(productId, null);
+      if (p.stock && existingQty + totalRequested > p.stock) {
+        return alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
+      }
+
+      for (const [size, qty] of Object.entries(sizeQtyMap)) {
+        if (!qty || qty <= 0) continue;
+        const key = cartKey(productId, size);
+        if (cart[key]) cart[key].qty += qty;
+        else cart[key] = { productId, size, qty, addedAt: new Date().toLocaleString() };
+      }
+      localStorage.setItem('cart', JSON.stringify(cart));
+      updateCartBadge();
     }
 
     function updateCartBadge() {
@@ -572,6 +634,7 @@
                 <p class="text-xs text-blue-600 font-black">${Number(p.price).toLocaleString()} so'm</p>
               `}
             </div>
+            ${(p.sizes && p.sizes.length > 0) ? `<p class="text-[9px] text-gray-400 mt-0.5">O'lcham: ${p.sizes.map(s => escapeHtml(s)).join(', ')}</p>` : ''}
           </div>
 
           <!-- ADMIN CONTROLS -->
@@ -589,6 +652,11 @@
             <!-- USER CART CONTROLS -->
             <div class="mt-2" onclick="event.stopPropagation()">
               ${p.stock > 0 ? (
+                (p.sizes && p.sizes.length > 0) ? `
+                  <button onclick="openProductDetailModal('${p.id}')" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1">
+                    <span>O'lchamni tanlash</span>
+                  </button>
+                ` : (
                 inCart ? `
                   <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl p-1">
                     <button onclick="changeCartQty('${p.id}', -1, event)" class="w-6 h-6 bg-white font-bold rounded-lg shadow text-xs text-blue-600">-</button>
@@ -600,7 +668,7 @@
                     <i data-lucide="plus" class="w-3.5 h-3.5"></i> <span>Savatga</span>
                   </button>
                 `
-              ) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-2 rounded-xl text-xs">❌ Tugagan</button>`}
+              )) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-2 rounded-xl text-xs">❌ Tugagan</button>`}
             </div>
           `}
         </div>
@@ -636,6 +704,7 @@
                 <button onclick="openAddCatModal()" class="flex-1 bg-blue-600 text-white font-bold py-1.5 rounded-xl text-xs">➕ Katalog qo'shish</button>
                 <button onclick="openAddProductModal()" class="flex-1 bg-emerald-600 text-white font-bold py-1.5 rounded-xl text-xs">➕ Tovar qo'shish</button>
               </div>
+              <button onclick="openBulkAddModal()" class="w-full bg-slate-800 text-white font-bold py-1.5 rounded-xl text-xs">📥 Ko'p tovar qo'shish</button>
             ` : ''}
           </div>
 
@@ -695,9 +764,10 @@
 
     // 3. CART TAB
     function renderCart(container) {
-      const items = Object.entries(cart).map(([id, itemData]) => {
-        const p = products.find(prod => prod.id === id);
-        return p ? { ...p, qty: itemData.qty } : null;
+      const items = Object.entries(cart).map(([key, itemData]) => {
+        const productId = cartEntryProductId(key, itemData);
+        const p = products.find(prod => prod.id === productId);
+        return p ? { ...p, key, qty: itemData.qty, size: itemData.size || null } : null;
       }).filter(Boolean);
 
       let total = items.reduce((sum, item) => sum + (item.price * item.qty), 0);
@@ -722,14 +792,14 @@
                 <div class="flex items-center gap-2.5">
                   <img src="${escapeHtml(item.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-10 h-10 object-cover rounded-lg flex-shrink-0" loading="lazy">
                   <div>
-                    <h4 class="font-bold text-sm text-gray-800">${escapeHtml(item.name)}</h4>
+                    <h4 class="font-bold text-sm text-gray-800">${escapeHtml(item.name)} ${item.size ? `<span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-500">${escapeHtml(item.size)}</span>` : ''}</h4>
                     <p class="text-xs text-gray-500">${item.price.toLocaleString()} so'm</p>
                   </div>
                 </div>
                 <div class="flex items-center space-x-2">
-                  <button onclick="changeCartQty('${item.id}', -1)" class="w-7 h-7 bg-gray-100 rounded-lg font-bold text-sm">-</button>
+                  <button onclick="changeCartQty('${item.key}', -1)" class="w-7 h-7 bg-gray-100 rounded-lg font-bold text-sm">-</button>
                   <span class="font-bold text-sm px-1">${item.qty}</span>
-                  <button onclick="changeCartQty('${item.id}', 1)" class="w-7 h-7 bg-blue-600 text-white rounded-lg font-bold text-sm">+</button>
+                  <button onclick="changeCartQty('${item.key}', 1)" class="w-7 h-7 bg-blue-600 text-white rounded-lg font-bold text-sm">+</button>
                 </div>
               </div>
             `).join('')}
@@ -914,11 +984,18 @@
         return alert("❌ Hozircha faqat naqd pul bilan buyurtma qabul qilinadi.");
       }
 
-      // Savatdagi tovarlar hali ham omborda yetarlimi — tezkor tekshirish (yakuniy
-      // va xavfsiz tekshiruv serverda, atomik tranzaksiya ichida bo'ladi):
-      for (const [id, itemData] of Object.entries(cart)) {
-        const p = products.find(prod => prod.id === id);
-        if (!p || p.stock < itemData.qty) {
+      // Savatdagi tovarlar hali ham omborda yetarlimi — tezkor tekshirish
+      // (turli o'lchamdagi bir xil tovar birgalikda hisoblanadi, chunki
+      // ombor soni o'lcham bo'yicha emas, tovar bo'yicha saqlanadi).
+      // Yakuniy va xavfsiz tekshiruv serverda, atomik tranzaksiya ichida bo'ladi.
+      const qtyByProduct = {};
+      for (const [key, itemData] of Object.entries(cart)) {
+        const productId = cartEntryProductId(key, itemData);
+        qtyByProduct[productId] = (qtyByProduct[productId] || 0) + itemData.qty;
+      }
+      for (const [productId, totalQty] of Object.entries(qtyByProduct)) {
+        const p = products.find(prod => prod.id === productId);
+        if (!p || p.stock < totalQty) {
           return alert(`❌ "${p ? p.name : 'Mahsulot'}" omborda yetarli emas. Iltimos, savatchani tekshiring.`);
         }
       }
@@ -927,7 +1004,9 @@
       submittingOrder = true;
       showLoader("Buyurtma qabul qilinmoqda...");
 
-      const itemsPayload = Object.entries(cart).map(([id, itemData]) => ({ productId: id, qty: itemData.qty }));
+      const itemsPayload = Object.entries(cart).map(([key, itemData]) => ({
+        productId: cartEntryProductId(key, itemData), qty: itemData.qty, size: itemData.size || null
+      }));
 
       try {
         const result = await callApi('create_order', {
@@ -976,7 +1055,7 @@
       if (isAdminMode && isUserAnAdmin) {
         // ADMIN ORDERS VIEW
         let filteredOrders = orders.filter(o => {
-          const matchStatus = adminOrderFilters.statuses.includes(o.status);
+          const matchStatus = adminOrderFilters.status === 'ALL' || o.status === adminOrderFilters.status;
           const matchRegion = adminOrderFilters.region === 'ALL' || o.region === adminOrderFilters.region;
           const matchPayment = adminOrderFilters.payment === 'ALL' || o.payMethod === adminOrderFilters.payment;
           const matchSearch = !adminOrderFilters.search || o.user.toLowerCase().includes(adminOrderFilters.search.toLowerCase()) || o.phone.includes(adminOrderFilters.search);
@@ -995,9 +1074,10 @@
               <input type="text" id="adm-ord-search" oninput="adminOrderFilters.search = this.value; render();" placeholder="Mijoz ismi yoki tel raqami..." value="${escapeHtml(adminOrderFilters.search)}" class="w-full p-2 border rounded-xl">
 
               <div class="flex gap-1 flex-wrap">
+                <button onclick="setAdminStatusFilter('ALL')" class="px-2.5 py-1 rounded-lg font-bold text-[10px] ${adminOrderFilters.status === 'ALL' ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-600'}">Barchasi</button>
                 ${['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'].map(st => `
-                  <button onclick="toggleAdminStatusFilter('${st}')" class="px-2 py-1 rounded-lg font-bold text-[10px] ${adminOrderFilters.statuses.includes(st) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
-                    ${st}
+                  <button onclick="setAdminStatusFilter('${st}')" class="px-2.5 py-1 rounded-lg font-bold text-[10px] ${adminOrderFilters.status === st ? statusColorClass(st) + ' ring-2 ring-offset-1 ring-current' : 'bg-gray-100 text-gray-500'}">
+                    ${statusLabel(st)}
                   </button>
                 `).join('')}
               </div>
@@ -1024,7 +1104,7 @@
                   <div>
                     <div class="flex items-center space-x-2">
                       <span class="font-black text-blue-600 text-xs">#${o.id}</span>
-                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${o.status === 'NEW' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}">${o.status}</span>
+                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${statusColorClass(o.status)}">${statusLabel(o.status)}</span>
                     </div>
                     <p class="font-bold text-xs text-gray-800 mt-1">${escapeHtml(o.user)} (${escapeHtml(o.phone)})</p>
                     <p class="text-[10px] text-gray-400">${escapeHtml(o.region)} | ${escapeHtml(o.payMethod)}</p>
@@ -1054,11 +1134,10 @@
           <h2 class="text-lg font-bold text-slate-800">Buyurtmalarim</h2>
 
           <div class="flex space-x-1 overflow-x-auto pb-1 text-xs">
-            <button onclick="userOrderFilter='ALL'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'ALL' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Barchasi</button>
-            <button onclick="userOrderFilter='NEW'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'NEW' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Yangi</button>
-            <button onclick="userOrderFilter='PROCESSING'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'PROCESSING' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Jarayonda</button>
-            <button onclick="userOrderFilter='DELIVERED'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'DELIVERED' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Bajarilgan</button>
-            <button onclick="userOrderFilter='CANCELLED'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'CANCELLED' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Bekor qilingan</button>
+            <button onclick="userOrderFilter='ALL'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'ALL' ? 'bg-slate-800 text-white' : 'bg-white border text-gray-600'}">Barchasi</button>
+            ${['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'].map(st => `
+              <button onclick="userOrderFilter='${st}'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === st ? statusColorClass(st) + ' ring-2 ring-offset-1 ring-current' : 'bg-white border text-gray-500'}">${statusLabel(st)}</button>
+            `).join('')}
           </div>
 
           ${userOrders.length === 0 ? '<p class="text-xs text-gray-500 bg-white p-4 rounded-xl text-center">Buyurtmalar topilmadi</p>' : ''}
@@ -1066,14 +1145,14 @@
             <div onclick="openOrderModal(${o.id})" class="bg-white rounded-2xl p-4 shadow-sm space-y-2 border cursor-pointer hover:bg-gray-50">
               <div class="flex justify-between items-center border-b pb-2">
                 <span class="font-black text-blue-600">#${o.id}</span>
-                <span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">${o.status}</span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColorClass(o.status)}">${statusLabel(o.status)}</span>
               </div>
               <p class="text-xs text-gray-500">📅 ${escapeHtml(o.date)}</p>
               <div class="text-xs space-y-1.5">
                 ${o.items.map(i => `
                   <div class="flex items-center gap-2">
                     ${i.img ? `<img src="${escapeHtml(i.img)}" onerror="this.style.display='none'" class="w-7 h-7 object-cover rounded-lg flex-shrink-0" loading="lazy">` : ''}
-                    <p class="font-medium">• ${escapeHtml(i.name)} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>
+                    <p class="font-medium">• ${escapeHtml(i.name)} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>
                   </div>
                 `).join('')}
               </div>
@@ -1110,12 +1189,8 @@
       }
     }
 
-    function toggleAdminStatusFilter(st) {
-      if (adminOrderFilters.statuses.includes(st)) {
-        adminOrderFilters.statuses = adminOrderFilters.statuses.filter(s => s !== st);
-      } else {
-        adminOrderFilters.statuses.push(st);
-      }
+    function setAdminStatusFilter(st) {
+      adminOrderFilters.status = st;
       render();
     }
 
@@ -1471,6 +1546,70 @@
         return;
       }
 
+      if (activePopupModal === 'BULK_ADD') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📥 Ko'p Tovar Qo'shish</h3>
+              <p class="text-[10px] text-gray-500">Katalog yo'lini <b>/</b> bilan yozing, masalan: <b>Sport ozuqalari / Protein / Whey</b>. Mavjud bo'lmasa avtomatik yaratiladi, mavjud bo'lsa o'shanga joylanadi.</p>
+
+              <div class="space-y-3">
+                ${bulkRows.map((row, idx) => `
+                  <div class="border rounded-2xl p-3 space-y-2 bg-gray-50">
+                    <div class="flex justify-between items-center">
+                      <span class="font-bold text-gray-500">#${idx + 1}-tovar</span>
+                      ${bulkRows.length > 1 ? `<button onclick="removeBulkRow(${idx})" class="text-red-600 font-bold text-xs">🗑️ O'chirish</button>` : ''}
+                    </div>
+                    <div>
+                      <label class="font-bold text-gray-600">Katalog yo'li</label>
+                      <input type="text" value="${escapeHtml(row.categoryPath)}" oninput="bulkRows[${idx}].categoryPath = this.value" placeholder="Sport ozuqalari / Protein / Whey" class="w-full mt-0.5 p-2 border rounded-xl">
+                    </div>
+                    <div>
+                      <label class="font-bold text-gray-600">Tovar nomi *</label>
+                      <input type="text" value="${escapeHtml(row.name)}" oninput="bulkRows[${idx}].name = this.value" placeholder="Masalan: Whey Protein 3kg" class="w-full mt-0.5 p-2 border rounded-xl">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <div>
+                        <label class="font-bold text-gray-600">Narxi *</label>
+                        <input type="number" value="${escapeHtml(row.price)}" oninput="bulkRows[${idx}].price = this.value" placeholder="350000" class="w-full mt-0.5 p-2 border rounded-xl">
+                      </div>
+                      <div>
+                        <label class="font-bold text-gray-600">Eski narx</label>
+                        <input type="number" value="${escapeHtml(row.oldPrice)}" oninput="bulkRows[${idx}].oldPrice = this.value" placeholder="ixtiyoriy" class="w-full mt-0.5 p-2 border rounded-xl">
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <div>
+                        <label class="font-bold text-gray-600">Soni</label>
+                        <input type="number" value="${escapeHtml(row.stock)}" oninput="bulkRows[${idx}].stock = this.value" placeholder="0" class="w-full mt-0.5 p-2 border rounded-xl">
+                      </div>
+                      <div>
+                        <label class="font-bold text-gray-600">O'lchamlar</label>
+                        <input type="text" value="${escapeHtml(row.sizes)}" oninput="bulkRows[${idx}].sizes = this.value" placeholder="40,42,44" class="w-full mt-0.5 p-2 border rounded-xl">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="font-bold text-gray-600">Izoh (ixtiyoriy)</label>
+                      <input type="text" value="${escapeHtml(row.desc)}" oninput="bulkRows[${idx}].desc = this.value" class="w-full mt-0.5 p-2 border rounded-xl">
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+
+              <button onclick="addBulkRow()" class="w-full bg-gray-100 text-gray-700 font-bold py-2 rounded-xl">➕ Yana qator qo'shish</button>
+
+              <p class="text-[10px] text-gray-400">Rasm bu yerda kiritilmaydi — tovarlar qo'shilgandan keyin har birining rasmini alohida (tovar ustiga bosib, "Rasmni o'zgartirish" orqali) qo'shasiz.</p>
+
+              <div class="flex gap-2 pt-2">
+                <button onclick="submitBulkAdd()" class="flex-1 bg-green-600 text-white font-bold py-2.5 rounded-xl">✅ Barchasini Saqlash</button>
+                <button onclick="activePopupModal=null; bulkRows=[]; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">Yopish</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
       if (activePopupModal === 'ADD_ADMIN') {
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -1529,6 +1668,12 @@
                 <label class="font-bold text-gray-600">Yangi Rasm (Xotiradan yuklash):</label>
                 <input type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev')" class="w-full mt-1 text-xs">
                 <img id="ef-img-prev" src="${escapeHtml(p.img || '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border">
+              ` : ''}
+
+              ${field === 'sizes' ? `
+                <label class="font-bold text-gray-600">O'lchamlar (vergul bilan ajratib yozing):</label>
+                <input type="text" id="ef-val" value="${escapeHtml((p.sizes || []).join(', '))}" placeholder="40, 42, 44" class="w-full p-2 border rounded-xl">
+                <p class="text-[10px] text-gray-400 mt-1">Bo'sh qoldirsangiz, o'lcham talab qilinmaydi.</p>
               ` : ''}
 
               <div class="flex space-x-2 pt-2">
@@ -1625,6 +1770,10 @@
                     <span class="font-bold text-gray-600">Ombor Qoldig'i: <b class="${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ta</b></span>
                     <button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
                   </div>
+                  <div class="flex justify-between items-center pt-1 text-xs">
+                    <span class="font-bold text-gray-600">O'lchamlar: <b>${(p.sizes && p.sizes.length) ? escapeHtml(p.sizes.join(', ')) : 'kiritilmagan'}</b></span>
+                    <button onclick="openEditFieldModal('${p.id}', 'sizes')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
+                  </div>
                 ` : ''}
               </div>
 
@@ -1640,6 +1789,27 @@
               ${!isAdminMode ? `
                 <div>
                   ${p.stock > 0 ? (
+                    (p.sizes && p.sizes.length > 0) ? `
+                      <div class="space-y-2">
+                        <p class="text-xs font-bold text-gray-600">O'lchamni tanlang (bir nechtasini tanlash mumkin):</p>
+                        <div class="space-y-1.5">
+                          ${p.sizes.map(size => {
+                            const qty = selectedSizeQtys[size] || 0;
+                            return `
+                              <div class="flex items-center justify-between bg-gray-50 border rounded-xl p-2">
+                                <span class="font-bold text-sm text-gray-800">${escapeHtml(size)}</span>
+                                <div class="flex items-center space-x-2">
+                                  <button onclick="setSizeQty('${escapeHtml(size)}', -1)" class="w-8 h-8 bg-white font-bold rounded-lg shadow text-sm text-blue-600">-</button>
+                                  <span class="font-bold text-sm w-5 text-center">${qty}</span>
+                                  <button onclick="setSizeQty('${escapeHtml(size)}', 1)" class="w-8 h-8 bg-blue-600 font-bold rounded-lg text-sm text-white">+</button>
+                                </div>
+                              </div>
+                            `;
+                          }).join('')}
+                        </div>
+                        <button onclick="addSelectedSizesToCart('${p.id}'); openProductDetailModal('${p.id}');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm">🛒 Savatga qo'shish</button>
+                      </div>
+                    ` : (
                     inCart ? `
                       <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-2xl p-2">
                         <button onclick="changeCartQty('${p.id}', -1, event); openProductDetailModal('${p.id}');" class="w-10 h-10 bg-white font-bold rounded-xl shadow text-base text-blue-600">-</button>
@@ -1649,7 +1819,7 @@
                     ` : `
                       <button onclick="addToCart('${p.id}', event); openProductDetailModal('${p.id}');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm">🛒 Savatga qo'shish</button>
                     `
-                  ) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-2xl text-sm">❌ Mahsulot tugagan</button>`}
+                  )) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-2xl text-sm">❌ Mahsulot tugagan</button>`}
                 </div>
               ` : ''}
             </div>
@@ -1683,7 +1853,7 @@
                 ${o.items.map(i => `
                   <div class="flex items-center gap-2">
                     ${i.img ? `<img src="${escapeHtml(i.img)}" onerror="this.style.display='none'" class="w-7 h-7 object-cover rounded-lg flex-shrink-0" loading="lazy">` : ''}
-                    <p>• ${escapeHtml(i.name)} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${(i.price * i.qty).toLocaleString()} so'm</p>
+                    <p>• ${escapeHtml(i.name)} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${(i.price * i.qty).toLocaleString()} so'm</p>
                   </div>
                 `).join('')}
               </div>
@@ -1703,9 +1873,9 @@
                 <div class="border-t pt-2 space-y-2">
                   <label class="font-bold text-gray-700">Tezkor Status O'zgartirish:</label>
                   <div class="grid grid-cols-2 gap-2">
-                    <button onclick="updateOrderStatus(${o.id}, 'DELIVERED')" class="bg-green-600 text-white font-bold py-2 rounded-xl text-[11px]">✅ Bajarildi</button>
-                    <button onclick="updateOrderStatus(${o.id}, 'PROCESSING')" class="bg-amber-600 text-white font-bold py-2 rounded-xl text-[11px]">⏳ Jarayonda</button>
-                    <button onclick="updateOrderStatus(${o.id}, 'CANCELLED')" class="bg-red-600 text-white font-bold py-2 rounded-xl text-[11px] col-span-2">❌ Bekor Qilish</button>
+                    <button onclick="updateOrderStatus(${o.id}, 'DELIVERED')" class="bg-green-600 text-white font-bold py-2 rounded-xl text-[11px]">✅ Yetkazib berilgan</button>
+                    <button onclick="updateOrderStatus(${o.id}, 'PROCESSING')" class="bg-blue-600 text-white font-bold py-2 rounded-xl text-[11px]">⏳ Jarayonda</button>
+                    <button onclick="updateOrderStatus(${o.id}, 'CANCELLED')" class="bg-red-600 text-white font-bold py-2 rounded-xl text-[11px] col-span-2">❌ Bekor qilish</button>
                   </div>
                 </div>
               ` : ''}
@@ -1776,9 +1946,22 @@
     }
 
     // MODAL OPENERS & HANDLERS
+    // Tovar oynasida tanlangan o'lcham+son ({ "42": 2, "44": 1 } kabi)
+    let selectedSizeQtys = {};
+    function setSizeQty(size, delta) {
+      const next = Math.max(0, (selectedSizeQtys[size] || 0) + delta);
+      selectedSizeQtys[size] = next;
+      renderModalContainer();
+    }
+    function addSelectedSizesToCart(productId) {
+      addSizedItemsToCart(productId, selectedSizeQtys);
+      selectedSizeQtys = {};
+    }
+
     function openProductDetailModal(id) {
       activePopupModal = null;
       selectedProductModal = products.find(p => p.id === id);
+      selectedSizeQtys = {};
       renderModalContainer();
     }
 
@@ -1928,6 +2111,8 @@
         const newImg = await uploadImageIfNeeded(p.img);
         if (!newImg) { activePopupModal = null; render(); return; }
         payload.value = newImg;
+      } else if (field === 'sizes') {
+        payload.value = document.getElementById('ef-val').value.split(',').map(s => s.trim()).filter(Boolean);
       }
 
       try {
@@ -1956,6 +2141,62 @@
       tempImagePreviewUrl = null;
       activePopupModal = 'ADD_CAT';
       render();
+    }
+
+    // ============ KO'P TOVAR QO'SHISH (telefonda qulay, qator-forma) ============
+    let bulkRows = [];
+    function newBulkRow() { return { categoryPath: '', name: '', price: '', oldPrice: '', stock: '', sizes: '', desc: '' }; }
+    function openBulkAddModal() {
+      bulkRows = [newBulkRow()];
+      activePopupModal = 'BULK_ADD';
+      render();
+    }
+    function addBulkRow() { bulkRows.push(newBulkRow()); render(); }
+    function removeBulkRow(idx) {
+      bulkRows.splice(idx, 1);
+      if (bulkRows.length === 0) bulkRows.push(newBulkRow());
+      render();
+    }
+
+    async function submitBulkAdd() {
+      const rows = bulkRows.map(r => ({
+        categoryPath: (r.categoryPath || '').split('/').map(s => s.trim()).filter(Boolean),
+        name: (r.name || '').trim(),
+        price: parseFloat(r.price),
+        oldPrice: r.oldPrice !== '' && !isNaN(parseFloat(r.oldPrice)) ? parseFloat(r.oldPrice) : null,
+        stock: r.stock !== '' && !isNaN(parseInt(r.stock, 10)) ? parseInt(r.stock, 10) : 0,
+        sizes: (r.sizes || '').split(',').map(s => s.trim()).filter(Boolean),
+        desc: (r.desc || '').trim(),
+      })).filter(r => r.name && !isNaN(r.price));
+
+      if (rows.length === 0) return alert("Kamida bitta qatorga tovar nomi va narxini kiriting!");
+
+      showLoader("Tovarlar saqlanmoqda...");
+      try {
+        const result = await callApi('bulk_add_products', { rows });
+        (result.categories || []).forEach(c => {
+          const mapped = mapCategoryFromDB(c);
+          const idx = categories.findIndex(cat => cat.id === mapped.id);
+          if (idx >= 0) categories[idx] = mapped; else categories.push(mapped);
+        });
+        (result.products || []).forEach(p => products.push(mapProductFromDB(p)));
+
+        activePopupModal = null;
+        bulkRows = [];
+
+        let msg = `✅ ${(result.products || []).length} ta tovar qo'shildi!`;
+        if (result.errors && result.errors.length > 0) {
+          msg += `\n\n⚠️ ${result.errors.length} ta qatorda xatolik chiqdi:\n` +
+            result.errors.map(e => `- ${e.name}: ${e.error}`).join('\n');
+        }
+        alert(msg);
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      } finally {
+        hideLoader();
+      }
     }
 
     function openEditCategoryModal(id, e) {
@@ -2149,6 +2390,28 @@
           } catch (e) { console.error('Adminlar ro\'yxatini yangilashda xatolik:', e); }
         })
         .subscribe();
+
+      startOrdersPolling();
+    }
+
+    // ZAXIRA MEXANIZM: signal (broadcast) qandaydir sababga ko'ra yetib
+    // bormasa ham (masalan, ilova fonga o'tib qolgan payt), buyurtmalar
+    // hech bo'lmaganda shu vaqt ichida (20 soniyada) o'zi ko'rinadigan
+    // bo'lishi uchun fonda vaqti-vaqti bilan tekshirib turamiz.
+    let ordersSnapshot = JSON.stringify(orders.map(o => [o.id, o.status]));
+    function startOrdersPolling() {
+      setInterval(async () => {
+        try {
+          const data = isUserAnAdmin ? await callApi('get_all_orders', {}) : await callApi('get_my_orders', {});
+          const freshOrders = (data.orders || []).map(formatOrderForUi);
+          const freshSnapshot = JSON.stringify(freshOrders.map(o => [o.id, o.status]));
+          if (freshSnapshot !== ordersSnapshot) {
+            ordersSnapshot = freshSnapshot;
+            orders = freshOrders;
+            render();
+          }
+        } catch (e) { console.error('Fon tekshiruvi xatosi:', e); }
+      }, 20000);
     }
 
     // ============ BOOT: SERVERDAN MA'LUMOTLARNI YUKLASH ============
