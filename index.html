@@ -53,31 +53,31 @@
   <nav class="fixed bottom-0 left-0 right-0 bg-white border-t py-2 px-3 flex justify-around items-center z-40 shadow-lg">
     <button onclick="switchTab('home')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-home">
       <i data-lucide="home" class="w-5 h-5"></i>
-      <span class="text-[10px] mt-1">Bosh sahifa</span>
+      <span class="text-[10px] mt-1" id="nav-label-home">Bosh sahifa</span>
     </button>
     <button onclick="switchTab('categories')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-categories">
       <i data-lucide="folder" class="w-5 h-5"></i>
-      <span class="text-[10px] mt-1">Kataloglar</span>
+      <span class="text-[10px] mt-1" id="nav-label-categories">Kataloglar</span>
     </button>
     <button onclick="switchTab('cart')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-cart">
       <i data-lucide="shopping-bag" class="w-5 h-5"></i>
-      <span class="text-[10px] mt-1">Savatcha</span>
+      <span class="text-[10px] mt-1" id="nav-label-cart">Savatcha</span>
     </button>
     <button onclick="switchTab('orders')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-orders">
       <i data-lucide="package" class="w-5 h-5"></i>
-      <span class="text-[10px] mt-1">Buyurtmalar</span>
+      <span class="text-[10px] mt-1" id="nav-label-orders">Buyurtmalar</span>
     </button>
     <button onclick="switchTab('warehouse')" id="nav-warehouse-btn" class="nav-btn hidden flex-col items-center text-gray-500">
       <i data-lucide="warehouse" class="w-5 h-5"></i>
-      <span class="text-[10px] mt-1">Ombor</span>
+      <span class="text-[10px] mt-1" id="nav-label-warehouse">Ombor</span>
     </button>
     <button onclick="switchTab('users')" id="nav-users-btn" class="nav-btn hidden flex-col items-center text-gray-500">
       <i data-lucide="users" class="w-5 h-5"></i>
-      <span class="text-[10px] mt-1">Mijozlar</span>
+      <span class="text-[10px] mt-1" id="nav-label-users">Mijozlar</span>
     </button>
     <button onclick="switchTab('profile')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-profile">
       <i data-lucide="user" class="w-5 h-5"></i>
-      <span class="text-[10px] mt-1">Profil</span>
+      <span class="text-[10px] mt-1" id="nav-label-profile">Profil</span>
     </button>
   </nav>
 
@@ -147,12 +147,29 @@
     // ============ DB <-> JS MAPPERS ============
     function mapProductFromDB(r) {
       return {
-        id: r.id, sku: r.sku, name: r.name, price: Number(r.price),
+        id: r.id, sku: r.sku, name: r.name, nameRu: r.name_ru || null, price: Number(r.price),
         oldPrice: r.old_price !== null ? Number(r.old_price) : null,
         stock: r.stock, categoryId: r.category_id, status: r.status,
-        img: r.img, desc: r.description, isFeatured: r.is_featured, sortOrder: r.sort_order,
+        img: r.img, desc: r.description, descRu: r.description_ru || null,
+        isFeatured: r.is_featured, sortOrder: r.sort_order,
         sizes: Array.isArray(r.sizes) ? r.sizes : null
       };
+    }
+
+    // O'lchamlarni "40,2/42,4/44,8" matnidan [{size,qty}] ro'yxatiga o'giradi
+    function parseSizesInput(text) {
+      return (text || '').split('/').map(s => s.trim()).filter(Boolean).map(pair => {
+        const parts = pair.split(',').map(s => s.trim());
+        const size = parts[0] || '';
+        const qty = parseInt(parts[1], 10);
+        return { size, qty: isNaN(qty) ? 0 : qty };
+      }).filter(s => s.size);
+    }
+    function formatSizesForInput(sizes) {
+      return (sizes || []).map(s => `${s.size},${s.qty}`).join('/');
+    }
+    function sizesTotalQty(sizes) {
+      return (sizes || []).reduce((sum, s) => sum + (Number(s.qty) || 0), 0);
     }
     function mapCategoryFromDB(r) {
       return { id: r.id, name: r.name, parentId: r.parent_id, img: r.img };
@@ -212,15 +229,65 @@
     };
 
     // Buyurtma statuslarini o'zbekcha ko'rsatish va har biriga alohida rang
-    const STATUS_LABELS = { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan" };
     const STATUS_COLORS = {
       NEW: "bg-amber-100 text-amber-800",
       PROCESSING: "bg-blue-100 text-blue-800",
       DELIVERED: "bg-green-100 text-green-800",
       CANCELLED: "bg-red-100 text-red-800",
     };
-    function statusLabel(st) { return STATUS_LABELS[st] || st; }
     function statusColorClass(st) { return STATUS_COLORS[st] || "bg-gray-100 text-gray-600"; }
+
+    // ============ TIL (O'ZBEK / RUS) ============
+    // Ilovaning tayyor matnlari uchun lug'at. Faqat shu yerda ro'yxatdagi
+    // matnlar tugma bilan tilga qarab almashadi. Admin kiritgan tovar
+    // nomi/tavsifi esa alohida (nameRu/descRu maydonlari orqali) boshqariladi.
+    let uiLang = localStorage.getItem('uiLang') || 'uz';
+    const UI_TEXT = {
+      nav_home: { uz: "Bosh sahifa", ru: "Главная" },
+      nav_categories: { uz: "Kataloglar", ru: "Каталоги" },
+      nav_cart: { uz: "Savatcha", ru: "Корзина" },
+      nav_orders: { uz: "Buyurtmalar", ru: "Заказы" },
+      nav_warehouse: { uz: "Ombor", ru: "Склад" },
+      nav_users: { uz: "Mijozlar", ru: "Клиенты" },
+      nav_profile: { uz: "Profil", ru: "Профиль" },
+      search_placeholder: { uz: "Nomi yoki ID (masalan: 111001) orqali qidirish...", ru: "Поиск по названию или ID (например: 111001)..." },
+      add_to_cart: { uz: "Savatga qo'shish", ru: "Добавить в корзину" },
+      add_to_cart_short: { uz: "Savatga", ru: "В корзину" },
+      out_of_stock: { uz: "Tugagan", ru: "Нет в наличии" },
+      choose_size: { uz: "O'lchamni tanlash", ru: "Выбрать размер" },
+      place_order: { uz: "Buyurtma berish", ru: "Оформить заказ" },
+      save: { uz: "Saqlash", ru: "Сохранить" },
+      cancel: { uz: "Bekor qilish", ru: "Отмена" },
+      cart_title: { uz: "Savatcha", ru: "Корзина" },
+      cart_empty: { uz: "Savatchangiz bo'sh", ru: "Ваша корзина пуста" },
+      shop_now: { uz: "Xarid qilish", ru: "Начать покупки" },
+      my_orders: { uz: "Buyurtmalarim", ru: "Мои заказы" },
+      all_orders: { uz: "Barcha buyurtmalar", ru: "Все заказы" },
+      all_filter: { uz: "Barchasi", ru: "Все" },
+      warehouse_title: { uz: "Ombor", ru: "Склад" },
+      users_title: { uz: "Mijozlar", ru: "Клиенты" },
+      total: { uz: "Jami", ru: "Итого" },
+    };
+    function t(key) {
+      const entry = UI_TEXT[key];
+      if (!entry) return key;
+      return entry[uiLang] || entry.uz;
+    }
+    function toggleUiLang() {
+      uiLang = uiLang === 'uz' ? 'ru' : 'uz';
+      localStorage.setItem('uiLang', uiLang);
+      render();
+    }
+    // Admin kiritgan tovar nomi/tavsifi — ruscha tarjimasi bo'lsa va til
+    // ruscha tanlangan bo'lsa o'shani, aks holda o'zbekchasini ko'rsatadi.
+    function productName(p) { return (uiLang === 'ru' && p.nameRu) ? p.nameRu : p.name; }
+    function productDesc(p) { return (uiLang === 'ru' && p.descRu) ? p.descRu : (p.desc || ''); }
+
+    const STATUS_LABELS_BY_LANG = {
+      uz: { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan" },
+      ru: { NEW: "Новый", PROCESSING: "В обработке", DELIVERED: "Доставлен", CANCELLED: "Отменён" },
+    };
+    function statusLabel(st) { return (STATUS_LABELS_BY_LANG[uiLang] || STATUS_LABELS_BY_LANG.uz)[st] || st; }
 
     let currentUser = {
       firstName: registeredUser?.firstName || tg?.initDataUnsafe?.user?.first_name || "Mijoz",
@@ -389,16 +456,21 @@
     function addSizedItemsToCart(productId, sizeQtyMap) {
       const p = products.find(prod => prod.id === productId);
       if (!p) return;
-      const totalRequested = Object.values(sizeQtyMap).reduce((s, q) => s + q, 0);
-      if (totalRequested <= 0) return alert("Kamida bitta o'lcham va sonini tanlang!");
+      const entries = Object.entries(sizeQtyMap).filter(([, q]) => q > 0);
+      if (entries.length === 0) return alert("Kamida bitta o'lcham va sonini tanlang!");
 
-      const existingQty = totalCartQtyForProduct(productId, null);
-      if (p.stock && existingQty + totalRequested > p.stock) {
-        return alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
+      // Har bir o'lcham FAQAT o'ZINING mavjud sonidan oshib keta olmaydi
+      // (ombor son bo'yicha emas, har bir o'lcham bo'yicha alohida saqlanadi).
+      for (const [size, qty] of entries) {
+        const sizeInfo = (p.sizes || []).find(s => s.size === size);
+        const available = sizeInfo ? Number(sizeInfo.qty) || 0 : 0;
+        const alreadyInCart = (cart[cartKey(productId, size)]?.qty) || 0;
+        if (alreadyInCart + qty > available) {
+          return alert(`⚠️ "${size}" o'lchamdan faqat ${available} ta mavjud!`);
+        }
       }
 
-      for (const [size, qty] of Object.entries(sizeQtyMap)) {
-        if (!qty || qty <= 0) continue;
+      for (const [size, qty] of entries) {
         const key = cartKey(productId, size);
         if (cart[key]) cart[key].qty += qty;
         else cart[key] = { productId, size, qty, addedAt: new Date().toLocaleString() };
@@ -519,8 +591,22 @@
     }
 
     // RENDER ROUTER
+    function updateNavLabels() {
+      const map = {
+        'nav-label-home': 'nav_home', 'nav-label-categories': 'nav_categories',
+        'nav-label-cart': 'nav_cart', 'nav-label-orders': 'nav_orders',
+        'nav-label-warehouse': 'nav_warehouse', 'nav-label-users': 'nav_users',
+        'nav-label-profile': 'nav_profile',
+      };
+      for (const [elId, key] of Object.entries(map)) {
+        const el = document.getElementById(elId);
+        if (el) el.innerText = t(key);
+      }
+    }
+
     function render() {
       updateCartBadge();
+      updateNavLabels();
 
       if (!registeredUser && !isAdminMode && activePopupModal !== 'REGISTRATION') {
         activePopupModal = 'REGISTRATION';
@@ -562,7 +648,7 @@
       container.innerHTML = `
         <div class="space-y-4">
           <div class="relative">
-            <input type="text" id="search-input" oninput="handleSearchDebounced()" placeholder="Nomi yoki ID (masalan: 111001) orqali qidirish..."
+            <input type="text" id="search-input" oninput="handleSearchDebounced()" placeholder="${escapeHtml(t('search_placeholder'))}"
               class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
             <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
           </div>
@@ -622,7 +708,7 @@
               ${hasDiscount ? `<span class="absolute top-1 right-1 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md">CHEGIRMA</span>` : ''}
             </div>
             <span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${escapeHtml(p.sku)}</span>
-            <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${escapeHtml(p.name)}</h4>
+            <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${escapeHtml(productName(p))}</h4>
 
             <div class="mt-1">
               ${hasDiscount ? `
@@ -634,7 +720,7 @@
                 <p class="text-xs text-blue-600 font-black">${Number(p.price).toLocaleString()} so'm</p>
               `}
             </div>
-            ${(p.sizes && p.sizes.length > 0) ? `<p class="text-[9px] text-gray-400 mt-0.5">O'lcham: ${p.sizes.map(s => escapeHtml(s)).join(', ')}</p>` : ''}
+            ${(p.sizes && p.sizes.length > 0) ? `<p class="text-[9px] text-gray-400 mt-0.5">O'lcham: ${p.sizes.map(s => escapeHtml(s.size)).join(', ')}</p>` : ''}
           </div>
 
           <!-- ADMIN CONTROLS -->
@@ -654,7 +740,7 @@
               ${p.stock > 0 ? (
                 (p.sizes && p.sizes.length > 0) ? `
                   <button onclick="openProductDetailModal('${p.id}')" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1">
-                    <span>O'lchamni tanlash</span>
+                    <span>${t('choose_size')}</span>
                   </button>
                 ` : (
                 inCart ? `
@@ -665,10 +751,10 @@
                   </div>
                 ` : `
                   <button onclick="addToCart('${p.id}', event)" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1">
-                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> <span>Savatga</span>
+                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> <span>${t('add_to_cart_short')}</span>
                   </button>
                 `
-              )) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-2 rounded-xl text-xs">❌ Tugagan</button>`}
+              )) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-2 rounded-xl text-xs">❌ ${t('out_of_stock')}</button>`}
             </div>
           `}
         </div>
@@ -776,8 +862,8 @@
         container.innerHTML = `
           <div class="text-center py-12 bg-white rounded-2xl p-6 shadow-sm">
             <i data-lucide="shopping-bag" class="w-12 h-12 text-gray-300 mx-auto mb-3"></i>
-            <h3 class="font-bold text-gray-700">Savatchangiz bo'sh</h3>
-            <button onclick="switchTab('home')" class="mt-4 bg-blue-600 text-white text-xs font-bold px-5 py-2.5 rounded-xl">Xarid qilish</button>
+            <h3 class="font-bold text-gray-700">${t('cart_empty')}</h3>
+            <button onclick="switchTab('home')" class="mt-4 bg-blue-600 text-white text-xs font-bold px-5 py-2.5 rounded-xl">${t('shop_now')}</button>
           </div>
         `;
         return;
@@ -785,14 +871,14 @@
 
       container.innerHTML = `
         <div class="space-y-4">
-          <h2 class="text-lg font-bold">Savatcha</h2>
+          <h2 class="text-lg font-bold">${t('cart_title')}</h2>
           <div class="bg-white rounded-2xl p-4 shadow-sm divide-y">
             ${items.map(item => `
               <div class="py-3 flex items-center justify-between">
                 <div class="flex items-center gap-2.5">
                   <img src="${escapeHtml(item.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-10 h-10 object-cover rounded-lg flex-shrink-0" loading="lazy">
                   <div>
-                    <h4 class="font-bold text-sm text-gray-800">${escapeHtml(item.name)} ${item.size ? `<span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-500">${escapeHtml(item.size)}</span>` : ''}</h4>
+                    <h4 class="font-bold text-sm text-gray-800">${escapeHtml(productName(item))} ${item.size ? `<span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-500">${escapeHtml(item.size)}</span>` : ''}</h4>
                     <p class="text-xs text-gray-500">${item.price.toLocaleString()} so'm</p>
                   </div>
                 </div>
@@ -866,7 +952,7 @@
             </div>
 
             <button onclick="submitOrder()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl text-sm shadow-md">
-              ✅ Buyurtma berish
+              ✅ ${t('place_order')}
             </button>
           </div>
         </div>
@@ -1068,7 +1154,7 @@
 
         container.innerHTML = `
           <div class="space-y-4">
-            <h2 class="text-lg font-bold text-slate-800">Barcha buyurtmalar</h2>
+            <h2 class="text-lg font-bold text-slate-800">${t('all_orders')}</h2>
 
             <div class="bg-white p-3 rounded-2xl border space-y-2 text-xs shadow-sm">
               <input type="text" id="adm-ord-search" oninput="adminOrderFilters.search = this.value; render();" placeholder="Mijoz ismi yoki tel raqami..." value="${escapeHtml(adminOrderFilters.search)}" class="w-full p-2 border rounded-xl">
@@ -1131,7 +1217,7 @@
 
       container.innerHTML = `
         <div class="space-y-3">
-          <h2 class="text-lg font-bold text-slate-800">Buyurtmalarim</h2>
+          <h2 class="text-lg font-bold text-slate-800">${t('my_orders')}</h2>
 
           <div class="flex space-x-1 overflow-x-auto pb-1 text-xs">
             <button onclick="userOrderFilter='ALL'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'ALL' ? 'bg-slate-800 text-white' : 'bg-white border text-gray-600'}">Barchasi</button>
@@ -1200,7 +1286,7 @@
 
       container.innerHTML = `
         <div class="space-y-4">
-          <h2 class="text-lg font-bold text-slate-800">Ombor</h2>
+          <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
 
           <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
             ${topCats.map(parent => renderCategoryTreeNodeHTML(parent, 0)).join('')}
@@ -1241,7 +1327,7 @@
     function renderUsers(container) {
       container.innerHTML = `
         <div class="space-y-4">
-          <h2 class="text-lg font-bold text-slate-800">👥 Mijozlar</h2>
+          <h2 class="text-lg font-bold text-slate-800">👥 ${t('users_title')}</h2>
           <p class="text-[11px] text-gray-500">Kamida bitta buyurtma qilgan mijozlar, eng ko'p buyurtma qilganlar tepada.</p>
           <div class="bg-white rounded-2xl border divide-y">
             ${usersSummary.length === 0 ? '<p class="text-xs text-gray-400 p-4 text-center">Hozircha mijozlar yo\'q</p>' : ''}
@@ -1319,6 +1405,11 @@
     function renderProfile(container) {
       container.innerHTML = `
         <div class="space-y-4">
+          <button onclick="toggleUiLang()" class="w-full bg-white border rounded-2xl p-3 flex items-center justify-between shadow-sm">
+            <span class="font-bold text-sm text-gray-700">🌐 ${uiLang === 'uz' ? "O'zbekcha" : "Русский"}</span>
+            <span class="text-xs text-blue-600 font-bold">${uiLang === 'uz' ? "Перейти на русский" : "O'zbekchaga o'tish"}</span>
+          </button>
+
           <div class="bg-white p-5 rounded-2xl shadow-sm flex items-center space-x-4 border">
             <div class="bg-blue-100 p-3 rounded-full text-blue-600">
               <i data-lucide="user" class="w-8 h-8"></i>
@@ -1458,7 +1549,13 @@
               <div>
                 <label class="font-bold text-gray-600">Tovar Nomi *</label>
                 <input type="text" id="m-prod-name" placeholder="Masalan: Whey Protein" class="w-full mt-1 p-2 border rounded-xl">
+                <input type="text" id="m-prod-name-ru" placeholder="Rus tilida nomi" class="w-full mt-1 p-2 border rounded-xl hidden">
               </div>
+
+              <label class="flex items-center gap-2 font-bold text-gray-600">
+                <input type="checkbox" id="m-prod-ru-toggle" onchange="toggleRuFields(this.checked, 'm-prod')">
+                <span>+ Ruscha tarjima qo'shish</span>
+              </label>
 
               <div class="grid grid-cols-2 gap-2">
                 <div>
@@ -1477,8 +1574,15 @@
               </div>
 
               <div>
+                <label class="font-bold text-gray-600">O'lchamlar (ixtiyoriy)</label>
+                <input type="text" id="m-prod-sizes" placeholder="40,2/42,4/44,8" class="w-full mt-1 p-2 border rounded-xl">
+                <p class="text-[9px] text-gray-400 mt-0.5">O'lcham,soni / o'lcham,soni. Kiritilsa, "Soni" avtomatik ularning yig'indisiga almashadi.</p>
+              </div>
+
+              <div>
                 <label class="font-bold text-gray-600">Izoh / Tavsif</label>
                 <textarea id="m-prod-desc" rows="2" placeholder="Tovar haqida ma'lumot" class="w-full mt-1 p-2 border rounded-xl"></textarea>
+                <textarea id="m-prod-desc-ru" rows="2" placeholder="Rus tilida izoh" class="w-full mt-1 p-2 border rounded-xl hidden"></textarea>
               </div>
 
               <div>
@@ -1585,9 +1689,10 @@
                       </div>
                       <div>
                         <label class="font-bold text-gray-600">O'lchamlar</label>
-                        <input type="text" value="${escapeHtml(row.sizes)}" oninput="bulkRows[${idx}].sizes = this.value" placeholder="40,42,44" class="w-full mt-0.5 p-2 border rounded-xl">
+                        <input type="text" value="${escapeHtml(row.sizes)}" oninput="bulkRows[${idx}].sizes = this.value" placeholder="40,2/42,4/44,8" class="w-full mt-0.5 p-2 border rounded-xl">
                       </div>
                     </div>
+                    <p class="text-[9px] text-gray-400">O'lcham,soni / o'lcham,soni — masalan 40,2/42,4/44,8. Kiritilsa, "Soni" avtomatik ularning yig'indisiga almashadi.</p>
                     <div>
                       <label class="font-bold text-gray-600">Izoh (ixtiyoriy)</label>
                       <input type="text" value="${escapeHtml(row.desc)}" oninput="bulkRows[${idx}].desc = this.value" class="w-full mt-0.5 p-2 border rounded-xl">
@@ -1641,6 +1746,8 @@
               ${field === 'name' ? `
                 <label class="font-bold text-gray-600">Yangi Nomi:</label>
                 <input type="text" id="ef-val" value="${escapeHtml(p.name)}" class="w-full p-2 border rounded-xl">
+                <label class="font-bold text-gray-600 mt-2 block">Ruscha nomi (ixtiyoriy):</label>
+                <input type="text" id="ef-val-ru" value="${escapeHtml(p.nameRu || '')}" placeholder="Rus tilida nomi" class="w-full p-2 border rounded-xl">
               ` : ''}
 
               ${field === 'price' ? `
@@ -1662,6 +1769,8 @@
               ${field === 'desc' ? `
                 <label class="font-bold text-gray-600">Yangi Izoh / Tavsif:</label>
                 <textarea id="ef-val" rows="3" class="w-full p-2 border rounded-xl">${escapeHtml(p.desc || '')}</textarea>
+                <label class="font-bold text-gray-600 mt-2 block">Ruscha izoh (ixtiyoriy):</label>
+                <textarea id="ef-val-ru" rows="3" class="w-full p-2 border rounded-xl">${escapeHtml(p.descRu || '')}</textarea>
               ` : ''}
 
               ${field === 'img' ? `
@@ -1671,9 +1780,9 @@
               ` : ''}
 
               ${field === 'sizes' ? `
-                <label class="font-bold text-gray-600">O'lchamlar (vergul bilan ajratib yozing):</label>
-                <input type="text" id="ef-val" value="${escapeHtml((p.sizes || []).join(', '))}" placeholder="40, 42, 44" class="w-full p-2 border rounded-xl">
-                <p class="text-[10px] text-gray-400 mt-1">Bo'sh qoldirsangiz, o'lcham talab qilinmaydi.</p>
+                <label class="font-bold text-gray-600">O'lchamlar (o'lcham,soni / o'lcham,soni):</label>
+                <input type="text" id="ef-val" value="${escapeHtml(formatSizesForInput(p.sizes))}" placeholder="40,2/42,4/44,8" class="w-full p-2 border rounded-xl">
+                <p class="text-[10px] text-gray-400 mt-1">Bo'sh qoldirsangiz, o'lcham talab qilinmaydi. Kiritilsa, ombor qoldig'i avtomatik ularning yig'indisiga almashadi.</p>
               ` : ''}
 
               <div class="flex space-x-2 pt-2">
@@ -1745,7 +1854,7 @@
 
                 <!-- NAME WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
-                  <h2 class="text-lg font-black text-gray-900">${escapeHtml(p.name)}</h2>
+                  <h2 class="text-lg font-black text-gray-900">${escapeHtml(productName(p))}</h2>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
 
@@ -1771,7 +1880,7 @@
                     <button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
                   </div>
                   <div class="flex justify-between items-center pt-1 text-xs">
-                    <span class="font-bold text-gray-600">O'lchamlar: <b>${(p.sizes && p.sizes.length) ? escapeHtml(p.sizes.join(', ')) : 'kiritilmagan'}</b></span>
+                    <span class="font-bold text-gray-600">O'lchamlar: <b>${(p.sizes && p.sizes.length) ? escapeHtml(p.sizes.map(s => `${s.size} (${s.qty})`).join(', ')) : 'kiritilmagan'}</b></span>
                     <button onclick="openEditFieldModal('${p.id}', 'sizes')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
                   </div>
                 ` : ''}
@@ -1783,7 +1892,7 @@
                   <h4 class="font-bold text-gray-700">📝 Tavsif / Izoh:</h4>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'desc')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
-                <p class="text-gray-600 leading-relaxed">${escapeHtml(p.desc || 'Tavsif kiritilmagan.')}</p>
+                <p class="text-gray-600 leading-relaxed">${escapeHtml(productDesc(p) || 'Tavsif kiritilmagan.')}</p>
               </div>
 
               ${!isAdminMode ? `
@@ -1792,22 +1901,29 @@
                     (p.sizes && p.sizes.length > 0) ? `
                       <div class="space-y-2">
                         <p class="text-xs font-bold text-gray-600">O'lchamni tanlang (bir nechtasini tanlash mumkin):</p>
-                        <div class="space-y-1.5">
-                          ${p.sizes.map(size => {
-                            const qty = selectedSizeQtys[size] || 0;
+                        <div class="flex flex-wrap gap-2">
+                          ${p.sizes.map(s => {
+                            const selected = !!selectedSizeQtys[s.size];
+                            const qty = selectedSizeQtys[s.size] || 0;
+                            const disabled = !s.qty || s.qty <= 0;
                             return `
-                              <div class="flex items-center justify-between bg-gray-50 border rounded-xl p-2">
-                                <span class="font-bold text-sm text-gray-800">${escapeHtml(size)}</span>
-                                <div class="flex items-center space-x-2">
-                                  <button onclick="setSizeQty('${escapeHtml(size)}', -1)" class="w-8 h-8 bg-white font-bold rounded-lg shadow text-sm text-blue-600">-</button>
-                                  <span class="font-bold text-sm w-5 text-center">${qty}</span>
-                                  <button onclick="setSizeQty('${escapeHtml(size)}', 1)" class="w-8 h-8 bg-blue-600 font-bold rounded-lg text-sm text-white">+</button>
-                                </div>
+                              <div>
+                                <button ${disabled ? 'disabled' : `onclick="toggleSizeSelect('${escapeHtml(s.size)}')"`}
+                                  class="px-3.5 py-2 rounded-xl font-bold text-sm border-2 ${disabled ? 'bg-gray-100 text-gray-300 border-gray-100' : (selected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200')}">
+                                  ${escapeHtml(s.size)}
+                                </button>
+                                ${selected ? `
+                                  <div class="flex items-center justify-center gap-2 mt-1.5 bg-gray-50 border rounded-xl p-1">
+                                    <button onclick="setSizeQty('${escapeHtml(s.size)}', -1, ${s.qty})" class="w-7 h-7 bg-white font-bold rounded-lg shadow text-sm text-blue-600">-</button>
+                                    <span class="font-bold text-sm w-5 text-center">${qty}</span>
+                                    <button onclick="setSizeQty('${escapeHtml(s.size)}', 1, ${s.qty})" class="w-7 h-7 bg-blue-600 font-bold rounded-lg text-sm text-white">+</button>
+                                  </div>
+                                ` : ''}
                               </div>
                             `;
                           }).join('')}
                         </div>
-                        <button onclick="addSelectedSizesToCart('${p.id}'); openProductDetailModal('${p.id}');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm">🛒 Savatga qo'shish</button>
+                        <button onclick="addSelectedSizesToCart('${p.id}'); openProductDetailModal('${p.id}');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm">🛒 ${t('add_to_cart')}</button>
                       </div>
                     ` : (
                     inCart ? `
@@ -1817,7 +1933,7 @@
                         <button onclick="changeCartQty('${p.id}', 1, event); openProductDetailModal('${p.id}');" class="w-10 h-10 bg-blue-600 font-bold rounded-xl text-base text-white">+</button>
                       </div>
                     ` : `
-                      <button onclick="addToCart('${p.id}', event); openProductDetailModal('${p.id}');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm">🛒 Savatga qo'shish</button>
+                      <button onclick="addToCart('${p.id}', event); openProductDetailModal('${p.id}');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm">🛒 ${t('add_to_cart')}</button>
                     `
                   )) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-2xl text-sm">❌ Mahsulot tugagan</button>`}
                 </div>
@@ -1948,9 +2064,21 @@
     // MODAL OPENERS & HANDLERS
     // Tovar oynasida tanlangan o'lcham+son ({ "42": 2, "44": 1 } kabi)
     let selectedSizeQtys = {};
-    function setSizeQty(size, delta) {
-      const next = Math.max(0, (selectedSizeQtys[size] || 0) + delta);
-      selectedSizeQtys[size] = next;
+    function toggleSizeSelect(size) {
+      if (selectedSizeQtys[size]) {
+        delete selectedSizeQtys[size];
+      } else {
+        selectedSizeQtys[size] = 1;
+      }
+      renderModalContainer();
+    }
+    function setSizeQty(size, delta, maxQty) {
+      const next = (selectedSizeQtys[size] || 0) + delta;
+      if (next <= 0) {
+        delete selectedSizeQtys[size];
+      } else {
+        selectedSizeQtys[size] = (typeof maxQty === 'number') ? Math.min(next, maxQty) : next;
+      }
       renderModalContainer();
     }
     function addSelectedSizesToCart(productId) {
@@ -2013,14 +2141,27 @@
       render();
     }
 
+    function toggleRuFields(checked, prefix) {
+      const nameRu = document.getElementById(prefix + '-name-ru');
+      const descRu = document.getElementById(prefix + '-desc-ru');
+      if (nameRu) nameRu.classList.toggle('hidden', !checked);
+      if (descRu) descRu.classList.toggle('hidden', !checked);
+    }
+
     async function saveProductFromModal() {
       const name = document.getElementById('m-prod-name').value.trim();
+      const nameRu = document.getElementById('m-prod-name-ru').value.trim();
       const price = parseFloat(document.getElementById('m-prod-price').value);
       const oldPriceVal = parseFloat(document.getElementById('m-prod-oldprice').value);
-      const stock = parseInt(document.getElementById('m-prod-stock').value, 10);
+      const stockVal = document.getElementById('m-prod-stock').value;
+      const stock = stockVal === '' ? NaN : parseInt(stockVal, 10);
+      const sizes = parseSizesInput(document.getElementById('m-prod-sizes').value);
       const desc = document.getElementById('m-prod-desc').value.trim();
+      const descRu = document.getElementById('m-prod-desc-ru').value.trim();
 
-      if (!name || isNaN(price) || isNaN(stock)) return alert("Iltimos, barcha majburiy maydonlarni to'ldiring!");
+      if (!name || isNaN(price) || (sizes.length === 0 && isNaN(stock))) {
+        return alert("Iltimos, barcha majburiy maydonlarni to'ldiring!");
+      }
 
       let oldPrice = null;
       if (!isNaN(oldPriceVal) && oldPriceVal > price) {
@@ -2031,9 +2172,13 @@
       try {
         const imgUrl = await uploadImageIfNeeded(null);
         const result = await callApi('add_product', {
-          name, price, oldPrice, stock, desc, categoryId: adminCatParentId, img: imgUrl
+          name, nameRu: nameRu || null, price, oldPrice,
+          stock: isNaN(stock) ? 0 : stock,
+          sizes: sizes.length > 0 ? sizes : null,
+          desc, descRu: descRu || null,
+          categoryId: adminCatParentId, img: imgUrl
         });
-        products.push(mapProductFromDB(result.product));
+        upsertLocalProduct(result.product);
         tempImageFile = null;
         tempImagePreviewUrl = null;
         activePopupModal = null;
@@ -2055,7 +2200,7 @@
       try {
         const imgUrl = await uploadImageIfNeeded(null);
         const result = await callApi('add_category', { name, img: imgUrl, parentId: adminCatParentId });
-        categories.push(mapCategoryFromDB(result.category));
+        upsertLocalCategory(result.category);
         tempImageFile = null;
         tempImagePreviewUrl = null;
         activePopupModal = null;
@@ -2095,6 +2240,8 @@
         const val = document.getElementById('ef-val').value.trim();
         if (!val) { activePopupModal = null; render(); return; }
         payload.value = val;
+        const ruVal = document.getElementById('ef-val-ru').value.trim();
+        if (ruVal) { payload.field2 = 'nameRu'; payload.value2 = ruVal; }
       } else if (field === 'price') {
         const price = parseFloat(document.getElementById('ef-price').value);
         const oldVal = parseFloat(document.getElementById('ef-oldprice').value);
@@ -2107,12 +2254,14 @@
         payload.value = stock;
       } else if (field === 'desc') {
         payload.value = document.getElementById('ef-val').value.trim();
+        const ruVal = document.getElementById('ef-val-ru').value.trim();
+        if (ruVal) { payload.field2 = 'descRu'; payload.value2 = ruVal; }
       } else if (field === 'img') {
         const newImg = await uploadImageIfNeeded(p.img);
         if (!newImg) { activePopupModal = null; render(); return; }
         payload.value = newImg;
       } else if (field === 'sizes') {
-        payload.value = document.getElementById('ef-val').value.split(',').map(s => s.trim()).filter(Boolean);
+        payload.value = parseSizesInput(document.getElementById('ef-val').value);
       }
 
       try {
@@ -2165,7 +2314,7 @@
         price: parseFloat(r.price),
         oldPrice: r.oldPrice !== '' && !isNaN(parseFloat(r.oldPrice)) ? parseFloat(r.oldPrice) : null,
         stock: r.stock !== '' && !isNaN(parseInt(r.stock, 10)) ? parseInt(r.stock, 10) : 0,
-        sizes: (r.sizes || '').split(',').map(s => s.trim()).filter(Boolean),
+        sizes: parseSizesInput(r.sizes),
         desc: (r.desc || '').trim(),
       })).filter(r => r.name && !isNaN(r.price));
 
@@ -2174,12 +2323,8 @@
       showLoader("Tovarlar saqlanmoqda...");
       try {
         const result = await callApi('bulk_add_products', { rows });
-        (result.categories || []).forEach(c => {
-          const mapped = mapCategoryFromDB(c);
-          const idx = categories.findIndex(cat => cat.id === mapped.id);
-          if (idx >= 0) categories[idx] = mapped; else categories.push(mapped);
-        });
-        (result.products || []).forEach(p => products.push(mapProductFromDB(p)));
+        (result.categories || []).forEach(c => upsertLocalCategory(c));
+        (result.products || []).forEach(p => upsertLocalProduct(p));
 
         activePopupModal = null;
         bulkRows = [];
@@ -2346,6 +2491,16 @@
       const idx = products.findIndex(p => p.id === mapped.id);
       if (idx >= 0) products[idx] = mapped; else products.push(mapped);
       products.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    }
+
+    // MUHIM: bu doim "yangilash yoki qo'shish" (upsert) tarzida ishlaydi —
+    // to'g'ridan-to'g'ri push() ishlatmaymiz, chunki real-time signal ham
+    // xuddi shu tovar/katalogni bir vaqtda qo'shib qo'yishi mumkin edi va
+    // bitta tovar RO'YXATDA IKKI MARTA ko'rinib qolardi (haqiqiy bug edi).
+    function upsertLocalCategory(row) {
+      const mapped = mapCategoryFromDB(row);
+      const idx = categories.findIndex(c => c.id === mapped.id);
+      if (idx >= 0) categories[idx] = mapped; else categories.push(mapped);
     }
 
     function setupRealtime() {
