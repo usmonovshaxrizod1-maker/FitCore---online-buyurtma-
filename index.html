@@ -65,6 +65,10 @@
       <i data-lucide="warehouse" class="w-5 h-5"></i>
       <span class="text-[10px] mt-1">Ombor</span>
     </button>
+    <button onclick="switchTab('users')" id="nav-users-btn" class="nav-btn hidden flex-col items-center text-gray-500">
+      <i data-lucide="users" class="w-5 h-5"></i>
+      <span class="text-[10px] mt-1">Mijozlar</span>
+    </button>
     <button onclick="switchTab('profile')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-profile">
       <i data-lucide="user" class="w-5 h-5"></i>
       <span class="text-[10px] mt-1">Profil</span>
@@ -181,6 +185,9 @@
     let userOrderFilter = 'ALL';
     let selectedProductModal = null;
     let selectedOrderModal = null;
+    let selectedCategoryModal = null;
+    let selectedUserModal = null;
+    let usersSummary = [];
     let activePopupModal = null;
     let editingFieldData = null;
 
@@ -398,7 +405,7 @@
         return pub?.publicUrl || existingImg || null;
       } catch (e) {
         console.error('Rasm yuklash xatosi:', e);
-        alert("⚠️ Rasmni yuklashda xatolik yuz berdi. Avvalgi/standart rasm qoldiriladi.");
+        alert("⚠️ Rasmni yuklashda xatolik yuz berdi: " + (e.message || e) + "\nAvvalgi/standart rasm qoldiriladi.");
         return existingImg || null;
       } finally {
         hideLoader();
@@ -415,15 +422,19 @@
 
       const roleTag = document.getElementById('role-tag');
       const whBtn = document.getElementById('nav-warehouse-btn');
+      const usersBtn = document.getElementById('nav-users-btn');
 
       if (isAdminMode && isUserAnAdmin) {
         roleTag.innerText = "ADMIN";
         whBtn.classList.remove('hidden');
         whBtn.classList.add('flex');
+        usersBtn.classList.remove('hidden');
+        usersBtn.classList.add('flex');
       } else {
         roleTag.innerText = "STORE";
         whBtn.classList.add('hidden');
-        if (currentTab === 'warehouse') currentTab = 'home';
+        usersBtn.classList.add('hidden');
+        if (currentTab === 'warehouse' || currentTab === 'users') currentTab = 'home';
       }
 
       const container = document.getElementById('app-content');
@@ -433,6 +444,7 @@
         case 'cart': renderCart(container); break;
         case 'orders': renderOrders(container); break;
         case 'warehouse': renderWarehouse(container); break;
+        case 'users': renderUsers(container); break;
         case 'profile': renderProfile(container); break;
       }
       renderModalContainer();
@@ -599,7 +611,7 @@
                 </div>
                 <div class="flex items-center space-x-2">
                   ${(isAdminMode && isUserAnAdmin) ? `
-                    <button onclick="openGranularEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
+                    <button onclick="openEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
                     <button onclick="deleteCategory('${sub.id}', event)" class="p-1 bg-red-100 text-red-600 rounded text-xs font-bold">🗑️</button>
                   ` : ''}
                   <i data-lucide="chevron-right" class="w-5 h-5 text-gray-400"></i>
@@ -1026,12 +1038,17 @@
                 <span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">${o.status}</span>
               </div>
               <p class="text-xs text-gray-500">📅 ${escapeHtml(o.date)}</p>
-              <div class="text-xs space-y-1">
-                ${o.items.map(i => `<p class="font-medium">• ${escapeHtml(i.name)} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>`).join('')}
+              <div class="text-xs space-y-1.5">
+                ${o.items.map(i => `
+                  <div class="flex items-center gap-2">
+                    ${i.img ? `<img src="${escapeHtml(i.img)}" onerror="this.style.display='none'" class="w-7 h-7 object-cover rounded-lg flex-shrink-0" loading="lazy">` : ''}
+                    <p class="font-medium">• ${escapeHtml(i.name)} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>
+                  </div>
+                `).join('')}
               </div>
               <div class="border-t pt-2 flex justify-between items-center font-bold text-sm">
                 <span class="text-green-600">${o.totalPrice.toLocaleString()} so'm</span>
-                ${(o.status === 'NEW' || o.status === 'PROCESSING') ? `
+                ${o.status === 'NEW' ? `
                   <button onclick="cancelUserOrder(${o.id}, event)" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded-lg font-bold">
                     ❌ Bekor qilish
                   </button>
@@ -1111,6 +1128,36 @@
       `;
     }
 
+    // 5.5. FOYDALANUVCHILAR (MIJOZLAR) TAB — faqat admin ko'radi
+    function renderUsers(container) {
+      container.innerHTML = `
+        <div class="space-y-4">
+          <h2 class="text-lg font-bold text-slate-800">👥 Mijozlar</h2>
+          <p class="text-[11px] text-gray-500">Kamida bitta buyurtma qilgan mijozlar, eng ko'p buyurtma qilganlar tepada.</p>
+          <div class="bg-white rounded-2xl border divide-y">
+            ${usersSummary.length === 0 ? '<p class="text-xs text-gray-400 p-4 text-center">Hozircha mijozlar yo\'q</p>' : ''}
+            ${usersSummary.map(u => `
+              <div onclick="openUserModal('${u.tgId}')" class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50">
+                <div>
+                  <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
+                  <p class="text-[10px] text-gray-400">${escapeHtml(u.phone || '')} · ID: ${escapeHtml(u.tgId)}</p>
+                </div>
+                <div class="text-right">
+                  <p class="font-black text-blue-600 text-sm">${u.totalOrders} buyurtma</p>
+                  <p class="text-[10px] text-gray-400">✅${u.delivered} ⏳${u.active} ❌${u.cancelled}</p>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function openUserModal(tgId) {
+      selectedUserModal = usersSummary.find(u => u.tgId === tgId);
+      renderModalContainer();
+    }
+
     // 6. PROFIL TAB (SUPER ADMIN & ADMIN MANAGEMENT)
     function renderProfile(container) {
       container.innerHTML = `
@@ -1148,8 +1195,8 @@
             </a>
 
             <a href="https://instagram.com/fitcore.uz.sergeli" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
-              <i data-lucide="instagram" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
-              <p class="text-xs font-bold text-gray-800">@fitcore.sergeli.uz</p>
+              <span class="w-4 h-4 flex items-center justify-center text-sm flex-shrink-0">📸</span>
+              <p class="text-xs font-bold text-gray-800">Instagram: @fitcore.sergeli.uz</p>
             </a>
           </div>
 
@@ -1303,6 +1350,31 @@
         return;
       }
 
+      if (activePopupModal === 'EDIT_CAT') {
+        const c = selectedCategoryModal;
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">✏️ Katalogni Tahrirlash</h3>
+              <div>
+                <label class="font-bold text-gray-600">Katalog Nomi *</label>
+                <input type="text" id="ec-name" value="${escapeHtml(c.name)}" class="w-full mt-1 p-2 border rounded-xl">
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">Katalog Rasmi (Xotiradan yuklash):</label>
+                <input type="file" accept="image/*" onchange="onImagePicked(event, 'ec-img-prev')" class="w-full mt-1 text-xs">
+                <img id="ec-img-prev" src="${escapeHtml((c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? c.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-16 h-16 object-cover rounded-xl mt-2 ${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? '' : 'hidden'} border">
+              </div>
+              <div class="flex space-x-2 pt-2">
+                <button onclick="saveCategoryEdit('${c.id}')" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">Saqlash</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">Yopish</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
       if (activePopupModal === 'ADD_ADMIN') {
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -1380,13 +1452,8 @@
         const hasDiscount = p.oldPrice && p.oldPrice > p.price;
 
         container.innerHTML = `
-          <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
-              <div class="flex justify-between items-center">
-                <button onclick="selectedProductModal=null; render();" class="text-xs font-bold text-gray-500 bg-gray-100 px-3 py-1.5 rounded-xl">⬅️ Orqaga</button>
-                <button onclick="selectedProductModal=null; switchTab('home');" class="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-xl">🏠 Bosh sahifa</button>
-              </div>
-
+          <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="selectedProductModal=null; render();">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl" onclick="event.stopPropagation()">
               <div class="relative">
                 <img src="${escapeHtml(p.img || FALLBACK_IMG.replace('150','300'))}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-full h-48 object-cover rounded-2xl border">
                 ${(isAdminMode && isUserAnAdmin) ? `
@@ -1466,8 +1533,8 @@
       if (selectedOrderModal) {
         const o = selectedOrderModal;
         container.innerHTML = `
-          <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div class="bg-white rounded-3xl p-5 max-w-md w-full space-y-3 shadow-2xl text-xs">
+          <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="selectedOrderModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-md w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
               <div class="flex justify-between items-center border-b pb-2">
                 <h3 class="font-black text-sm text-blue-600">Buyurtma #${o.id}</h3>
                 <button onclick="selectedOrderModal=null; render();" class="text-xs bg-gray-100 font-bold px-2.5 py-1 rounded-xl">⬅️ Orqaga</button>
@@ -1482,9 +1549,14 @@
                 <p>📅 <b>Sana:</b> ${escapeHtml(o.date)}</p>
               </div>
 
-              <div class="border-t pt-2 space-y-1">
+              <div class="border-t pt-2 space-y-1.5">
                 <b>📦 Tovar:</b>
-                ${o.items.map(i => `<p>• ${escapeHtml(i.name)} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${(i.price * i.qty).toLocaleString()} so'm</p>`).join('')}
+                ${o.items.map(i => `
+                  <div class="flex items-center gap-2">
+                    ${i.img ? `<img src="${escapeHtml(i.img)}" onerror="this.style.display='none'" class="w-7 h-7 object-cover rounded-lg flex-shrink-0" loading="lazy">` : ''}
+                    <p>• ${escapeHtml(i.name)} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${(i.price * i.qty).toLocaleString()} so'm</p>
+                  </div>
+                `).join('')}
               </div>
 
               <div class="border-t pt-2 flex justify-between font-bold text-sm">
@@ -1502,6 +1574,42 @@
                   </div>
                 </div>
               ` : ''}
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // USER (MIJOZ) DETAILS MODAL
+      if (selectedUserModal) {
+        const u = selectedUserModal;
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="selectedUserModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-md w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <div class="flex justify-between items-center border-b pb-2">
+                <h3 class="font-black text-sm text-blue-600">${escapeHtml(u.userName)}</h3>
+                <button onclick="selectedUserModal=null; render();" class="text-xs bg-gray-100 font-bold px-2.5 py-1 rounded-xl">✕</button>
+              </div>
+              <p>📞 <b>Tel:</b> ${escapeHtml(u.phone || '-')}</p>
+              <p>🆔 <b>Telegram ID:</b> ${escapeHtml(u.tgId)}</p>
+              <div class="grid grid-cols-2 gap-2 pt-2">
+                <div class="bg-gray-50 p-2.5 rounded-xl text-center">
+                  <p class="text-lg font-black text-gray-800">${u.totalOrders}</p>
+                  <p class="text-[10px] text-gray-500">Jami buyurtma</p>
+                </div>
+                <div class="bg-gray-50 p-2.5 rounded-xl text-center">
+                  <p class="text-lg font-black text-green-600">${u.totalSpent.toLocaleString()}</p>
+                  <p class="text-[10px] text-gray-500">Jami xarid (so'm)</p>
+                </div>
+                <div class="bg-gray-50 p-2.5 rounded-xl text-center">
+                  <p class="text-lg font-black text-amber-600">${u.active}</p>
+                  <p class="text-[10px] text-gray-500">Jarayonda</p>
+                </div>
+                <div class="bg-gray-50 p-2.5 rounded-xl text-center">
+                  <p class="text-lg font-black text-emerald-600">${u.delivered}</p>
+                  <p class="text-[10px] text-gray-500">Bajarilgan</p>
+                </div>
+              </div>
             </div>
           </div>
         `;
@@ -1694,17 +1802,30 @@
       render();
     }
 
-    async function openGranularEditCategoryModal(id, e) {
+    function openEditCategoryModal(id, e) {
       if (e) e.stopPropagation();
       const c = categories.find(cat => cat.id === id);
       if (!c) return;
+      selectedCategoryModal = c;
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
+      activePopupModal = 'EDIT_CAT';
+      render();
+    }
 
-      const name = prompt("Yangi katalog nomi:", c.name);
-      if (!name) return;
+    async function saveCategoryEdit(id) {
+      const c = categories.find(cat => cat.id === id);
+      if (!c) return;
+      const name = document.getElementById('ec-name').value.trim();
+      if (!name) return alert("Katalog nomini kiriting!");
 
       try {
-        await callApi('edit_category', { categoryId: id, name });
-        c.name = name;
+        const newImg = await uploadImageIfNeeded(c.img);
+        const result = await callApi('edit_category', { categoryId: id, name, img: newImg });
+        Object.assign(c, mapCategoryFromDB(result.category));
+        tempImageFile = null;
+        tempImagePreviewUrl = null;
+        activePopupModal = null;
         render();
       } catch (e2) {
         console.error(e2);
@@ -1857,6 +1978,9 @@
           try {
             const data = isUserAnAdmin ? await callApi('get_all_orders', {}) : await callApi('get_my_orders', {});
             orders = (data.orders || []).map(formatOrderForUi);
+            if (isUserAnAdmin) {
+              callApi('get_users_summary', {}).then(d => { usersSummary = d.users || []; render(); }).catch(e => console.error(e));
+            }
             render();
           } catch (e) { console.error('Buyurtmalarni yangilashda xatolik:', e); }
         })
@@ -1880,40 +2004,18 @@
     }
 
     // ============ BOOT: SERVERDAN MA'LUMOTLARNI YUKLASH ============
-    async function loadInitialData() {
-      try {
-        const [prodRes, catRes] = await Promise.all([
-          sb.from('products').select('*').neq('status', 'DELETED').order('sort_order', { ascending: true }),
-          sb.from('categories').select('*')
-        ]);
-        if (prodRes.error) throw prodRes.error;
-        if (catRes.error) throw catRes.error;
-
-        products = (prodRes.data || []).map(mapProductFromDB);
-        categories = (catRes.data || []).map(mapCategoryFromDB);
-
-        if (isUserAnAdmin) {
-          const [ordersData, adminsData, cartLogsData] = await Promise.all([
-            callApi('get_all_orders', {}),
-            callApi('get_admins_list', {}),
-            callApi('get_cart_logs', {})
-          ]);
-          orders = (ordersData.orders || []).map(formatOrderForUi);
-          adminsList = adminsData.admins || [];
-          cartLogs = (cartLogsData.logs || []).map(formatCartLogForUi);
-        } else {
-          const ordersData = await callApi('get_my_orders', {});
-          orders = (ordersData.orders || []).map(formatOrderForUi);
-        }
-      } catch (err) {
-        console.error('Ma\'lumot yuklash xatosi:', err);
-        document.getElementById('app-content').innerHTML = `
-          <div class="bg-red-50 border border-red-200 text-red-700 text-xs p-4 rounded-2xl">
-            ⚠️ Ma'lumotlarni yuklashda xatolik yuz berdi. Internetni tekshiring yoki keyinroq urinib ko'ring.<br><br>
-            <span class="font-mono text-[10px]">${escapeHtml((err && err.message) || String(err))}</span>
-          </div>`;
-        throw err;
-      }
+    // Tezlik uchun MUHIM: avval ilova ochilganda 4 ta alohida so'rov ketma-ket
+    // yuborilardi (bu sekinlikning asosiy sababi edi). Endi buyurtma/admin/
+    // savat/mijozlar ma'lumoti BITTA "boot" so'rovida keladi.
+    async function loadCatalog() {
+      const [prodRes, catRes] = await Promise.all([
+        sb.from('products').select('*').neq('status', 'DELETED').order('sort_order', { ascending: true }),
+        sb.from('categories').select('*')
+      ]);
+      if (prodRes.error) throw prodRes.error;
+      if (catRes.error) throw catRes.error;
+      products = (prodRes.data || []).map(mapProductFromDB);
+      categories = (catRes.data || []).map(mapCategoryFromDB);
     }
 
     async function boot() {
@@ -1929,22 +2031,31 @@
       }
 
       try {
-        const role = await callApi('get_role', {});
-        currentTgId = role.tgId;
-        isSuperAdmin = role.isSuperAdmin;
-        isUserAnAdmin = role.isAdmin;
+        const [bootData] = await Promise.all([
+          callApi('boot', {}),
+          loadCatalog(),
+        ]);
+        currentTgId = bootData.tgId;
+        isSuperAdmin = bootData.isSuperAdmin;
+        isUserAnAdmin = bootData.isAdmin;
         isAdminMode = isUserAnAdmin;
         currentUser.tgId = currentTgId;
+        orders = (bootData.orders || []).map(formatOrderForUi);
+        if (isUserAnAdmin) {
+          adminsList = bootData.admins || [];
+          cartLogs = (bootData.cartLogs || []).map(formatCartLogForUi);
+          usersSummary = bootData.users || [];
+        }
       } catch (e) {
-        console.error('Foydalanuvchini tekshirishda xatolik:', e);
+        console.error('Yuklashda xatolik:', e);
         document.getElementById('app-content').innerHTML = `
           <div class="bg-red-50 border border-red-200 text-red-700 text-xs p-4 rounded-2xl mt-10 text-center">
-            ⚠️ Foydalanuvchini tekshirishda xatolik yuz berdi.<br>Internetni tekshirib, ilovani qayta oching.
+            ⚠️ Ma'lumotlarni yuklashda xatolik yuz berdi.<br>Internetni tekshirib, ilovani qayta oching.<br><br>
+            <span class="font-mono text-[10px]">${escapeHtml(e.message || String(e))}</span>
           </div>`;
         return;
       }
 
-      await loadInitialData();
       setupRealtime();
       switchTab('home');
     }
