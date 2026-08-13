@@ -34,7 +34,6 @@
       <p class="text-xs font-bold">Yuklanmoqda...</p>
     </div>
   </main>
- </main>
 
   <!-- GLOBAL LOADING OVERLAY -->
   <div id="global-loader" class="hidden fixed inset-0 bg-black/40 z-[999] flex items-center justify-center">
@@ -43,7 +42,7 @@
       <p id="global-loader-text" class="text-xs font-bold text-gray-700">Yuklanmoqda...</p>
     </div>
   </div>
-  
+
   <!-- BOTTOM NAVIGATION -->
   <nav class="fixed bottom-0 left-0 right-0 bg-white border-t py-2 px-3 flex justify-around items-center z-40 shadow-lg">
     <button onclick="switchTab('home')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-home">
@@ -89,16 +88,28 @@
       if (el) el.classList.add('hidden');
     }
 
+    // XSS OLDINI OLISH UCHUN: foydalanuvchi kiritgan matnni HTML'ga xavfsiz qo'yish
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     // ⚙️ CONFIGURATION
     const CONFIG = {
       BOT_TOKEN: "8659743606:AAFcAN91p-6-32yTsPInypX-r1qfXylIYIs",
       ADMIN_ID: "1533504949", // Bosh Admin Telegram ID
       SUPABASE_URL: "https://mvgbqggrzhswjhmwqcyp.supabase.co",
-      SUPABASE_KEY: "sb_publishable_f86Xiu8_yFR_kkZNU95P-g_inE5zCyA"
+      SUPABASE_KEY: "sb_publishable_f86Xiu8_yFR_kkZNU95P-g_inE5zCyA",
+      IMAGES_BUCKET: "images" // Supabase Storage bucket nomi
     };
 
     const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
-const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'bek","Olmazor","Sergeli","Shayxontohur","Uchtepa","Yakkasaroy","Yashnobod","Yunusobod"];
+    const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'bek","Olmazor","Sergeli","Shayxontohur","Uchtepa","Yakkasaroy","Yashnobod","Yunusobod"];
 
     const UZ_REGIONS = {
       "Andijon viloyati": ["Andijon shahri","Andijon tumani","Asaka","Baliqchi","Bo'z","Buloqboshi","Izboskan","Jalaquduq","Marhamat","Oltinko'l","Paxtaobod","Qo'rg'ontepa","Shahrixon","Ulug'nor","Xo'jaobod","Xonobod shahri"],
@@ -115,7 +126,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       "Surxondaryo viloyati": ["Termiz shahri","Termiz tumani","Angor","Bandixon","Boysun","Denov","Jarqo'rg'on","Muzrabot","Oltinsoy","Qiziriq","Qumqo'rg'on","Sariosiyo","Sherobod","Sho'rchi","Uzun"],
       "Toshkent viloyati": ["Angren shahri","Bekobod shahri","Bekobod tumani","Bo'ka","Bo'stonliq","Chinoz","Chirchiq shahri","Ohangaron shahri","Ohangaron tumani","Olmaliq shahri","Oqqo'rg'on","Parkent","Piskent","Qibray","Quyichirchiq","Toshkent tumani","O'rtachirchiq","Yangiyo'l shahri","Yangiyo'l tumani","Yuqorichirchiq","Zangiota"]
     };
-    
+
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
@@ -164,10 +175,15 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
     let userOrderFilter = 'ALL';
     let selectedProductModal = null;
     let selectedOrderModal = null;
-    let activePopupModal = null; 
+    let activePopupModal = null;
     let editingFieldData = null;
 
-    let tempBase64Image = null;
+    // Rasm yuklash uchun: haqiqiy fayl (Storage'ga yuklanadi) va preview (faqat ko'rsatish uchun)
+    let tempImageFile = null;
+    let tempImagePreviewUrl = null;
+
+    // Joriy ko'rinib turgan mahsulotlar ro'yxati (⬆️⬇️ tugmalari shu ro'yxat ichida ishlashi uchun)
+    let currentVisibleProductIds = [];
 
     let adminOrderFilters = {
       statuses: ['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'],
@@ -223,7 +239,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
 
     // TRANSLITERATION & SEARCH
     function normalizeText(text) {
-      if (!text) return '';
+      if (!text) return { latin: '', cyrillic: '' };
       let str = text.toLowerCase().trim();
       const map = { 'sh':'ш','ch':'ч','yo':'ё','yu':'ю','ya':'я','ye':'е','a':'а','b':'б','v':'в','g':'г','d':'д','e':'е','z':'з','i':'и','j':'ж','k':'к','l':'л','m':'м','n':'н','o':'о','p':'п','r':'р','s':'с','t':'т','u':'у','f':'ф','x':'х','h':'ҳ' };
       let cyr = str;
@@ -231,14 +247,26 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       return { latin: str, cyrillic: cyr };
     }
 
+    // Mahsulotlarni nomi (lotin/kirill) YOKI ID (SKU) bo'yicha qidirish.
+    // ID bo'yicha to'g'ridan-to'g'ri mos kelganlar ro'yxat boshida chiqadi.
     function searchProducts(query) {
-      const activeProducts = products.filter(p => p.status !== 'DELETED').sort((a,b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-      if (!query) return activeProducts;
+      const activeProducts = products.filter(p => p.status !== 'DELETED').sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+      if (!query || !query.trim()) return activeProducts;
+
       const { latin, cyrillic } = normalizeText(query);
-      return activeProducts.filter(p => {
+      const results = activeProducts.filter(p => {
         const pNorm = normalizeText(p.name);
-        return pNorm.latin.includes(latin) || pNorm.cyrillic.includes(cyrillic) || p.sku.toLowerCase().includes(latin);
+        const skuMatch = String(p.sku || '').toLowerCase().includes(latin);
+        return pNorm.latin.includes(latin) || pNorm.cyrillic.includes(cyrillic) || skuMatch;
       });
+
+      results.sort((a, b) => {
+        const aSkuStarts = String(a.sku || '').toLowerCase().startsWith(latin) ? 0 : 1;
+        const bSkuStarts = String(b.sku || '').toLowerCase().startsWith(latin) ? 0 : 1;
+        return aSkuStarts - bSkuStarts;
+      });
+
+      return results;
     }
 
     // NAVIGATION
@@ -273,6 +301,9 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         // Adminlar ko'ra olishi uchun Supabase'ga ham yozamiz (fon rejimida)
         sb.from('cart_logs').insert({ tg_id: currentTgId, user_name: logUser, product_name: p.name }).then();
       } else {
+        if (p.stock && cart[id].qty >= p.stock) {
+          return alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
+        }
         cart[id].qty += 1;
       }
 
@@ -284,8 +315,18 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
     function changeCartQty(id, delta, e) {
       if (e) e.stopPropagation();
       if (!cart[id]) return;
-      cart[id].qty += delta;
-      if (cart[id].qty <= 0) delete cart[id];
+      const p = products.find(prod => prod.id === id);
+      const newQty = cart[id].qty + delta;
+
+      if (newQty <= 0) {
+        delete cart[id];
+      } else if (p && p.stock && newQty > p.stock) {
+        alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
+        return; // qty o'zgarmaydi
+      } else {
+        cart[id].qty = newQty;
+      }
+
       localStorage.setItem('cart', JSON.stringify(cart));
       updateCartBadge();
       render();
@@ -303,20 +344,49 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       }
     }
 
-    // IMAGE FILE UPLOAD HELPER
+    // ============ IMAGE UPLOAD (Supabase Storage) ============
+    // Fayl tanlanganda: faqat preview uchun base64 o'qiladi, haqiqiy fayl saqlab qo'yiladi.
     function onImagePicked(event, previewId) {
       const file = event.target.files[0];
       if (!file) return;
+      tempImageFile = file;
       const reader = new FileReader();
-      reader.onload = function(e) {
-        tempBase64Image = e.target.result;
+      reader.onload = function (e) {
+        tempImagePreviewUrl = e.target.result;
         const prev = document.getElementById(previewId);
         if (prev) {
-          prev.src = tempBase64Image;
+          prev.src = tempImagePreviewUrl;
           prev.classList.remove('hidden');
         }
       };
       reader.readAsDataURL(file);
+    }
+
+    // Saqlash bosilganda chaqiriladi: agar yangi fayl tanlangan bo'lsa, uni Storage'ga yuklab,
+    // ochiq (public) URL manzilini qaytaradi. Yangi fayl bo'lmasa, eski URL qoladi.
+    async function uploadImageIfNeeded(existingUrl) {
+      if (!tempImageFile) return existingUrl || null;
+
+      showLoader("Rasm yuklanmoqda...");
+      try {
+        const ext = (tempImageFile.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+        const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).upload(path, tempImageFile, {
+          cacheControl: '3600',
+          upsert: false
+        });
+        if (upErr) throw upErr;
+
+        const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
+        return pub?.publicUrl || existingUrl || null;
+      } catch (e) {
+        console.error('Rasm yuklash xatosi:', e);
+        alert("⚠️ Rasmni yuklashda xatolik yuz berdi. Avvalgi/standart rasm qoldiriladi.");
+        return existingUrl || null;
+      } finally {
+        hideLoader();
+      }
     }
 
     // RENDER ROUTER
@@ -329,7 +399,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
 
       const roleTag = document.getElementById('role-tag');
       const whBtn = document.getElementById('nav-warehouse-btn');
-      
+
       if (isAdminMode && isUserAnAdmin) {
         roleTag.innerText = "ADMIN";
         whBtn.classList.remove('hidden');
@@ -358,7 +428,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       container.innerHTML = `
         <div class="space-y-4">
           <div class="relative">
-            <input type="text" id="search-input" oninput="handleSearch()" placeholder="FITCORE dan qidirish (Lotin / Kirill)..." 
+            <input type="text" id="search-input" oninput="handleSearch()" placeholder="Nomi yoki ID (masalan: 111001) orqali qidirish..." 
               class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
             <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
           </div>
@@ -383,6 +453,8 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         filtered = filtered.filter(p => p.isFeatured === true);
       }
 
+      currentVisibleProductIds = filtered.map(p => p.id);
+
       const grid = document.getElementById('products-grid');
       if (!grid) return;
 
@@ -404,12 +476,12 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         <div onclick="openProductDetailModal('${p.id}')" class="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex flex-col justify-between relative cursor-pointer hover:shadow-md transition-all">
           <div>
             <div class="relative">
-              <img src="${p.img || 'https://via.placeholder.com/150'}" class="w-full h-28 object-cover rounded-xl mb-2">
+              <img src="${escapeHtml(p.img || 'https://via.placeholder.com/150')}" class="w-full h-28 object-cover rounded-xl mb-2" loading="lazy">
               ${p.isFeatured ? `<span class="absolute top-1 left-1 bg-amber-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md">Bosh sahifa</span>` : ''}
               ${hasDiscount ? `<span class="absolute top-1 right-1 bg-red-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md">CHEGIRMA</span>` : ''}
             </div>
-            <span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${p.sku}</span>
-            <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${p.name}</h4>
+            <span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${escapeHtml(p.sku)}</span>
+            <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${escapeHtml(p.name)}</h4>
             
             <div class="mt-1">
               ${hasDiscount ? `
@@ -465,12 +537,13 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       const totalPages = Math.ceil(catProds.length / 10) || 1;
       if (categoryPage > totalPages) categoryPage = 1;
       const paginatedProds = catProds.slice((categoryPage - 1) * 10, categoryPage * 10);
+      currentVisibleProductIds = paginatedProds.map(p => p.id);
 
       container.innerHTML = `
         <div class="space-y-4">
           <div class="bg-white p-3 rounded-2xl border space-y-2 shadow-sm">
             <div class="flex items-center justify-between text-xs">
-              <span class="font-bold text-gray-700">📍 katalog: <b class="text-blue-600">${currentCat ? currentCat.name : 'Bosh Kataloglar'}</b></span>
+              <span class="font-bold text-gray-700">📍 katalog: <b class="text-blue-600">${escapeHtml(currentCat ? currentCat.name : 'Bosh Kataloglar')}</b></span>
               ${adminCatParentId ? `
                 <div class="flex space-x-1">
                   <button onclick="goBackCatLevel()" class="bg-gray-100 px-2 py-1 rounded-lg font-bold text-[11px]">⬅️ Orqaga</button>
@@ -492,12 +565,12 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
             ${subCats.map(sub => `
               <div onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="bg-white p-3.5 rounded-2xl border flex items-center justify-between shadow-sm cursor-pointer hover:bg-gray-50">
                 <div class="flex items-center space-x-3">
-                  ${sub.img && (sub.img.startsWith('http') || sub.img.startsWith('data:')) ? 
-                    `<img src="${sub.img}" class="w-8 h-8 object-cover rounded-lg">` : 
-                    `<span class="text-xl">${sub.img || '📁'}</span>`
+                  ${sub.img && (sub.img.startsWith('http') || sub.img.startsWith('data:')) ?
+                    `<img src="${escapeHtml(sub.img)}" class="w-8 h-8 object-cover rounded-lg" loading="lazy">` :
+                    `<span class="text-xl">${escapeHtml(sub.img) || '📁'}</span>`
                   }
                   <div>
-                    <h5 class="font-bold text-sm text-gray-800">${sub.name}</h5>
+                    <h5 class="font-bold text-sm text-gray-800">${escapeHtml(sub.name)}</h5>
                     <p class="text-[10px] text-gray-400">${categories.filter(c => c.parentId === sub.id).length} katalog | ${products.filter(p => p.categoryId === sub.id && p.status !== 'DELETED').length} tovar</p>
                   </div>
                 </div>
@@ -554,10 +627,10 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
                 ${cartLogs.map(log => `
                   <div class="bg-gray-50 p-2.5 rounded-xl border text-xs">
                     <div class="flex justify-between font-bold">
-                      <span>👤 ${log.user}</span>
-                      <span class="text-[10px] text-gray-400">${log.time}</span>
+                      <span>👤 ${escapeHtml(log.user)}</span>
+                      <span class="text-[10px] text-gray-400">${escapeHtml(log.time)}</span>
                     </div>
-                    <p class="text-blue-600 font-medium mt-0.5">📦 ${log.productName}</p>
+                    <p class="text-blue-600 font-medium mt-0.5">📦 ${escapeHtml(log.productName)}</p>
                   </div>
                 `).join('')}
               </div>
@@ -592,7 +665,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
             ${items.map(item => `
               <div class="py-3 flex items-center justify-between">
                 <div>
-                  <h4 class="font-bold text-sm text-gray-800">${item.name}</h4>
+                  <h4 class="font-bold text-sm text-gray-800">${escapeHtml(item.name)}</h4>
                   <p class="text-xs text-gray-500">${item.price.toLocaleString()} so'm</p>
                 </div>
                 <div class="flex items-center space-x-2">
@@ -609,12 +682,12 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
             
             <div>
               <label class="text-xs font-bold text-gray-600">Ism va Familiyangiz *</label>
-              <input type="text" id="chk-fullname" value="${currentUser.firstName} ${currentUser.lastName}".trim() placeholder="Ali Valiyev" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
+              <input type="text" id="chk-fullname" value="${escapeHtml((currentUser.firstName + ' ' + currentUser.lastName).trim())}" placeholder="Ali Valiyev" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
             </div>
 
             <div>
               <label class="text-xs font-bold text-gray-600">Telefon Raqamingiz *</label>
-              <input type="text" id="chk-phone" value="${currentUser.phone}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2.5 border rounded-xl text-xs font-mono">
+              <input type="text" id="chk-phone" value="${escapeHtml(currentUser.phone)}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2.5 border rounded-xl text-xs font-mono">
             </div>
 
           <div>
@@ -742,7 +815,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
 
     let submittingOrder = false;
     async function submitOrder() {
-    const fullname = document.getElementById('chk-fullname').value.trim();
+      const fullname = document.getElementById('chk-fullname').value.trim();
       const phone = document.getElementById('chk-phone').value.trim();
       const region = document.getElementById('chk-region').value;
       const viloyat = region === 'PROVINCE' ? document.getElementById('chk-viloyat').value : '';
@@ -773,6 +846,15 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       if (selectedPayMethod !== 'CASH') {
         return alert("❌ Hozircha faqat naqd pul bilan buyurtma qabul qilinadi.");
       }
+
+      // Savatdagi tovarlar hali ham omborda yetarlimi — tekshiramiz
+      for (const [id, itemData] of Object.entries(cart)) {
+        const p = products.find(prod => prod.id === id);
+        if (!p || p.stock < itemData.qty) {
+          return alert(`❌ "${p ? p.name : 'Mahsulot'}" omborda yetarli emas. Iltimos, savatchani tekshiring.`);
+        }
+      }
+
       if (submittingOrder) return;
       submittingOrder = true;
       showLoader("Buyurtma qabul qilinmoqda...");
@@ -794,11 +876,11 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         status: "NEW"
       };
 
-     const { data, error } = await sb.from('orders').insert(dbRow).select().single();
-      submittingOrder = false;
-      hideLoader();
+      const { data, error } = await sb.from('orders').insert(dbRow).select().single();
 
       if (error) {
+        submittingOrder = false;
+        hideLoader();
         console.error(error);
         return alert("❌ Buyurtmani yuborishda xatolik yuz berdi. Qayta urinib ko'ring.");
       }
@@ -806,19 +888,34 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       const newOrder = mapOrderFromDB(data);
       orders.unshift(newOrder);
 
-      // TELEGRAM NOTIFICATION
+      // Ombordagi qoldiqni kamaytiramiz (fon rejimida, kutmasdan)
+      orderItems.forEach(item => {
+        const p = products.find(prod => prod.sku === item.sku);
+        if (p) {
+          p.stock = Math.max(0, p.stock - item.qty);
+          p.status = p.stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
+          sb.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id).then();
+        }
+      });
+
+      submittingOrder = false;
+      hideLoader();
+
+      // TELEGRAM XABARNOMASI — natijani KUTMAYMIZ (fon rejimida jo'natiladi),
+      // aks holda Telegram API sekinlashganda mijoz bir necha daqiqa "muzlab" turadi.
       let msg = `🛍 <b>FITCORE - YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
       msg += `👤 <b>Mijoz:</b> ${fullname}\n📞 <b>Tel:</b> ${phone}\n📍 <b>Hudud:</b> ${region} (${district})\n🏠 <b>Manzil:</b> ${address}\n💳 <b>To'lov:</b> ${selectedPayMethod}\n\n📦 <b>Tarkib:</b>\n`;
-      orderItems.forEach(i => msg += `• ${i.name} (x${i.qty}) = ${(i.price * i.qty).toLocaleString()} so'm\n`);
+      orderItems.forEach(i => msg += `• ${i.name} (ID: ${i.sku}) x${i.qty} = ${(i.price * i.qty).toLocaleString()} so'm\n`);
       msg += `\n💰 <b>Jami:</b> ${totalPrice.toLocaleString()} so'm`;
 
-      try {
-        await fetch(`https://api.telegram.org/bot${CONFIG.BOT_TOKEN}/sendMessage`, {
+      const notifyIds = Array.from(new Set([String(CONFIG.ADMIN_ID), ...adminsList.map(String)]));
+      notifyIds.forEach(chatId => {
+        fetch(`https://api.telegram.org/bot${CONFIG.BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: CONFIG.ADMIN_ID, text: msg, parse_mode: 'HTML' })
-        });
-      } catch (e) {}
+          body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'HTML' })
+        }).catch(e => console.error('Telegram xabarnoma xatosi:', e));
+      });
 
       cart = {};
       localStorage.setItem('cart', JSON.stringify(cart));
@@ -862,7 +959,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
             <h2 class="text-lg font-bold text-amber-900">🛍 Barcha Buyurtmalar (Admin)</h2>
 
             <div class="bg-white p-3 rounded-2xl border space-y-2 text-xs shadow-sm">
-              <input type="text" id="adm-ord-search" oninput="adminOrderFilters.search = this.value; render();" placeholder="Mijoz ismi yoki tel raqami..." value="${adminOrderFilters.search}" class="w-full p-2 border rounded-xl">
+              <input type="text" id="adm-ord-search" oninput="adminOrderFilters.search = this.value; render();" placeholder="Mijoz ismi yoki tel raqami..." value="${escapeHtml(adminOrderFilters.search)}" class="w-full p-2 border rounded-xl">
               
               <div class="flex gap-1 flex-wrap">
                 ${['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'].map(st => `
@@ -874,15 +971,15 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
 
               <div class="grid grid-cols-2 gap-2">
                 <select onchange="adminOrderFilters.region = this.value; render();" class="p-2 border rounded-xl bg-gray-50 font-bold">
-                  <option value="ALL" ${adminOrderFilters.region==='ALL'?'selected':''}>Barcha Hududlar</option>
-                  <option value="TASHKENT" ${adminOrderFilters.region==='TASHKENT'?'selected':''}>Toshkent shahri</option>
-                  <option value="PROVINCE" ${adminOrderFilters.region==='PROVINCE'?'selected':''}>Viloyatlar</option>
+                  <option value="ALL" ${adminOrderFilters.region === 'ALL' ? 'selected' : ''}>Barcha Hududlar</option>
+                  <option value="TASHKENT" ${adminOrderFilters.region === 'TASHKENT' ? 'selected' : ''}>Toshkent shahri</option>
+                  <option value="PROVINCE" ${adminOrderFilters.region === 'PROVINCE' ? 'selected' : ''}>Viloyatlar</option>
                 </select>
 
                 <select onchange="adminOrderFilters.payment = this.value; render();" class="p-2 border rounded-xl bg-gray-50 font-bold">
-                  <option value="ALL" ${adminOrderFilters.payment==='ALL'?'selected':''}>Barcha To'lovlar</option>
-                  <option value="CASH" ${adminOrderFilters.payment==='CASH'?'selected':''}>Naqd pul</option>
-                  <option value="CARD" ${adminOrderFilters.payment==='CARD'?'selected':''}>Karta</option>
+                  <option value="ALL" ${adminOrderFilters.payment === 'ALL' ? 'selected' : ''}>Barcha To'lovlar</option>
+                  <option value="CASH" ${adminOrderFilters.payment === 'CASH' ? 'selected' : ''}>Naqd pul</option>
+                  <option value="CARD" ${adminOrderFilters.payment === 'CARD' ? 'selected' : ''}>Karta</option>
                 </select>
               </div>
             </div>
@@ -894,10 +991,10 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
                   <div>
                     <div class="flex items-center space-x-2">
                       <span class="font-black text-blue-600 text-xs">#${o.id}</span>
-                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${o.status==='NEW'?'bg-amber-100 text-amber-800':'bg-green-100 text-green-800'}">${o.status}</span>
+                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${o.status === 'NEW' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}">${o.status}</span>
                     </div>
-                    <p class="font-bold text-xs text-gray-800 mt-1">${o.user} (${o.phone})</p>
-                    <p class="text-[10px] text-gray-400">${o.region} | ${o.payMethod}</p>
+                    <p class="font-bold text-xs text-gray-800 mt-1">${escapeHtml(o.user)} (${escapeHtml(o.phone)})</p>
+                    <p class="text-[10px] text-gray-400">${escapeHtml(o.region)} | ${escapeHtml(o.payMethod)}</p>
                   </div>
                   <span class="font-bold text-xs text-green-600">${o.totalPrice.toLocaleString()} so'm</span>
                 </div>
@@ -924,11 +1021,11 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
           <h2 class="text-lg font-bold">📦 Buyurtmalarim</h2>
 
           <div class="flex space-x-1 overflow-x-auto pb-1 text-xs">
-            <button onclick="userOrderFilter='ALL'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='ALL'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Barchasi</button>
-            <button onclick="userOrderFilter='NEW'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='NEW'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Yangi</button>
-            <button onclick="userOrderFilter='PROCESSING'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='PROCESSING'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Jarayonda</button>
-            <button onclick="userOrderFilter='DELIVERED'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='DELIVERED'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Bajarilgan</button>
-            <button onclick="userOrderFilter='CANCELLED'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter==='CANCELLED'?'bg-blue-600 text-white':'bg-white border text-gray-600'}">Bekor qilingan</button>
+            <button onclick="userOrderFilter='ALL'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'ALL' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Barchasi</button>
+            <button onclick="userOrderFilter='NEW'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'NEW' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Yangi</button>
+            <button onclick="userOrderFilter='PROCESSING'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'PROCESSING' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Jarayonda</button>
+            <button onclick="userOrderFilter='DELIVERED'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'DELIVERED' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Bajarilgan</button>
+            <button onclick="userOrderFilter='CANCELLED'; render();" class="px-2.5 py-1 rounded-xl font-bold ${userOrderFilter === 'CANCELLED' ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}">Bekor qilingan</button>
           </div>
 
           ${userOrders.length === 0 ? '<p class="text-xs text-gray-500 bg-white p-4 rounded-xl text-center">Buyurtmalar topilmadi</p>' : ''}
@@ -938,9 +1035,9 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
                 <span class="font-black text-blue-600">#${o.id}</span>
                 <span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">${o.status}</span>
               </div>
-              <p class="text-xs text-gray-500">📅 ${o.date}</p>
+              <p class="text-xs text-gray-500">📅 ${escapeHtml(o.date)}</p>
               <div class="text-xs space-y-1">
-                ${o.items.map(i => `<p class="font-medium">• ${i.name} x ${i.qty}</p>`).join('')}
+                ${o.items.map(i => `<p class="font-medium">• ${escapeHtml(i.name)} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>`).join('')}
               </div>
               <div class="border-t pt-2 flex justify-between items-center font-bold text-sm">
                 <span class="text-green-600">${o.totalPrice.toLocaleString()} so'm</span>
@@ -963,6 +1060,17 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       if (!o) return;
       const { error } = await sb.from('orders').update({ status: 'CANCELLED' }).eq('id', orderId);
       if (error) return alert("❌ Xatolik yuz berdi, qayta urinib ko'ring.");
+
+      // Bekor qilingan buyurtma tovarlarini omborga qaytaramiz
+      o.items.forEach(item => {
+        const p = products.find(prod => prod.sku === item.sku);
+        if (p) {
+          p.stock = p.stock + item.qty;
+          p.status = 'ACTIVE';
+          sb.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id).then();
+        }
+      });
+
       o.status = 'CANCELLED';
       alert("✅ Buyurtmangiz bekor qilindi!");
       render();
@@ -1007,11 +1115,11 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       return `
         <div class="space-y-1">
           <div class="font-bold text-blue-900">
-            ${indent}${depth === 0 ? '📂' : '└─ 📁'} ${cat.name}
+            ${indent}${depth === 0 ? '📂' : '└─ 📁'} ${escapeHtml(cat.name)}
           </div>
           ${catProds.map(p => `
             <div class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1">
-              <span>${indent}&nbsp;&nbsp;* [ID: ${p.sku}] ${p.name}</span>
+              <span>${indent}&nbsp;&nbsp;* [ID: ${escapeHtml(p.sku)}] ${escapeHtml(p.name)}</span>
               <b class="${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ta</b>
             </div>
           `).join('')}
@@ -1029,8 +1137,8 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
               <i data-lucide="user" class="w-8 h-8"></i>
             </div>
             <div>
-              <h2 class="text-lg font-bold">${currentUser.firstName} ${currentUser.lastName}</h2>
-              <p class="text-xs text-gray-500">Tel: ${currentUser.phone}</p>
+              <h2 class="text-lg font-bold">${escapeHtml(currentUser.firstName)} ${escapeHtml(currentUser.lastName)}</h2>
+              <p class="text-xs text-gray-500">Tel: ${escapeHtml(currentUser.phone)}</p>
               <button onclick="activePopupModal='REGISTRATION'; render();" class="mt-1 text-[10px] text-blue-600 font-bold underline">Ma'lumotlarni tahrirlash</button>
           </div>
           </div>
@@ -1082,7 +1190,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
               <div class="space-y-1 text-xs">
                 ${adminsList.map(admId => `
                   <div class="flex justify-between items-center p-2 bg-gray-50 rounded-xl border">
-                    <span class="font-mono text-gray-700">ID: ${admId} ${admId === String(CONFIG.ADMIN_ID) ? '<b>(Bosh Admin)</b>' : ''}</span>
+                    <span class="font-mono text-gray-700">ID: ${escapeHtml(admId)} ${admId === String(CONFIG.ADMIN_ID) ? '<b>(Bosh Admin)</b>' : ''}</span>
                     ${admId !== String(CONFIG.ADMIN_ID) ? `
                       <button onclick="removeAdmin('${admId}')" class="text-red-600 font-bold px-2 py-0.5 bg-red-50 rounded-lg">🗑️</button>
                     ` : ''}
@@ -1117,15 +1225,15 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
               <p class="text-[11px] text-gray-500 text-center">Buyurtmalar tezkor rasmiylashtirilishi uchun ma'lumotlaringizni kiriting:</p>
               <div>
                 <label class="font-bold text-gray-600">Ismingiz *</label>
-                <input type="text" id="reg-fname" value="${currentUser.firstName}" placeholder="Ali" class="w-full mt-1 p-2 border rounded-xl">
+                <input type="text" id="reg-fname" value="${escapeHtml(currentUser.firstName)}" placeholder="Ali" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
                 <label class="font-bold text-gray-600">Familiyangiz *</label>
-                <input type="text" id="reg-lname" value="${currentUser.lastName}" placeholder="Valiyev" class="w-full mt-1 p-2 border rounded-xl">
+                <input type="text" id="reg-lname" value="${escapeHtml(currentUser.lastName)}" placeholder="Valiyev" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
                 <label class="font-bold text-gray-600">Telefon Raqamingiz *</label>
-                <input type="text" id="reg-phone" value="${currentUser.phone}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2 border rounded-xl font-mono">
+                <input type="text" id="reg-phone" value="${escapeHtml(currentUser.phone)}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2 border rounded-xl font-mono">
               </div>
               <div class="pt-2">
                 <button onclick="saveRegistrationFromModal()" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ Saqlash</button>
@@ -1238,7 +1346,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
 
               ${field === 'name' ? `
                 <label class="font-bold text-gray-600">Yangi Nomi:</label>
-                <input type="text" id="ef-val" value="${p.name}" class="w-full p-2 border rounded-xl">
+                <input type="text" id="ef-val" value="${escapeHtml(p.name)}" class="w-full p-2 border rounded-xl">
               ` : ''}
 
               ${field === 'price' ? `
@@ -1259,13 +1367,13 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
 
               ${field === 'desc' ? `
                 <label class="font-bold text-gray-600">Yangi Izoh / Tavsif:</label>
-                <textarea id="ef-val" rows="3" class="w-full p-2 border rounded-xl">${p.desc || ''}</textarea>
+                <textarea id="ef-val" rows="3" class="w-full p-2 border rounded-xl">${escapeHtml(p.desc || '')}</textarea>
               ` : ''}
 
               ${field === 'img' ? `
                 <label class="font-bold text-gray-600">Yangi Rasm (Xotiradan yuklash):</label>
                 <input type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev')" class="w-full mt-1 text-xs">
-                <img id="ef-img-prev" src="${p.img || ''}" class="w-24 h-24 object-cover rounded-xl mt-2 border">
+                <img id="ef-img-prev" src="${escapeHtml(p.img || '')}" class="w-24 h-24 object-cover rounded-xl mt-2 border">
               ` : ''}
 
               <div class="flex space-x-2 pt-2">
@@ -1293,7 +1401,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
               </div>
 
               <div class="relative">
-                <img src="${p.img || 'https://via.placeholder.com/300'}" class="w-full h-48 object-cover rounded-2xl border">
+                <img src="${escapeHtml(p.img || 'https://via.placeholder.com/300')}" class="w-full h-48 object-cover rounded-2xl border">
                 ${(isAdminMode && isUserAnAdmin) ? `
                   <button onclick="openEditFieldModal('${p.id}', 'img')" class="absolute bottom-2 right-2 bg-blue-600 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-xl flex items-center space-x-1 shadow">
                     <span>✏️ Rasmni O'zgartirish</span>
@@ -1303,13 +1411,13 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
               
               <div class="space-y-1">
                 <div class="flex justify-between items-center">
-                  <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: ${p.sku}</span>
+                  <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: ${escapeHtml(p.sku)}</span>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">🗑️ O'chirish</button>` : ''}
                 </div>
 
                 <!-- NAME WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
-                  <h2 class="text-lg font-black text-gray-900">${p.name}</h2>
+                  <h2 class="text-lg font-black text-gray-900">${escapeHtml(p.name)}</h2>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
                 
@@ -1331,7 +1439,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
                 <!-- STOCK WITH EDIT -->
                 ${(isAdminMode && isUserAnAdmin) ? `
                   <div class="flex justify-between items-center pt-1 text-xs">
-                    <span class="font-bold text-gray-600">Ombor Qoldig'i: <b class="${p.stock>0?'text-green-600':'text-red-500'}">${p.stock} ta</b></span>
+                    <span class="font-bold text-gray-600">Ombor Qoldig'i: <b class="${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ta</b></span>
                     <button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
                   </div>
                 ` : ''}
@@ -1343,7 +1451,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
                   <h4 class="font-bold text-gray-700">📝 Tavsif / Izoh:</h4>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'desc')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
-                <p class="text-gray-600 leading-relaxed">${p.desc || 'Tavsif kiritilmagan.'}</p>
+                <p class="text-gray-600 leading-relaxed">${escapeHtml(p.desc || 'Tavsif kiritilmagan.')}</p>
               </div>
 
               ${!isAdminMode ? `
@@ -1379,17 +1487,17 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
               </div>
 
               <div class="space-y-1">
-                <p>👤 <b>Mijoz:</b> ${o.user}</p>
-                <p>📞 <b>Tel:</b> ${o.phone}</p>
-                <p>📍 <b>Hudud:</b> ${o.region} (${o.district})</p>
-                <p>🏠 <b>Manzil:</b> ${o.address}</p>
-                <p>💳 <b>To'lov:</b> ${o.payMethod}</p>
-                <p>📅 <b>Sana:</b> ${o.date}</p>
+                <p>👤 <b>Mijoz:</b> ${escapeHtml(o.user)}</p>
+                <p>📞 <b>Tel:</b> ${escapeHtml(o.phone)}</p>
+                <p>📍 <b>Hudud:</b> ${escapeHtml(o.region)} (${escapeHtml(o.district)})</p>
+                <p>🏠 <b>Manzil:</b> ${escapeHtml(o.address)}</p>
+                <p>💳 <b>To'lov:</b> ${escapeHtml(o.payMethod)}</p>
+                <p>📅 <b>Sana:</b> ${escapeHtml(o.date)}</p>
               </div>
 
               <div class="border-t pt-2 space-y-1">
                 <b>📦 Tovar:</b>
-                ${o.items.map(i => `<p>• ${i.name} x ${i.qty} = ${(i.price * i.qty).toLocaleString()} so'm</p>`).join('')}
+                ${o.items.map(i => `<p>• ${escapeHtml(i.name)} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${(i.price * i.qty).toLocaleString()} so'm</p>`).join('')}
               </div>
 
               <div class="border-t pt-2 flex justify-between font-bold text-sm">
@@ -1426,7 +1534,8 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
     function openEditFieldModal(prodId, fieldName) {
       selectedProductModal = products.find(p => p.id === prodId);
       editingFieldData = fieldName;
-      tempBase64Image = (fieldName === 'img' && selectedProductModal) ? selectedProductModal.img : null;
+      tempImageFile = null;
+      tempImagePreviewUrl = (fieldName === 'img' && selectedProductModal) ? selectedProductModal.img : null;
       activePopupModal = 'EDIT_PROD_FIELD';
       render();
     }
@@ -1437,9 +1546,24 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
     }
 
     async function updateOrderStatus(id, newStatus) {
+      const o = orders.find(ord => ord.id === id);
+      const prevStatus = o ? o.status : null;
+
       const { error } = await sb.from('orders').update({ status: newStatus }).eq('id', id);
       if (error) return alert("❌ Statusni o'zgartirishda xatolik yuz berdi.");
-      const o = orders.find(ord => ord.id === id);
+
+      // Agar buyurtma bekor qilinsa (avval bekor qilinmagan bo'lsa) — tovarlarni omborga qaytaramiz
+      if (o && newStatus === 'CANCELLED' && prevStatus !== 'CANCELLED') {
+        o.items.forEach(item => {
+          const p = products.find(prod => prod.sku === item.sku);
+          if (p) {
+            p.stock = p.stock + item.qty;
+            p.status = 'ACTIVE';
+            sb.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id).then();
+          }
+        });
+      }
+
       if (o) o.status = newStatus;
       selectedOrderModal = null;
       render();
@@ -1478,12 +1602,13 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         oldPrice = oldPriceVal;
       }
 
-    const sku = generateProductSKU(adminCatParentId);
+      const sku = generateProductSKU(adminCatParentId);
+      const imgUrl = await uploadImageIfNeeded(null);
 
       const dbRow = {
         sku, name, price, old_price: oldPrice, stock,
         description: desc || name,
-        img: tempBase64Image || "https://via.placeholder.com/150",
+        img: imgUrl || "https://via.placeholder.com/150",
         category_id: adminCatParentId,
         status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
         is_featured: true, sort_order: products.length + 1
@@ -1495,7 +1620,8 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       if (error) { console.error(error); return alert("❌ Tovarni saqlashda xatolik yuz berdi."); }
 
       products.push(mapProductFromDB(data));
-      tempBase64Image = null;
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
       activePopupModal = null;
       alert(`✅ Yangi tovar (ID: ${sku}) muvaffaqiyatli qo'shildi!`);
       render();
@@ -1505,9 +1631,11 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       const name = document.getElementById('m-cat-name').value.trim();
       if (!name) return alert("Katalog nomini kiriting!");
 
-     const dbRow = {
+      const imgUrl = await uploadImageIfNeeded(null);
+
+      const dbRow = {
         name,
-        img: tempBase64Image || (adminCatParentId ? "📦" : "📁"),
+        img: imgUrl || (adminCatParentId ? "📦" : "📁"),
         parent_id: adminCatParentId
       };
 
@@ -1515,9 +1643,10 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       const { data, error } = await sb.from('categories').insert(dbRow).select().single();
       hideLoader();
       if (error) { console.error(error); return alert("❌ Katalogni saqlashda xatolik yuz berdi."); }
-      
+
       categories.push(mapCategoryFromDB(data));
-      tempBase64Image = null;
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
       activePopupModal = null;
       alert("✅ Katalog yaratildi!");
       render();
@@ -1567,7 +1696,8 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         p.desc = document.getElementById('ef-val').value.trim();
         dbUpdate.description = p.desc;
       } else if (field === 'img') {
-        if (tempBase64Image) { p.img = tempBase64Image; dbUpdate.img = p.img; }
+        const newUrl = await uploadImageIfNeeded(p.img);
+        if (newUrl) { p.img = newUrl; dbUpdate.img = p.img; }
       }
 
       if (Object.keys(dbUpdate).length > 0) {
@@ -1575,20 +1705,23 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         if (error) { console.error(error); return alert("❌ Saqlashda xatolik yuz berdi."); }
       }
 
-      tempBase64Image = null;
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
       activePopupModal = null;
       selectedProductModal = p;
       render();
     }
 
     function openAddProductModal() {
-      tempBase64Image = null;
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
       activePopupModal = 'ADD_PROD';
       render();
     }
 
     function openAddCatModal() {
-      tempBase64Image = null;
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
       activePopupModal = 'ADD_CAT';
       render();
     }
@@ -1607,21 +1740,29 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
       render();
     }
 
+    // ⬆️⬇️ tugmalari FAQAT joriy ko'rinib turgan ro'yxat (currentVisibleProductIds) ichida ishlaydi.
+    // Bazaga faqat 2 ta qatnashuvchi mahsulot yoziladi (avvalgidek BARCHA mahsulotlar emas) — tezroq va to'g'ri ishlaydi.
     async function moveProductSort(id, dir) {
-      const idx = products.findIndex(p => p.id === id);
+      const list = currentVisibleProductIds;
+      const idx = list.indexOf(id);
       if (idx < 0) return;
       const targetIdx = idx + dir;
-      if (targetIdx < 0 || targetIdx >= products.length) return;
+      if (targetIdx < 0 || targetIdx >= list.length) return;
 
-      const temp = products[idx];
-      products[idx] = products[targetIdx];
-      products[targetIdx] = temp;
+      const prodA = products.find(p => p.id === list[idx]);
+      const prodB = products.find(p => p.id === list[targetIdx]);
+      if (!prodA || !prodB) return;
 
-      products.forEach((p, i) => p.sortOrder = i + 1);
+      const tmp = prodA.sortOrder;
+      prodA.sortOrder = prodB.sortOrder;
+      prodB.sortOrder = tmp;
+
       render();
 
-      // Fon rejimida bazani yangilaymiz
-      await Promise.all(products.map(p => sb.from('products').update({ sort_order: p.sortOrder }).eq('id', p.id)));
+      await Promise.all([
+        sb.from('products').update({ sort_order: prodA.sortOrder }).eq('id', prodA.id),
+        sb.from('products').update({ sort_order: prodB.sortOrder }).eq('id', prodB.id)
+      ]);
     }
 
     async function toggleProductFeatured(id) {
@@ -1680,12 +1821,23 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
     }
 
     // ============ BOOT: SUPABASE'DAN MA'LUMOTLARNI YUKLASH ============
+    // Tezlik uchun so'rovlar imkon qadar PARALLEL (Promise.all) yuboriladi, ketma-ket emas.
     async function loadInitialData() {
       try {
-        // 1) Avval adminlar ro'yxatini yuklaymiz (rol aniqlash uchun)
-        const { data: adminRows, error: admErr } = await sb.from('admins').select('tg_id');
-        if (admErr) throw admErr;
-        adminsList = (adminRows || []).map(r => r.tg_id);
+        // 1) Adminlar, tovarlar va kataloglarni BIR VAQTDA (parallel) yuklaymiz
+        const [admRes, prodRes, catRes] = await Promise.all([
+          sb.from('admins').select('tg_id'),
+          sb.from('products').select('*').neq('status', 'DELETED').order('sort_order', { ascending: true }),
+          sb.from('categories').select('*')
+        ]);
+
+        if (admRes.error) throw admRes.error;
+        if (prodRes.error) throw prodRes.error;
+        if (catRes.error) throw catRes.error;
+
+        adminsList = (admRes.data || []).map(r => r.tg_id);
+        products = (prodRes.data || []).map(mapProductFromDB);
+        categories = (catRes.data || []).map(mapCategoryFromDB);
 
         // Bosh admin har doim adminlar ro'yxatida bo'lishi kerak
         if (isSuperAdmin && !adminsList.includes(currentTgId)) {
@@ -1696,27 +1848,22 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
         isAdminMode = isUserAnAdmin;
 
-        // 2) Tovarlar va kataloglarni yuklaymiz
-        const [prodRes, catRes] = await Promise.all([
-          sb.from('products').select('*').neq('status', 'DELETED').order('sort_order', { ascending: true }),
-          sb.from('categories').select('*')
-        ]);
-        if (prodRes.error) throw prodRes.error;
-        if (catRes.error) throw catRes.error;
-        products = (prodRes.data || []).map(mapProductFromDB);
-        categories = (catRes.data || []).map(mapCategoryFromDB);
-
-        // 3) Buyurtmalarni yuklaymiz: admin -> hammasini, user -> faqat o'zinikini
+        // 2) Buyurtmalar va (admin bo'lsa) savatcha tarixini BIR VAQTDA yuklaymiz
         let ordQuery = sb.from('orders').select('*').order('id', { ascending: false });
         if (!isUserAnAdmin) ordQuery = ordQuery.eq('tg_id', currentTgId);
-        const { data: ordRows, error: ordErr } = await ordQuery;
-        if (ordErr) throw ordErr;
-        orders = (ordRows || []).map(mapOrderFromDB);
 
-        // 4) Admin bo'lsa — savatga qo'shish tarixini yuklaymiz
+        const parallelJobs = [ordQuery];
         if (isUserAnAdmin) {
-          const { data: logRows, error: logErr } = await sb.from('cart_logs').select('*').order('id', { ascending: false }).limit(100);
-          if (!logErr) cartLogs = (logRows || []).map(mapCartLogFromDB);
+          parallelJobs.push(sb.from('cart_logs').select('*').order('id', { ascending: false }).limit(100));
+        }
+
+        const results = await Promise.all(parallelJobs);
+        const ordRes = results[0];
+        if (ordRes.error) throw ordRes.error;
+        orders = (ordRes.data || []).map(mapOrderFromDB);
+
+        if (isUserAnAdmin && results[1] && !results[1].error) {
+          cartLogs = (results[1].data || []).map(mapCartLogFromDB);
         }
 
       } catch (err) {
@@ -1724,7 +1871,7 @@ const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'be
         document.getElementById('app-content').innerHTML = `
           <div class="bg-red-50 border border-red-200 text-red-700 text-xs p-4 rounded-2xl">
             ⚠️ Ma'lumotlarni yuklashda xatolik yuz berdi. Internetni tekshiring yoki keyinroq urinib ko'ring.<br><br>
-            <span class="font-mono text-[10px]">${(err && err.message) || err}</span>
+            <span class="font-mono text-[10px]">${escapeHtml((err && err.message) || String(err))}</span>
           </div>`;
         throw err;
       }
