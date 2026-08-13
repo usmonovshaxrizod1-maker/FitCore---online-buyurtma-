@@ -14,7 +14,7 @@
   <!-- HEADER -->
   <header class="bg-white sticky top-0 z-40 border-b px-4 py-3 flex items-center justify-between shadow-sm">
     <div class="flex items-center space-x-2">
-      <span class="bg-slate-900 text-white font-black px-3 py-1 rounded-xl text-sm tracking-widest border border-amber-400">FITCORE <span id="role-tag" class="text-amber-400 text-[10px]">PRO</span></span>
+      <span class="bg-slate-900 text-white font-black px-3 py-1 rounded-xl text-sm tracking-widest border border-amber-400">FITCORE <span id="role-tag" class="text-amber-400 text-[10px]">STORE</span></span>
     </div>
     <div class="flex items-center space-x-3">
       <button onclick="switchTab('cart')" class="relative p-2 bg-gray-100 rounded-full">
@@ -99,13 +99,17 @@
         .replace(/'/g, '&#39;');
     }
 
+    const FALLBACK_IMG = 'https://via.placeholder.com/150';
+
     // ⚙️ CONFIGURATION
+    // MUHIM: bot tokeni va admin ID endi bu yerda YO'Q — ular faqat serverda
+    // (Edge Function ichida, maxfiy sifatida) saqlanadi. Frontendda ular
+    // umuman ko'rinmaydi, chunki bu yerga yozilgan har qanday narsani
+    // dev-tools orqali istalgan kishi o'qib olishi mumkin.
     const CONFIG = {
-      BOT_TOKEN: "8659743606:AAFcAN91p-6-32yTsPInypX-r1qfXylIYIs",
-      ADMIN_ID: "1533504949", // Bosh Admin Telegram ID
       SUPABASE_URL: "https://mvgbqggrzhswjhmwqcyp.supabase.co",
       SUPABASE_KEY: "sb_publishable_f86Xiu8_yFR_kkZNU95P-g_inE5zCyA",
-      IMAGES_BUCKET: "images" // Supabase Storage bucket nomi
+      IMAGES_BUCKET: "images"
     };
 
     const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
@@ -142,19 +146,16 @@
     function mapCategoryFromDB(r) {
       return { id: r.id, name: r.name, parentId: r.parent_id, img: r.img };
     }
-    function mapOrderFromDB(r) {
-      return {
-        id: r.id, tgId: r.tg_id, user: r.user_name, phone: r.phone, region: r.region,
-        district: r.district, address: r.address, payMethod: r.pay_method,
-        items: r.items || [], totalPrice: Number(r.total_price), status: r.status,
-        date: new Date(r.created_at).toLocaleString()
-      };
+    // Buyurtma va savat tarixi endi to'g'ridan-to'g'ri bazadan emas, balki
+    // serverda tasdiqlangan Edge Function javobidan keladi (pastdagi callApi).
+    function formatOrderForUi(o) {
+      return { ...o, date: new Date(o.createdAt).toLocaleString() };
     }
-    function mapCartLogFromDB(r) {
-      return { user: r.user_name, productName: r.product_name, time: new Date(r.created_at).toLocaleString() };
+    function formatCartLogForUi(r) {
+      return { user: r.user, productName: r.productName, time: new Date(r.createdAt).toLocaleString() };
     }
 
-    // STATE VARIABLES (bo'sh boshlanadi, Supabase'dan yuklanadi)
+    // STATE VARIABLES (bo'sh boshlanadi, Supabase/Edge Function'dan yuklanadi)
     let products = [];
     let categories = [];
     let adminsList = [];
@@ -163,12 +164,17 @@
     let cart = JSON.parse(localStorage.getItem('cart') || "{}");
     let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
 
-    const currentTgId = String(tg?.initDataUnsafe?.user?.id || CONFIG.ADMIN_ID);
-    const isSuperAdmin = (currentTgId === String(CONFIG.ADMIN_ID));
-    let isUserAnAdmin = isSuperAdmin; // aniq javob Supabase'dan yuklangach yangilanadi
+    // MUHIM: bular endi HECH QACHON "standart admin"ga tushmaydi. Haqiqiy
+    // qiymatlar faqat boot() ichida, serverdagi Edge Function Telegram
+    // imzosini tasdiqlagandan KEYIN o'rnatiladi. Ilova Telegram tashqarisida
+    // ochilsa, bular hech qachon to'ldirilmaydi va ilova ishlamaydi (bu ataylab
+    // shunday — xavfsizlik uchun).
+    let currentTgId = null;
+    let isSuperAdmin = false;
+    let isUserAnAdmin = false;
 
     let currentTab = 'home';
-    let isAdminMode = isUserAnAdmin;
+    let isAdminMode = false;
     let adminCatParentId = null;
     let categoryPage = 1;
     let ordersPage = 1;
@@ -196,45 +202,44 @@
       firstName: registeredUser?.firstName || tg?.initDataUnsafe?.user?.first_name || "Mijoz",
       lastName: registeredUser?.lastName || tg?.initDataUnsafe?.user?.last_name || "",
       phone: registeredUser?.phone || "+998",
-      tgId: currentTgId
+      tgId: null
     };
 
-    // 6-XONALI SKU (ID) GENERATOR
-    function generateProductSKU(catId) {
-      if (!catId) return "100001";
-
-      let path = [];
-      let current = categories.find(c => c.id === catId);
-      while (current) {
-        path.unshift(current);
-        current = categories.find(c => c.id === current.parentId);
+    // ============ SERVER BILAN GAPLASHISH (Edge Function) ============
+    // Barcha admin amallari va buyurtmalar endi to'g'ridan-to'g'ri bazaga
+    // emas, shu funksiya orqali serverga (app-api Edge Function) boradi.
+    // Server har safar Telegram imzosini (tg.initData) tekshiradi, shuning
+    // uchun bu yerdan hech qanday "soxta admin" yoki "soxta narx" o'tmaydi.
+    async function callApi(action, payload) {
+      const initData = tg?.initData || '';
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        const res = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/app-api`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${CONFIG.SUPABASE_KEY}`,
+            'apikey': CONFIG.SUPABASE_KEY
+          },
+          body: JSON.stringify({ action, payload: payload || {}, initData }),
+          signal: controller.signal
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Server xatosi (${res.status})`);
+        return data;
+      } catch (e) {
+        if (e.name === 'AbortError') throw new Error("Server javob bermadi (vaqt tugadi). Internetni tekshirib qayta urinib ko'ring.");
+        throw e;
+      } finally {
+        clearTimeout(timeoutId);
       }
+    }
 
-      let l1 = 1, l2 = 0, l3 = 0;
-
-      if (path.length >= 1) {
-        const rootCats = categories.filter(c => !c.parentId);
-        const idx = rootCats.findIndex(c => c.id === path[0].id);
-        l1 = idx >= 0 ? ((idx + 1) % 10) : 1;
-      }
-
-      if (path.length >= 2) {
-        const subCats = categories.filter(c => c.parentId === path[0].id);
-        const idx = subCats.findIndex(c => c.id === path[1].id);
-        l2 = idx >= 0 ? ((idx + 1) % 10) : 0;
-      }
-
-      if (path.length >= 3) {
-        const subSubCats = categories.filter(c => c.parentId === path[1].id);
-        const idx = subSubCats.findIndex(c => c.id === path[2].id);
-        l3 = idx >= 0 ? ((idx + 1) % 10) : 0;
-      }
-
-      const prefix = `${l1}${l2}${l3}`;
-      const prodsInCat = products.filter(p => p.categoryId === catId);
-      const prodNum = (prodsInCat.length + 1).toString().padStart(3, '0');
-
-      return `${prefix}${prodNum}`;
+    // O'zbek telefon raqami formatini oddiy tekshirish
+    function isValidPhone(phone) {
+      const cleaned = (phone || '').replace(/\s+/g, '');
+      return /^\+998\d{9}$/.test(cleaned);
     }
 
     // TRANSLITERATION & SEARCH
@@ -298,8 +303,8 @@
         cart[id] = { qty: 1, addedAt: new Date().toLocaleString() };
         const logUser = `${currentUser.firstName} ${currentUser.lastName}`.trim();
         cartLogs.unshift({ user: logUser, productName: p.name, time: new Date().toLocaleString() });
-        // Adminlar ko'ra olishi uchun Supabase'ga ham yozamiz (fon rejimida)
-        sb.from('cart_logs').insert({ tg_id: currentTgId, user_name: logUser, product_name: p.name }).then();
+        // Adminlar ko'ra olishi uchun serverga ham yozamiz (fon rejimida, kutmasdan)
+        callApi('log_cart_add', { productName: p.name, userName: logUser }).catch(e => console.error('Savat logi xatosi:', e));
       } else {
         if (p.stock && cart[id].qty >= p.stock) {
           return alert(`⚠️ Omborda faqat ${p.stock} ta mavjud!`);
@@ -344,11 +349,23 @@
       }
     }
 
-    // ============ IMAGE UPLOAD (Supabase Storage) ============
+    // ============ IMAGE UPLOAD (Supabase Storage, signed URL orqali) ============
     // Fayl tanlanganda: faqat preview uchun base64 o'qiladi, haqiqiy fayl saqlab qo'yiladi.
     function onImagePicked(event, previewId) {
       const file = event.target.files[0];
       if (!file) return;
+
+      if (!file.type.startsWith('image/')) {
+        alert("⚠️ Faqat rasm fayllarini tanlang!");
+        event.target.value = '';
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        alert("⚠️ Rasm hajmi 5MB dan oshmasligi kerak!");
+        event.target.value = '';
+        return;
+      }
+
       tempImageFile = file;
       const reader = new FileReader();
       reader.onload = function (e) {
@@ -362,28 +379,27 @@
       reader.readAsDataURL(file);
     }
 
-    // Saqlash bosilganda chaqiriladi: agar yangi fayl tanlangan bo'lsa, uni Storage'ga yuklab,
-    // ochiq (public) URL manzilini qaytaradi. Yangi fayl bo'lmasa, eski URL qoladi.
-    async function uploadImageIfNeeded(existingUrl) {
-      if (!tempImageFile) return existingUrl || null;
+    // Saqlash bosilganda chaqiriladi: agar yangi fayl tanlangan bo'lsa, avval
+    // serverdan (admin ekanligi tekshirilgandan keyin) bir martalik "signed URL"
+    // so'raymiz, keyin faylni to'g'ridan-to'g'ri shu havola orqali Storage'ga
+    // yuklaymiz. Frontend hech qachon Storage'ga to'g'ridan-to'g'ri yozmaydi.
+    async function uploadImageIfNeeded(existingImg) {
+      if (!tempImageFile) return existingImg || null;
 
       showLoader("Rasm yuklanmoqda...");
       try {
         const ext = (tempImageFile.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-        const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+        const { path, token } = await callApi('get_upload_url', { ext });
 
-        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).upload(path, tempImageFile, {
-          cacheControl: '3600',
-          upsert: false
-        });
+        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, tempImageFile);
         if (upErr) throw upErr;
 
         const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
-        return pub?.publicUrl || existingUrl || null;
+        return pub?.publicUrl || existingImg || null;
       } catch (e) {
         console.error('Rasm yuklash xatosi:', e);
         alert("⚠️ Rasmni yuklashda xatolik yuz berdi. Avvalgi/standart rasm qoldiriladi.");
-        return existingUrl || null;
+        return existingImg || null;
       } finally {
         hideLoader();
       }
@@ -405,7 +421,7 @@
         whBtn.classList.remove('hidden');
         whBtn.classList.add('flex');
       } else {
-        roleTag.innerText = "PRO";
+        roleTag.innerText = "STORE";
         whBtn.classList.add('hidden');
         if (currentTab === 'warehouse') currentTab = 'home';
       }
@@ -428,7 +444,7 @@
       container.innerHTML = `
         <div class="space-y-4">
           <div class="relative">
-            <input type="text" id="search-input" oninput="handleSearch()" placeholder="Nomi yoki ID (masalan: 111001) orqali qidirish..." 
+            <input type="text" id="search-input" oninput="handleSearchDebounced()" placeholder="Nomi yoki ID (masalan: 111001) orqali qidirish..."
               class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
             <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
           </div>
@@ -443,6 +459,13 @@
         </div>
       `;
       handleSearch();
+    }
+
+    // Qidiruvni har harfda emas, 300ms kutib bir marta ishlatish (tezlik uchun)
+    let searchDebounceTimer = null;
+    function handleSearchDebounced() {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(handleSearch, 300);
     }
 
     function handleSearch() {
@@ -476,13 +499,13 @@
         <div onclick="openProductDetailModal('${p.id}')" class="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex flex-col justify-between relative cursor-pointer hover:shadow-md transition-all">
           <div>
             <div class="relative">
-              <img src="${escapeHtml(p.img || 'https://via.placeholder.com/150')}" class="w-full h-28 object-cover rounded-xl mb-2" loading="lazy">
+              <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-full h-28 object-cover rounded-xl mb-2" loading="lazy">
               ${p.isFeatured ? `<span class="absolute top-1 left-1 bg-amber-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md">Bosh sahifa</span>` : ''}
               ${hasDiscount ? `<span class="absolute top-1 right-1 bg-red-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md">CHEGIRMA</span>` : ''}
             </div>
             <span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${escapeHtml(p.sku)}</span>
             <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${escapeHtml(p.name)}</h4>
-            
+
             <div class="mt-1">
               ${hasDiscount ? `
                 <div class="flex items-center space-x-1">
@@ -566,7 +589,7 @@
               <div onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="bg-white p-3.5 rounded-2xl border flex items-center justify-between shadow-sm cursor-pointer hover:bg-gray-50">
                 <div class="flex items-center space-x-3">
                   ${sub.img && (sub.img.startsWith('http') || sub.img.startsWith('data:')) ?
-                    `<img src="${escapeHtml(sub.img)}" class="w-8 h-8 object-cover rounded-lg" loading="lazy">` :
+                    `<img src="${escapeHtml(sub.img)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-8 h-8 object-cover rounded-lg" loading="lazy">` :
                     `<span class="text-xl">${escapeHtml(sub.img) || '📁'}</span>`
                   }
                   <div>
@@ -679,7 +702,7 @@
 
           <div class="bg-white rounded-2xl p-4 shadow-sm space-y-3">
             <h3 class="font-bold text-sm border-b pb-2">📍 Buyurtmani Rasmiylashtirish</h3>
-            
+
             <div>
               <label class="text-xs font-bold text-gray-600">Ism va Familiyangiz *</label>
               <input type="text" id="chk-fullname" value="${escapeHtml((currentUser.firstName + ' ' + currentUser.lastName).trim())}" placeholder="Ali Valiyev" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
@@ -720,7 +743,7 @@
               <label id="chk-address-label" class="text-xs font-bold text-gray-600">Manzil *</label>
               <input type="text" id="chk-address" placeholder="Ko'cha, mahalla va uy raqami" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
             </div>
-            
+
            <div>
               <label class="text-xs font-bold text-gray-600">To'lov Turi *</label>
               <div id="pay-method-wrap" class="grid grid-cols-2 gap-2 mt-1">
@@ -840,6 +863,11 @@
 
       if (hasError) return alert("Iltimos, barcha qizil maydonlarni to'ldiring!");
 
+      if (!isValidPhone(phone)) {
+        document.getElementById('chk-phone').classList.add('border-red-500', 'bg-red-50');
+        return alert("Iltimos, telefon raqamini to'g'ri formatda kiriting: +998901234567");
+      }
+
       if (region === 'PROVINCE') {
         return alert("❌ Hozircha viloyatlarga faqat karta orqali to'lov mumkin, u esa hali ishlamayapti. Tez orada faollashtiriladi.");
       }
@@ -847,7 +875,8 @@
         return alert("❌ Hozircha faqat naqd pul bilan buyurtma qabul qilinadi.");
       }
 
-      // Savatdagi tovarlar hali ham omborda yetarlimi — tekshiramiz
+      // Savatdagi tovarlar hali ham omborda yetarlimi — tezkor tekshirish (yakuniy
+      // va xavfsiz tekshiruv serverda, atomik tranzaksiya ichida bo'ladi):
       for (const [id, itemData] of Object.entries(cart)) {
         const p = products.find(prod => prod.id === id);
         if (!p || p.stock < itemData.qty) {
@@ -859,67 +888,28 @@
       submittingOrder = true;
       showLoader("Buyurtma qabul qilinmoqda...");
 
-      const orderItems = Object.entries(cart).map(([id, itemData]) => {
-        const p = products.find(prod => prod.id === id);
-        return { name: p.name, qty: itemData.qty, price: p.price, sku: p.sku };
-      });
+      const itemsPayload = Object.entries(cart).map(([id, itemData]) => ({ productId: id, qty: itemData.qty }));
 
-      const totalPrice = orderItems.reduce((s, i) => s + (i.price * i.qty), 0);
-
-      const dbRow = {
-        tg_id: currentTgId,
-        user_name: fullname,
-        phone, region, district, address,
-        pay_method: selectedPayMethod,
-        items: orderItems,
-        total_price: totalPrice,
-        status: "NEW"
-      };
-
-      const { data, error } = await sb.from('orders').insert(dbRow).select().single();
-
-      if (error) {
+      try {
+        const result = await callApi('create_order', {
+          items: itemsPayload, fullname, phone, region, district, address, payMethod: selectedPayMethod
+        });
+        const newOrder = formatOrderForUi(result.order);
+        orders.unshift(newOrder);
+        cart = {};
+        localStorage.setItem('cart', JSON.stringify(cart));
+        openOrderSuccessCelebration(newOrder.id);
+      } catch (e) {
+        console.error(e);
+        if (String(e.message).includes('insufficient_stock')) {
+          alert("❌ Afsuski, savatchangizdagi bir yoki bir nechta tovar omborda tugab qoldi. Savatchani tekshiring.");
+        } else {
+          alert("❌ Buyurtmani yuborishda xatolik yuz berdi. Qayta urinib ko'ring.");
+        }
+      } finally {
         submittingOrder = false;
         hideLoader();
-        console.error(error);
-        return alert("❌ Buyurtmani yuborishda xatolik yuz berdi. Qayta urinib ko'ring.");
       }
-
-      const newOrder = mapOrderFromDB(data);
-      orders.unshift(newOrder);
-
-      // Ombordagi qoldiqni kamaytiramiz (fon rejimida, kutmasdan)
-      orderItems.forEach(item => {
-        const p = products.find(prod => prod.sku === item.sku);
-        if (p) {
-          p.stock = Math.max(0, p.stock - item.qty);
-          p.status = p.stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
-          sb.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id).then();
-        }
-      });
-
-      submittingOrder = false;
-      hideLoader();
-
-      // TELEGRAM XABARNOMASI — natijani KUTMAYMIZ (fon rejimida jo'natiladi),
-      // aks holda Telegram API sekinlashganda mijoz bir necha daqiqa "muzlab" turadi.
-      let msg = `🛍 <b>FITCORE - YANGI BUYURTMA #${newOrder.id}</b>\n\n`;
-      msg += `👤 <b>Mijoz:</b> ${fullname}\n📞 <b>Tel:</b> ${phone}\n📍 <b>Hudud:</b> ${region} (${district})\n🏠 <b>Manzil:</b> ${address}\n💳 <b>To'lov:</b> ${selectedPayMethod}\n\n📦 <b>Tarkib:</b>\n`;
-      orderItems.forEach(i => msg += `• ${i.name} (ID: ${i.sku}) x${i.qty} = ${(i.price * i.qty).toLocaleString()} so'm\n`);
-      msg += `\n💰 <b>Jami:</b> ${totalPrice.toLocaleString()} so'm`;
-
-      const notifyIds = Array.from(new Set([String(CONFIG.ADMIN_ID), ...adminsList.map(String)]));
-      notifyIds.forEach(chatId => {
-        fetch(`https://api.telegram.org/bot${CONFIG.BOT_TOKEN}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'HTML' })
-        }).catch(e => console.error('Telegram xabarnoma xatosi:', e));
-      });
-
-      cart = {};
-      localStorage.setItem('cart', JSON.stringify(cart));
-      openOrderSuccessCelebration(newOrder.id);
     }
 
     function openOrderSuccessCelebration(orderId) {
@@ -960,7 +950,7 @@
 
             <div class="bg-white p-3 rounded-2xl border space-y-2 text-xs shadow-sm">
               <input type="text" id="adm-ord-search" oninput="adminOrderFilters.search = this.value; render();" placeholder="Mijoz ismi yoki tel raqami..." value="${escapeHtml(adminOrderFilters.search)}" class="w-full p-2 border rounded-xl">
-              
+
               <div class="flex gap-1 flex-wrap">
                 ${['NEW', 'PROCESSING', 'DELIVERED', 'CANCELLED'].map(st => `
                   <button onclick="toggleAdminStatusFilter('${st}')" class="px-2 py-1 rounded-lg font-bold text-[10px] ${adminOrderFilters.statuses.includes(st) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
@@ -1056,24 +1046,17 @@
     async function cancelUserOrder(orderId, e) {
       if (e) e.stopPropagation();
       if (!confirm("Rostdan ham ushbu buyurtmani bekor qilmoqchimisiz?")) return;
-      const o = orders.find(ord => ord.id === orderId);
-      if (!o) return;
-      const { error } = await sb.from('orders').update({ status: 'CANCELLED' }).eq('id', orderId);
-      if (error) return alert("❌ Xatolik yuz berdi, qayta urinib ko'ring.");
-
-      // Bekor qilingan buyurtma tovarlarini omborga qaytaramiz
-      o.items.forEach(item => {
-        const p = products.find(prod => prod.sku === item.sku);
-        if (p) {
-          p.stock = p.stock + item.qty;
-          p.status = 'ACTIVE';
-          sb.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id).then();
-        }
-      });
-
-      o.status = 'CANCELLED';
-      alert("✅ Buyurtmangiz bekor qilindi!");
-      render();
+      try {
+        const result = await callApi('cancel_order', { orderId });
+        const updated = formatOrderForUi(result.order);
+        const idx = orders.findIndex(o => o.id === updated.id);
+        if (idx >= 0) orders[idx] = updated;
+        alert("✅ Buyurtmangiz bekor qilindi!");
+        render();
+      } catch (e2) {
+        console.error(e2);
+        alert("❌ Xatolik yuz berdi, qayta urinib ko'ring.");
+      }
     }
 
     function toggleAdminStatusFilter(st) {
@@ -1190,8 +1173,8 @@
               <div class="space-y-1 text-xs">
                 ${adminsList.map(admId => `
                   <div class="flex justify-between items-center p-2 bg-gray-50 rounded-xl border">
-                    <span class="font-mono text-gray-700">ID: ${escapeHtml(admId)} ${admId === String(CONFIG.ADMIN_ID) ? '<b>(Bosh Admin)</b>' : ''}</span>
-                    ${admId !== String(CONFIG.ADMIN_ID) ? `
+                    <span class="font-mono text-gray-700">ID: ${escapeHtml(admId)} ${admId === currentTgId && isSuperAdmin ? '<b>(Bosh Admin)</b>' : ''}</span>
+                    ${!(admId === currentTgId && isSuperAdmin) ? `
                       <button onclick="removeAdmin('${admId}')" class="text-red-600 font-bold px-2 py-0.5 bg-red-50 rounded-lg">🗑️</button>
                     ` : ''}
                   </div>
@@ -1205,11 +1188,15 @@
 
     async function removeAdmin(admId) {
       if (!confirm("Ushbu admin huquqini bekor qilmoqchimisiz?")) return;
-      const { error } = await sb.from('admins').delete().eq('tg_id', admId);
-      if (error) { console.error(error); return alert("❌ Xatolik yuz berdi."); }
-      adminsList = adminsList.filter(a => a !== admId);
-      alert("✅ Admin o'chirildi!");
-      render();
+      try {
+        await callApi('remove_admin', { tgId: admId });
+        adminsList = adminsList.filter(a => a !== admId);
+        alert("✅ Admin o'chirildi!");
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      }
     }
 
     // MODALS ENGINE
@@ -1249,7 +1236,7 @@
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2">➕ Yangi Tovar Qo'shish</h3>
-              
+
               <div>
                 <label class="font-bold text-gray-600">Tovar Nomi *</label>
                 <input type="text" id="m-prod-name" placeholder="Masalan: Whey Protein" class="w-full mt-1 p-2 border rounded-xl">
@@ -1373,7 +1360,7 @@
               ${field === 'img' ? `
                 <label class="font-bold text-gray-600">Yangi Rasm (Xotiradan yuklash):</label>
                 <input type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev')" class="w-full mt-1 text-xs">
-                <img id="ef-img-prev" src="${escapeHtml(p.img || '')}" class="w-24 h-24 object-cover rounded-xl mt-2 border">
+                <img id="ef-img-prev" src="${escapeHtml(p.img || '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border">
               ` : ''}
 
               <div class="flex space-x-2 pt-2">
@@ -1401,14 +1388,14 @@
               </div>
 
               <div class="relative">
-                <img src="${escapeHtml(p.img || 'https://via.placeholder.com/300')}" class="w-full h-48 object-cover rounded-2xl border">
+                <img src="${escapeHtml(p.img || FALLBACK_IMG.replace('150','300'))}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-full h-48 object-cover rounded-2xl border">
                 ${(isAdminMode && isUserAnAdmin) ? `
                   <button onclick="openEditFieldModal('${p.id}', 'img')" class="absolute bottom-2 right-2 bg-blue-600 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-xl flex items-center space-x-1 shadow">
                     <span>✏️ Rasmni O'zgartirish</span>
                   </button>
                 ` : ''}
               </div>
-              
+
               <div class="space-y-1">
                 <div class="flex justify-between items-center">
                   <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: ${escapeHtml(p.sku)}</span>
@@ -1420,7 +1407,7 @@
                   <h2 class="text-lg font-black text-gray-900">${escapeHtml(p.name)}</h2>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
-                
+
                 <!-- PRICE WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
                   <div>
@@ -1546,27 +1533,17 @@
     }
 
     async function updateOrderStatus(id, newStatus) {
-      const o = orders.find(ord => ord.id === id);
-      const prevStatus = o ? o.status : null;
-
-      const { error } = await sb.from('orders').update({ status: newStatus }).eq('id', id);
-      if (error) return alert("❌ Statusni o'zgartirishda xatolik yuz berdi.");
-
-      // Agar buyurtma bekor qilinsa (avval bekor qilinmagan bo'lsa) — tovarlarni omborga qaytaramiz
-      if (o && newStatus === 'CANCELLED' && prevStatus !== 'CANCELLED') {
-        o.items.forEach(item => {
-          const p = products.find(prod => prod.sku === item.sku);
-          if (p) {
-            p.stock = p.stock + item.qty;
-            p.status = 'ACTIVE';
-            sb.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id).then();
-          }
-        });
+      try {
+        const result = await callApi('update_order_status', { orderId: id, newStatus });
+        const updated = formatOrderForUi(result.order);
+        const idx = orders.findIndex(o => o.id === updated.id);
+        if (idx >= 0) orders[idx] = updated;
+        selectedOrderModal = null;
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Statusni o'zgartirishda xatolik yuz berdi.");
       }
-
-      if (o) o.status = newStatus;
-      selectedOrderModal = null;
-      render();
     }
 
     // MODAL SAVERS
@@ -1576,6 +1553,7 @@
       const ph = document.getElementById('reg-phone').value.trim();
 
       if (!fn || !ph || ph === '+998') return alert("Iltimos, ismingiz va telefon raqamingizni kiriting!");
+      if (!isValidPhone(ph)) return alert("Iltimos, telefon raqamini to'g'ri formatda kiriting: +998901234567");
 
       registeredUser = { firstName: fn, lastName: ln, phone: ph };
       localStorage.setItem('registeredUser', JSON.stringify(registeredUser));
@@ -1602,114 +1580,104 @@
         oldPrice = oldPriceVal;
       }
 
-      const sku = generateProductSKU(adminCatParentId);
-      const imgUrl = await uploadImageIfNeeded(null);
-
-      const dbRow = {
-        sku, name, price, old_price: oldPrice, stock,
-        description: desc || name,
-        img: imgUrl || "https://via.placeholder.com/150",
-        category_id: adminCatParentId,
-        status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
-        is_featured: true, sort_order: products.length + 1
-      };
-
       showLoader("Tovar saqlanmoqda...");
-      const { data, error } = await sb.from('products').insert(dbRow).select().single();
-      hideLoader();
-      if (error) { console.error(error); return alert("❌ Tovarni saqlashda xatolik yuz berdi."); }
-
-      products.push(mapProductFromDB(data));
-      tempImageFile = null;
-      tempImagePreviewUrl = null;
-      activePopupModal = null;
-      alert(`✅ Yangi tovar (ID: ${sku}) muvaffaqiyatli qo'shildi!`);
-      render();
+      try {
+        const imgUrl = await uploadImageIfNeeded(null);
+        const result = await callApi('add_product', {
+          name, price, oldPrice, stock, desc, categoryId: adminCatParentId, img: imgUrl
+        });
+        products.push(mapProductFromDB(result.product));
+        tempImageFile = null;
+        tempImagePreviewUrl = null;
+        activePopupModal = null;
+        alert(`✅ Yangi tovar (ID: ${result.product.sku}) muvaffaqiyatli qo'shildi!`);
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Tovarni saqlashda xatolik yuz berdi: " + (e.message || e));
+      } finally {
+        hideLoader();
+      }
     }
 
     async function saveCategoryFromModal() {
       const name = document.getElementById('m-cat-name').value.trim();
       if (!name) return alert("Katalog nomini kiriting!");
 
-      const imgUrl = await uploadImageIfNeeded(null);
-
-      const dbRow = {
-        name,
-        img: imgUrl || (adminCatParentId ? "📦" : "📁"),
-        parent_id: adminCatParentId
-      };
-
       showLoader("Katalog saqlanmoqda...");
-      const { data, error } = await sb.from('categories').insert(dbRow).select().single();
-      hideLoader();
-      if (error) { console.error(error); return alert("❌ Katalogni saqlashda xatolik yuz berdi."); }
-
-      categories.push(mapCategoryFromDB(data));
-      tempImageFile = null;
-      tempImagePreviewUrl = null;
-      activePopupModal = null;
-      alert("✅ Katalog yaratildi!");
-      render();
+      try {
+        const imgUrl = await uploadImageIfNeeded(null);
+        const result = await callApi('add_category', { name, img: imgUrl, parentId: adminCatParentId });
+        categories.push(mapCategoryFromDB(result.category));
+        tempImageFile = null;
+        tempImagePreviewUrl = null;
+        activePopupModal = null;
+        alert("✅ Katalog yaratildi!");
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Katalogni saqlashda xatolik yuz berdi: " + (e.message || e));
+      } finally {
+        hideLoader();
+      }
     }
 
     async function saveAdminFromModal() {
       const idVal = document.getElementById('m-admin-id').value.trim();
-      if (!idVal || isNaN(idVal)) return alert("To'g'ri Telegram ID kiriting!");
+      if (!idVal || !/^\d+$/.test(idVal)) return alert("To'g'ri Telegram ID kiriting!");
 
-      if (!adminsList.includes(idVal)) {
-        const { error } = await sb.from('admins').insert({ tg_id: idVal });
-        if (error) { console.error(error); return alert("❌ Adminni qo'shishda xatolik yuz berdi."); }
-        adminsList.push(idVal);
+      try {
+        await callApi('add_admin', { tgId: idVal });
+        if (!adminsList.includes(idVal)) adminsList.push(idVal);
+        activePopupModal = null;
         alert("✅ Yangi admin biriktirildi!");
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Adminni qo'shishda xatolik yuz berdi: " + (e.message || e));
       }
-      activePopupModal = null;
-      render();
     }
 
     async function saveFieldEdit(prodId, field) {
       const p = products.find(prod => prod.id === prodId);
       if (!p) return;
 
-      const dbUpdate = {};
+      const payload = { productId: prodId, field };
 
       if (field === 'name') {
         const val = document.getElementById('ef-val').value.trim();
-        if (val) { p.name = val; dbUpdate.name = val; }
+        if (!val) { activePopupModal = null; render(); return; }
+        payload.value = val;
       } else if (field === 'price') {
         const price = parseFloat(document.getElementById('ef-price').value);
         const oldVal = parseFloat(document.getElementById('ef-oldprice').value);
-        if (!isNaN(price)) {
-          p.price = price;
-          p.oldPrice = (!isNaN(oldVal) && oldVal > price) ? oldVal : null;
-          dbUpdate.price = p.price;
-          dbUpdate.old_price = p.oldPrice;
-        }
+        if (isNaN(price)) { activePopupModal = null; render(); return; }
+        payload.value = price;
+        payload.oldPrice = (!isNaN(oldVal) && oldVal > price) ? oldVal : null;
       } else if (field === 'stock') {
         const stock = parseInt(document.getElementById('ef-val').value, 10);
-        if (!isNaN(stock)) {
-          p.stock = stock;
-          p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
-          dbUpdate.stock = p.stock;
-          dbUpdate.status = p.status;
-        }
+        if (isNaN(stock)) { activePopupModal = null; render(); return; }
+        payload.value = stock;
       } else if (field === 'desc') {
-        p.desc = document.getElementById('ef-val').value.trim();
-        dbUpdate.description = p.desc;
+        payload.value = document.getElementById('ef-val').value.trim();
       } else if (field === 'img') {
-        const newUrl = await uploadImageIfNeeded(p.img);
-        if (newUrl) { p.img = newUrl; dbUpdate.img = p.img; }
+        const newImg = await uploadImageIfNeeded(p.img);
+        if (!newImg) { activePopupModal = null; render(); return; }
+        payload.value = newImg;
       }
 
-      if (Object.keys(dbUpdate).length > 0) {
-        const { error } = await sb.from('products').update(dbUpdate).eq('id', prodId);
-        if (error) { console.error(error); return alert("❌ Saqlashda xatolik yuz berdi."); }
+      try {
+        const result = await callApi('edit_product_field', payload);
+        Object.assign(p, mapProductFromDB(result.product));
+        tempImageFile = null;
+        tempImagePreviewUrl = null;
+        activePopupModal = null;
+        selectedProductModal = p;
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Saqlashda xatolik yuz berdi: " + (e.message || e));
       }
-
-      tempImageFile = null;
-      tempImagePreviewUrl = null;
-      activePopupModal = null;
-      selectedProductModal = p;
-      render();
     }
 
     function openAddProductModal() {
@@ -1734,14 +1702,17 @@
       const name = prompt("Yangi katalog nomi:", c.name);
       if (!name) return;
 
-      const { error } = await sb.from('categories').update({ name }).eq('id', id);
-      if (error) { console.error(error); return alert("❌ Xatolik yuz berdi."); }
-      c.name = name;
-      render();
+      try {
+        await callApi('edit_category', { categoryId: id, name });
+        c.name = name;
+        render();
+      } catch (e2) {
+        console.error(e2);
+        alert("❌ Xatolik yuz berdi: " + (e2.message || e2));
+      }
     }
 
     // ⬆️⬇️ tugmalari FAQAT joriy ko'rinib turgan ro'yxat (currentVisibleProductIds) ichida ishlaydi.
-    // Bazaga faqat 2 ta qatnashuvchi mahsulot yoziladi (avvalgidek BARCHA mahsulotlar emas) — tezroq va to'g'ri ishlaydi.
     async function moveProductSort(id, dir) {
       const list = currentVisibleProductIds;
       const idx = list.indexOf(id);
@@ -1759,37 +1730,54 @@
 
       render();
 
-      await Promise.all([
-        sb.from('products').update({ sort_order: prodA.sortOrder }).eq('id', prodA.id),
-        sb.from('products').update({ sort_order: prodB.sortOrder }).eq('id', prodB.id)
-      ]);
+      try {
+        await callApi('move_sort', { idA: prodA.id, sortOrderA: prodA.sortOrder, idB: prodB.id, sortOrderB: prodB.sortOrder });
+      } catch (e) {
+        console.error('Tartibni saqlashda xatolik:', e);
+      }
     }
 
     async function toggleProductFeatured(id) {
       const p = products.find(prod => prod.id === id);
       if (!p) return;
       const newVal = !p.isFeatured;
-      const { error } = await sb.from('products').update({ is_featured: newVal }).eq('id', id);
-      if (error) { console.error(error); return alert("❌ Xatolik yuz berdi."); }
-      p.isFeatured = newVal;
-      render();
+      try {
+        await callApi('toggle_featured', { productId: id, value: newVal });
+        p.isFeatured = newVal;
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      }
     }
 
     async function deleteProduct(id) {
       if (!confirm("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz?")) return;
-      const { error } = await sb.from('products').update({ status: 'DELETED' }).eq('id', id);
-      if (error) { console.error(error); return alert("❌ O'chirishda xatolik yuz berdi."); }
-      products = products.filter(prod => prod.id !== id);
-      render();
+      try {
+        await callApi('delete_product', { productId: id });
+        products = products.filter(prod => prod.id !== id);
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ O'chirishda xatolik yuz berdi: " + (e.message || e));
+      }
     }
 
     async function deleteCategory(id, e) {
       if (e) e.stopPropagation();
       if (!confirm("Katalog o'chirilsinmi?")) return;
-      const { error } = await sb.from('categories').delete().eq('id', id);
-      if (error) { console.error(error); return alert("❌ O'chirishda xatolik yuz berdi. Ehtimol bu katalogda pastki kataloglar/tovarlar bog'langan."); }
-      categories = categories.filter(c => c.id !== id);
-      render();
+      try {
+        await callApi('delete_category', { categoryId: id });
+        categories = categories.filter(c => c.id !== id);
+        render();
+      } catch (e2) {
+        console.error(e2);
+        if (String(e2.message).includes('category_not_empty')) {
+          alert("❌ Bu katalogda pastki kataloglar yoki tovarlar bog'langan. Avval ularni o'chiring yoki boshqa joyga ko'chiring.");
+        } else {
+          alert("❌ O'chirishda xatolik yuz berdi: " + (e2.message || e2));
+        }
+      }
     }
 
     async function saveBulkStock() {
@@ -1804,70 +1792,121 @@
         if (parts.length >= 2) {
           const sku = parts[0].toUpperCase();
           const stock = parseInt(parts[1], 10);
-
-          const p = products.find(prod => prod.sku === sku);
-          if (p && !isNaN(stock)) {
-            p.stock = stock;
-            p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
-            updates.push(p);
-          }
+          if (!isNaN(stock)) updates.push({ sku, stock });
         }
       });
 
-      await Promise.all(updates.map(p => sb.from('products').update({ stock: p.stock, status: p.status }).eq('id', p.id)));
+      if (updates.length === 0) return alert("Hech qanday to'g'ri qator topilmadi!");
 
-      alert(`✅ ${updates.length} ta mahsulot qoldig'i yangilandi!`);
-      render();
+      try {
+        const result = await callApi('bulk_stock_update', { updates });
+        (result.products || []).forEach(row => {
+          const mapped = mapProductFromDB(row);
+          const idx = products.findIndex(p => p.id === mapped.id);
+          if (idx >= 0) products[idx] = mapped;
+        });
+        alert(`✅ ${(result.products || []).length} ta mahsulot qoldig'i yangilandi!`);
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      }
     }
 
-    // ============ BOOT: SUPABASE'DAN MA'LUMOTLARNI YUKLASH ============
-    // Tezlik uchun so'rovlar imkon qadar PARALLEL (Promise.all) yuboriladi, ketma-ket emas.
+    // ============ REAL-TIME SINXRONIZATSIYA ============
+    // Tovar/katalog o'zgarishlari hamma ochiq sessiyalarga to'g'ridan-to'g'ri
+    // (bular maxfiy ma'lumot emas, hammaga ochiq o'qish bilan). Buyurtma/savat/
+    // adminlar o'zgarishi esa faqat "signal" (Broadcast) orqali — signalni
+    // olganimizdan keyin tegishli ma'lumotni serverdan qayta so'raymiz, hech
+    // qachon maxfiy ma'lumot to'g'ridan-to'g'ri broadcast orqali kelmaydi.
+    function upsertLocalProduct(row) {
+      const mapped = mapProductFromDB(row);
+      if (mapped.status === 'DELETED') {
+        products = products.filter(p => p.id !== mapped.id);
+        return;
+      }
+      const idx = products.findIndex(p => p.id === mapped.id);
+      if (idx >= 0) products[idx] = mapped; else products.push(mapped);
+      products.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    }
+
+    function setupRealtime() {
+      sb.channel('public-data')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, (payload) => {
+          if (payload.eventType === 'DELETE') {
+            products = products.filter(p => p.id !== payload.old.id);
+          } else {
+            upsertLocalProduct(payload.new);
+          }
+          render();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, (payload) => {
+          if (payload.eventType === 'DELETE') {
+            categories = categories.filter(c => c.id !== payload.old.id);
+          } else {
+            const mapped = mapCategoryFromDB(payload.new);
+            const idx = categories.findIndex(c => c.id === mapped.id);
+            if (idx >= 0) categories[idx] = mapped; else categories.push(mapped);
+          }
+          render();
+        })
+        .subscribe();
+
+      sb.channel('app-events')
+        .on('broadcast', { event: 'orders_changed' }, async () => {
+          try {
+            const data = isUserAnAdmin ? await callApi('get_all_orders', {}) : await callApi('get_my_orders', {});
+            orders = (data.orders || []).map(formatOrderForUi);
+            render();
+          } catch (e) { console.error('Buyurtmalarni yangilashda xatolik:', e); }
+        })
+        .on('broadcast', { event: 'cart_changed' }, async () => {
+          if (!isUserAnAdmin) return;
+          try {
+            const data = await callApi('get_cart_logs', {});
+            cartLogs = (data.logs || []).map(formatCartLogForUi);
+            render();
+          } catch (e) { console.error('Savat loglarini yangilashda xatolik:', e); }
+        })
+        .on('broadcast', { event: 'admins_changed' }, async () => {
+          if (!isUserAnAdmin) return;
+          try {
+            const data = await callApi('get_admins_list', {});
+            adminsList = data.admins || [];
+            render();
+          } catch (e) { console.error('Adminlar ro\'yxatini yangilashda xatolik:', e); }
+        })
+        .subscribe();
+    }
+
+    // ============ BOOT: SERVERDAN MA'LUMOTLARNI YUKLASH ============
     async function loadInitialData() {
       try {
-        // 1) Adminlar, tovarlar va kataloglarni BIR VAQTDA (parallel) yuklaymiz
-        const [admRes, prodRes, catRes] = await Promise.all([
-          sb.from('admins').select('tg_id'),
+        const [prodRes, catRes] = await Promise.all([
           sb.from('products').select('*').neq('status', 'DELETED').order('sort_order', { ascending: true }),
           sb.from('categories').select('*')
         ]);
-
-        if (admRes.error) throw admRes.error;
         if (prodRes.error) throw prodRes.error;
         if (catRes.error) throw catRes.error;
 
-        adminsList = (admRes.data || []).map(r => r.tg_id);
         products = (prodRes.data || []).map(mapProductFromDB);
         categories = (catRes.data || []).map(mapCategoryFromDB);
 
-        // Bosh admin har doim adminlar ro'yxatida bo'lishi kerak
-        if (isSuperAdmin && !adminsList.includes(currentTgId)) {
-          await sb.from('admins').insert({ tg_id: currentTgId });
-          adminsList.push(currentTgId);
-        }
-
-        isUserAnAdmin = isSuperAdmin || adminsList.includes(currentTgId);
-        isAdminMode = isUserAnAdmin;
-
-        // 2) Buyurtmalar va (admin bo'lsa) savatcha tarixini BIR VAQTDA yuklaymiz
-        let ordQuery = sb.from('orders').select('*').order('id', { ascending: false });
-        if (!isUserAnAdmin) ordQuery = ordQuery.eq('tg_id', currentTgId);
-
-        const parallelJobs = [ordQuery];
         if (isUserAnAdmin) {
-          parallelJobs.push(sb.from('cart_logs').select('*').order('id', { ascending: false }).limit(100));
+          const [ordersData, adminsData, cartLogsData] = await Promise.all([
+            callApi('get_all_orders', {}),
+            callApi('get_admins_list', {}),
+            callApi('get_cart_logs', {})
+          ]);
+          orders = (ordersData.orders || []).map(formatOrderForUi);
+          adminsList = adminsData.admins || [];
+          cartLogs = (cartLogsData.logs || []).map(formatCartLogForUi);
+        } else {
+          const ordersData = await callApi('get_my_orders', {});
+          orders = (ordersData.orders || []).map(formatOrderForUi);
         }
-
-        const results = await Promise.all(parallelJobs);
-        const ordRes = results[0];
-        if (ordRes.error) throw ordRes.error;
-        orders = (ordRes.data || []).map(mapOrderFromDB);
-
-        if (isUserAnAdmin && results[1] && !results[1].error) {
-          cartLogs = (results[1].data || []).map(mapCartLogFromDB);
-        }
-
       } catch (err) {
-        console.error('Supabase yuklash xatosi:', err);
+        console.error('Ma\'lumot yuklash xatosi:', err);
         document.getElementById('app-content').innerHTML = `
           <div class="bg-red-50 border border-red-200 text-red-700 text-xs p-4 rounded-2xl">
             ⚠️ Ma'lumotlarni yuklashda xatolik yuz berdi. Internetni tekshiring yoki keyinroq urinib ko'ring.<br><br>
@@ -1878,7 +1917,35 @@
     }
 
     async function boot() {
+      // MUHIM: ilova FAQAT Telegram orqali ochilganda ishlaydi. Bu ataylab
+      // shunday qilingan — aks holda oddiy brauzerda ochib, admin bo'lib
+      // olish mumkin bo'lardi (avvalgi versiyadagi xavfsizlik teshigi).
+      if (!tg || !tg.initData) {
+        document.getElementById('app-content').innerHTML = `
+          <div class="bg-amber-50 border border-amber-200 text-amber-800 text-xs p-4 rounded-2xl mt-10 text-center">
+            ⚠️ Bu ilova faqat Telegram bot orqali ishlaydi.<br>Iltimos, Telegram'dagi FITCORE bot/mini-app orqali oching.
+          </div>`;
+        return;
+      }
+
+      try {
+        const role = await callApi('get_role', {});
+        currentTgId = role.tgId;
+        isSuperAdmin = role.isSuperAdmin;
+        isUserAnAdmin = role.isAdmin;
+        isAdminMode = isUserAnAdmin;
+        currentUser.tgId = currentTgId;
+      } catch (e) {
+        console.error('Foydalanuvchini tekshirishda xatolik:', e);
+        document.getElementById('app-content').innerHTML = `
+          <div class="bg-red-50 border border-red-200 text-red-700 text-xs p-4 rounded-2xl mt-10 text-center">
+            ⚠️ Foydalanuvchini tekshirishda xatolik yuz berdi.<br>Internetni tekshirib, ilovani qayta oching.
+          </div>`;
+        return;
+      }
+
       await loadInitialData();
+      setupRealtime();
       switchTab('home');
     }
 
