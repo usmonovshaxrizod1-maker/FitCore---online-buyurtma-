@@ -177,6 +177,9 @@
     let isSuperAdmin = false;
     let isUserAnAdmin = false;
 
+    // Bloklash/ogohlantirish holati — faqat serverdan (boot javobidan) keladi
+    let myStatus = { isBlocked: false, blockReason: null, isWarned: false, warnReason: null };
+
     let currentTab = 'home';
     let isAdminMode = false;
     let adminCatParentId = null;
@@ -850,6 +853,10 @@
 
     let submittingOrder = false;
     async function submitOrder() {
+      if (myStatus.isBlocked) {
+        return alert(`🚫 Siz botdan foydalanish huquqidan mahrum qilingansiz.\nSabab: ${myStatus.blockReason || "ko'rsatilmagan"}\n\nBatafsil ma'lumot uchun Profil bo'limiga qarang.`);
+      }
+
       const fullname = document.getElementById('chk-fullname').value.trim();
       const phone = document.getElementById('chk-phone').value.trim();
       const region = document.getElementById('chk-region').value;
@@ -915,6 +922,10 @@
         console.error(e);
         if (String(e.message).includes('insufficient_stock')) {
           alert("❌ Afsuski, savatchangizdagi bir yoki bir nechta tovar omborda tugab qoldi. Savatchani tekshiring.");
+        } else if (String(e.message).startsWith('blocked:')) {
+          myStatus.isBlocked = true;
+          myStatus.blockReason = e.message.slice('blocked:'.length);
+          alert(`🚫 Siz botdan foydalanish huquqidan mahrum qilingansiz.\nSabab: ${myStatus.blockReason}`);
         } else {
           alert("❌ Buyurtmani yuborishda xatolik yuz berdi. Qayta urinib ko'ring.");
         }
@@ -1139,7 +1150,10 @@
             ${usersSummary.map(u => `
               <div onclick="openUserModal('${u.tgId}')" class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50">
                 <div>
-                  <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
+                  <div class="flex items-center gap-1.5">
+                    <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
+                    ${u.isBlocked ? `<span class="text-[9px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded">🚫 BLOK</span>` : (u.warned ? `<span class="text-[9px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded">⚠️ OGOH</span>` : '')}
+                  </div>
                   <p class="text-[10px] text-gray-400">${escapeHtml(u.phone || '')} · ID: ${escapeHtml(u.tgId)}</p>
                 </div>
                 <div class="text-right">
@@ -1158,6 +1172,54 @@
       renderModalContainer();
     }
 
+    function openWarnBlockModal(tgId) {
+      selectedUserModal = usersSummary.find(u => u.tgId === tgId);
+      activePopupModal = 'WARN_BLOCK';
+      render();
+    }
+
+    async function refreshUsersSummary() {
+      try {
+        const data = await callApi('get_users_summary', {});
+        usersSummary = data.users || [];
+      } catch (e) { console.error('Mijozlarni yangilashda xatolik:', e); }
+    }
+
+    async function submitWarnOrBlock(tgId, type) {
+      const reason = document.getElementById('wb-reason').value;
+      const note = document.getElementById('wb-note').value.trim();
+      const confirmMsg = type === 'block'
+        ? "Rostdan ham bu mijozni bloklaysizmi? U buyurtma bera olmaydi."
+        : "Bu mijozga ogohlantirish yuborilsinmi?";
+      if (!confirm(confirmMsg)) return;
+
+      try {
+        await callApi(type === 'block' ? 'block_user' : 'warn_user', { tgId, reason, note });
+        await refreshUsersSummary();
+        selectedUserModal = usersSummary.find(u => u.tgId === tgId) || null;
+        activePopupModal = null;
+        alert(type === 'block' ? "🚫 Mijoz bloklandi." : "⚠️ Ogohlantirish yuborildi.");
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      }
+    }
+
+    async function unblockUser(tgId) {
+      if (!confirm("Bu mijoz blokdan chiqarilsinmi?")) return;
+      try {
+        await callApi('unblock_user', { tgId });
+        await refreshUsersSummary();
+        selectedUserModal = usersSummary.find(u => u.tgId === tgId) || null;
+        alert("✅ Mijoz blokdan chiqarildi.");
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      }
+    }
+
     // 6. PROFIL TAB (SUPER ADMIN & ADMIN MANAGEMENT)
     function renderProfile(container) {
       container.innerHTML = `
@@ -1172,6 +1234,20 @@
               <button onclick="activePopupModal='REGISTRATION'; render();" class="mt-1 text-[10px] text-blue-600 font-bold underline">Ma'lumotlarni tahrirlash</button>
           </div>
           </div>
+
+          ${myStatus.isBlocked ? `
+            <div class="bg-red-50 border border-red-300 p-4 rounded-2xl text-xs">
+              <p class="font-bold text-red-700">🚫 Siz botdan foydalanish huquqidan mahrum qilingansiz</p>
+              <p class="text-red-600 mt-1">Sabab: ${escapeHtml(myStatus.blockReason || "ko'rsatilmagan")}</p>
+              <p class="text-red-500 mt-1 text-[10px]">Buyurtma berish imkoni yopilgan. Savol bo'lsa, do'kon bilan bog'laning.</p>
+            </div>
+          ` : myStatus.isWarned ? `
+            <div class="bg-amber-50 border border-amber-300 p-4 rounded-2xl text-xs">
+              <p class="font-bold text-amber-800">⚠️ Sizga ogohlantirish berilgan</p>
+              <p class="text-amber-700 mt-1">Sabab: ${escapeHtml(myStatus.warnReason || "ko'rsatilmagan")}</p>
+              <p class="text-amber-600 mt-1 text-[10px]">Takrorlansa, hisobingiz bloklanishi mumkin.</p>
+            </div>
+          ` : ''}
 
           <div class="bg-white p-4 rounded-2xl shadow-sm border space-y-3">
             <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📍 Do'kon haqida</h3>
@@ -1592,6 +1668,19 @@
               </div>
               <p>📞 <b>Tel:</b> ${escapeHtml(u.phone || '-')}</p>
               <p>🆔 <b>Telegram ID:</b> ${escapeHtml(u.tgId)}</p>
+
+              ${u.isBlocked ? `
+                <div class="bg-red-50 border border-red-200 p-2.5 rounded-xl">
+                  <p class="font-bold text-red-700">🚫 Bloklangan</p>
+                  <p class="text-red-600">Sabab: ${escapeHtml(u.blockReason || '-')}</p>
+                </div>
+              ` : (u.warned ? `
+                <div class="bg-amber-50 border border-amber-200 p-2.5 rounded-xl">
+                  <p class="font-bold text-amber-800">⚠️ Ogohlantirilgan</p>
+                  <p class="text-amber-700">Sabab: ${escapeHtml(u.warnReason || '-')}</p>
+                </div>
+              ` : '')}
+
               <div class="grid grid-cols-2 gap-2 pt-2">
                 <div class="bg-gray-50 p-2.5 rounded-xl text-center">
                   <p class="text-lg font-black text-gray-800">${u.totalOrders}</p>
@@ -1610,6 +1699,45 @@
                   <p class="text-[10px] text-gray-500">Bajarilgan</p>
                 </div>
               </div>
+
+              <div class="border-t pt-3 flex gap-2">
+                ${u.isBlocked ? `
+                  <button onclick="unblockUser('${u.tgId}')" class="flex-1 bg-emerald-600 text-white font-bold py-2 rounded-xl text-[11px]">✅ Blokdan chiqarish</button>
+                ` : `
+                  <button onclick="openWarnBlockModal('${u.tgId}')" class="flex-1 bg-amber-500 text-white font-bold py-2 rounded-xl text-[11px]">⚠️ Ogohlantirish / Bloklash</button>
+                `}
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // OGOHLANTIRISH / BLOKLASH MODAL
+      if (activePopupModal === 'WARN_BLOCK') {
+        const u = selectedUserModal;
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">⚠️ Ogohlantirish / Bloklash</h3>
+              <p class="text-gray-600">Mijoz: <b>${escapeHtml(u.userName)}</b></p>
+              <div>
+                <label class="font-bold text-gray-600">Sabab *</label>
+                <select id="wb-reason" class="w-full mt-1 p-2 border rounded-xl bg-gray-50 font-bold">
+                  <option value="To'lovda muammo bo'lgan">To'lovda muammo bo'lgan</option>
+                  <option value="Buyurtmani qabul qilmagan/bekor qilgan">Buyurtmani qabul qilmagan/bekor qilgan</option>
+                  <option value="Boshqa">Boshqa</option>
+                </select>
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">Izoh (ixtiyoriy)</label>
+                <textarea id="wb-note" rows="2" placeholder="Qo'shimcha tushuntirish..." class="w-full mt-1 p-2 border rounded-xl"></textarea>
+              </div>
+              <div class="flex gap-2 pt-2">
+                <button onclick="submitWarnOrBlock('${u.tgId}', 'warn')" class="flex-1 bg-amber-500 text-white font-bold py-2.5 rounded-xl">⚠️ Ogohlantirish</button>
+                <button onclick="submitWarnOrBlock('${u.tgId}', 'block')" class="flex-1 bg-red-600 text-white font-bold py-2.5 rounded-xl">🚫 Bloklash</button>
+              </div>
+              <button onclick="activePopupModal=null; render();" class="w-full bg-gray-100 text-gray-700 font-bold py-2 rounded-xl">Bekor qilish</button>
             </div>
           </div>
         `;
@@ -2040,6 +2168,10 @@
         isUserAnAdmin = bootData.isAdmin;
         isAdminMode = isUserAnAdmin;
         currentUser.tgId = currentTgId;
+        myStatus = {
+          isBlocked: !!bootData.isBlocked, blockReason: bootData.blockReason || null,
+          isWarned: !!bootData.isWarned, warnReason: bootData.warnReason || null,
+        };
         orders = (bootData.orders || []).map(formatOrderForUi);
         if (isUserAnAdmin) {
           adminsList = bootData.admins || [];
