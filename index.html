@@ -1797,17 +1797,8 @@
     }
 
     async function updateOrderStatus(id, newStatus) {
-      let reason = null;
-      if (newStatus === 'CANCELLED') {
-        // MUHIM: null tekshiruvi "|| ''" dan OLDIN bo'lishi kerak — aks holda
-        // "Cancel" tugmasi (natija null) ham bo'sh matn (natija '') bilan
-        // adashib, dialog qanday yopilishidan qat'i nazar bekor qilib yuborardi.
-        const input = prompt("Bekor qilish sababi (ixtiyoriy):", "");
-        if (input === null) return; // "Cancel" bosilgan — hech narsa qilinmaydi
-        reason = input;
-      }
       try {
-        const result = await callApi('update_order_status', { orderId: id, newStatus, reason });
+        const result = await callApi('update_order_status', { orderId: id, newStatus });
         const updated = formatOrderForUi(result.order);
         const idx = orders.findIndex(o => o.id === updated.id);
         if (idx >= 0) orders[idx] = updated;
