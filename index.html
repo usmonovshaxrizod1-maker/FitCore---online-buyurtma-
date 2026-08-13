@@ -403,17 +403,25 @@
         return;
       }
 
-      tempImageFile = await compressImage(file, 1000, 0.8);
-      const reader = new FileReader();
-      reader.onload = function (e) {
-        tempImagePreviewUrl = e.target.result;
-        const prev = document.getElementById(previewId);
-        if (prev) {
-          prev.src = tempImagePreviewUrl;
-          prev.classList.remove('hidden');
-        }
-      };
-      reader.readAsDataURL(tempImageFile);
+      // MUHIM: kichraytirish bir oz vaqt oladi. Shu payt ekranni qulflab
+      // qo'yamiz — aks holda foydalanuvchi ulgurmay "Saqlash" bossa, dastur
+      // hali ESKI rasmni ishlatib qolishi mumkin edi (bu haqiqiy bug edi).
+      showLoader("Rasm tayyorlanmoqda...");
+      try {
+        tempImageFile = await compressImage(file, 1000, 0.8);
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          tempImagePreviewUrl = e.target.result;
+          const prev = document.getElementById(previewId);
+          if (prev) {
+            prev.src = tempImagePreviewUrl;
+            prev.classList.remove('hidden');
+          }
+        };
+        reader.readAsDataURL(tempImageFile);
+      } finally {
+        hideLoader();
+      }
     }
 
     // Saqlash bosilganda chaqiriladi: agar yangi fayl tanlangan bo'lsa, avval
@@ -424,22 +432,28 @@
       if (!tempImageFile) return existingImg || null;
 
       showLoader("Rasm yuklanmoqda...");
-      try {
-        const ext = (tempImageFile.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-        const { path, token } = await callApi('get_upload_url', { ext });
+      const ext = (tempImageFile.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
 
-        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, tempImageFile);
-        if (upErr) throw upErr;
+      let lastErr = null;
+      // Vaqtinchalik internet uzilishi bo'lsa deb, 1 marta avtomatik qayta urinamiz.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const { path, token } = await callApi('get_upload_url', { ext });
+          const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, tempImageFile);
+          if (upErr) throw upErr;
 
-        const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
-        return pub?.publicUrl || existingImg || null;
-      } catch (e) {
-        console.error('Rasm yuklash xatosi:', e);
-        alert("⚠️ Rasmni yuklashda xatolik yuz berdi: " + (e.message || e) + "\nAvvalgi/standart rasm qoldiriladi.");
-        return existingImg || null;
-      } finally {
-        hideLoader();
+          const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
+          hideLoader();
+          return pub?.publicUrl || existingImg || null;
+        } catch (e) {
+          lastErr = e;
+          console.error(`Rasm yuklash xatosi (${attempt + 1}-urinish):`, e);
+        }
       }
+
+      hideLoader();
+      alert("⚠️ Rasmni yuklashda xatolik yuz berdi: " + (lastErr?.message || lastErr) + "\nAvvalgi/standart rasm qoldiriladi.");
+      return existingImg || null;
     }
 
     // RENDER ROUTER
@@ -1785,8 +1799,12 @@
     async function updateOrderStatus(id, newStatus) {
       let reason = null;
       if (newStatus === 'CANCELLED') {
-        reason = prompt("Bekor qilish sababi (ixtiyoriy):", "") || '';
-        if (reason === null) return; // "Bekor qilish" (prompt dialog) bosilgan
+        // MUHIM: null tekshiruvi "|| ''" dan OLDIN bo'lishi kerak — aks holda
+        // "Cancel" tugmasi (natija null) ham bo'sh matn (natija '') bilan
+        // adashib, dialog qanday yopilishidan qat'i nazar bekor qilib yuborardi.
+        const input = prompt("Bekor qilish sababi (ixtiyoriy):", "");
+        if (input === null) return; // "Cancel" bosilgan — hech narsa qilinmaydi
+        reason = input;
       }
       try {
         const result = await callApi('update_order_status', { orderId: id, newStatus, reason });
