@@ -20,10 +20,12 @@
   <!-- HEADER -->
   <header class="bg-white sticky top-0 z-40 border-b px-4 py-3 flex items-center justify-between shadow-sm">
     <div class="flex items-center space-x-2">
-      <span class="bg-slate-900 text-white font-black px-3 py-1 rounded-xl text-sm tracking-widest border border-amber-400">FITCORE <span id="role-tag" class="text-amber-400 text-[10px]">STORE</span></span>
+      <img id="shop-logo-img" src="" class="h-8 max-w-[110px] object-contain hidden">
+      <span id="role-tag" class="bg-slate-900 text-white font-black px-2.5 py-1 rounded-xl text-[10px] tracking-widest border border-amber-400 text-amber-400">STORE</span>
     </div>
-    <div class="flex items-center space-x-3">
-      <button onclick="switchTab('cart')" class="relative p-2 bg-gray-100 rounded-full">
+    <div class="flex items-center space-x-2">
+      <button onclick="toggleUiLang()" class="p-2 bg-gray-100 rounded-full text-base leading-none" id="lang-flag-btn" title="Til / Язык">🇺🇿</button>
+      <button onclick="switchTab('cart')" class="relative p-2 bg-gray-100 rounded-full" id="header-cart-btn">
         <i data-lucide="shopping-cart" class="w-5 h-5 text-gray-700"></i>
         <span id="cart-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full items-center justify-center">0</span>
       </button>
@@ -152,7 +154,8 @@
         stock: r.stock, categoryId: r.category_id, status: r.status,
         img: r.img, desc: r.description, descRu: r.description_ru || null,
         isFeatured: r.is_featured, sortOrder: r.sort_order,
-        sizes: Array.isArray(r.sizes) ? r.sizes : null
+        sizes: Array.isArray(r.sizes) ? r.sizes : null,
+        soldCount: r.sold_count || 0, createdAt: r.created_at || null
       };
     }
 
@@ -167,6 +170,10 @@
     }
     function formatSizesForInput(sizes) {
       return (sizes || []).map(s => `${s.size},${s.qty}`).join('/');
+    }
+    function truncateText(text, maxLen) {
+      if (!text) return '';
+      return text.length > maxLen ? text.slice(0, maxLen).trim() + '…' : text;
     }
     function sizesTotalQty(sizes) {
       return (sizes || []).reduce((sum, s) => sum + (Number(s.qty) || 0), 0);
@@ -187,6 +194,7 @@
     let orders = [];
     let cart = JSON.parse(localStorage.getItem('cart') || "{}");
     let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
+    let checkoutDraft = JSON.parse(localStorage.getItem('checkoutDraft') || "null") || { fullname: '', phone: '', region: 'TASHKENT', viloyat: '', district: '', address: '' };
 
     // MUHIM: bular endi HECH QACHON "standart admin"ga tushmaydi. Haqiqiy
     // qiymatlar faqat boot() ichida, serverdagi Edge Function Telegram
@@ -204,6 +212,8 @@
     let isAdminMode = false;
     let adminCatParentId = null;
     let categoryPage = 1;
+    // sortPrice/sortNew/sortSold: null | 'asc' | 'desc' — har biri mustaqil yoqiladi
+    let categoryFilter = { minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null };
     let ordersPage = 1;
     let userOrderFilter = 'ALL';
     let selectedProductModal = null;
@@ -211,6 +221,7 @@
     let selectedCategoryModal = null;
     let selectedUserModal = null;
     let usersSummary = [];
+    let shopLogoUrl = null;
     let activePopupModal = null;
     let editingFieldData = null;
 
@@ -350,10 +361,16 @@
       if (!query || !query.trim()) return activeProducts;
 
       const { latin, cyrillic } = normalizeText(query);
+      const q = query.trim().toLowerCase();
       const results = activeProducts.filter(p => {
         const pNorm = normalizeText(p.name);
         const skuMatch = String(p.sku || '').toLowerCase().includes(latin);
-        return pNorm.latin.includes(latin) || pNorm.cyrillic.includes(cyrillic) || skuMatch;
+        // Admin alohida kiritgan ruscha nomni ham (o'zining haqiqiy krill
+        // shaklida, transliteratsiyasiz) qidiradi.
+        const nameRuMatch = p.nameRu && p.nameRu.toLowerCase().includes(q);
+        // Har bir o'lchamning O'ZINING ID'sini ham qidiradi.
+        const sizeSkuMatch = (p.sizes || []).some(s => s.sku && s.sku.toLowerCase().includes(latin));
+        return pNorm.latin.includes(latin) || pNorm.cyrillic.includes(cyrillic) || skuMatch || nameRuMatch || sizeSkuMatch;
       });
 
       results.sort((a, b) => {
@@ -604,9 +621,22 @@
       }
     }
 
+    function updateHeaderChrome() {
+      const logoImg = document.getElementById('shop-logo-img');
+      if (logoImg) {
+        if (shopLogoUrl) { logoImg.src = shopLogoUrl; logoImg.classList.remove('hidden'); }
+        else { logoImg.classList.add('hidden'); }
+      }
+      const flagBtn = document.getElementById('lang-flag-btn');
+      if (flagBtn) flagBtn.innerText = uiLang === 'uz' ? '🇺🇿' : '🇷🇺';
+      const cartBtn = document.getElementById('header-cart-btn');
+      if (cartBtn) cartBtn.classList.toggle('hidden', isAdminMode && isUserAnAdmin);
+    }
+
     function render() {
       updateCartBadge();
       updateNavLabels();
+      updateHeaderChrome();
 
       if (!registeredUser && !isAdminMode && activePopupModal !== 'REGISTRATION') {
         activePopupModal = 'REGISTRATION';
@@ -615,6 +645,7 @@
       const roleTag = document.getElementById('role-tag');
       const whBtn = document.getElementById('nav-warehouse-btn');
       const usersBtn = document.getElementById('nav-users-btn');
+      const cartNavBtn = document.getElementById('nav-cart');
 
       if (isAdminMode && isUserAnAdmin) {
         roleTag.innerText = "ADMIN";
@@ -622,10 +653,15 @@
         whBtn.classList.add('flex');
         usersBtn.classList.remove('hidden');
         usersBtn.classList.add('flex');
+        cartNavBtn.classList.add('hidden');
+        cartNavBtn.classList.remove('flex');
+        if (currentTab === 'cart') currentTab = 'home';
       } else {
         roleTag.innerText = "STORE";
         whBtn.classList.add('hidden');
         usersBtn.classList.add('hidden');
+        cartNavBtn.classList.remove('hidden');
+        cartNavBtn.classList.add('flex');
         if (currentTab === 'warehouse' || currentTab === 'users') currentTab = 'home';
       }
 
@@ -704,10 +740,9 @@
           <div>
             <div class="relative">
               <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-full h-28 object-cover rounded-xl mb-2" loading="lazy">
-              ${p.isFeatured ? `<span class="absolute top-1 left-1 bg-amber-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md">Bosh sahifa</span>` : ''}
               ${hasDiscount ? `<span class="absolute top-1 right-1 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md">CHEGIRMA</span>` : ''}
             </div>
-            <span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${escapeHtml(p.sku)}</span>
+            ${(isAdminMode && isUserAnAdmin) ? `<span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${escapeHtml(p.sku)}</span>` : ''}
             <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${escapeHtml(productName(p))}</h4>
 
             <div class="mt-1">
@@ -721,6 +756,7 @@
               `}
             </div>
             ${(p.sizes && p.sizes.length > 0) ? `<p class="text-[9px] text-gray-400 mt-0.5">O'lcham: ${p.sizes.map(s => escapeHtml(s.size)).join(', ')}</p>` : ''}
+            ${productDesc(p) ? `<p class="text-[10px] text-gray-400 italic mt-0.5 line-clamp-1">${escapeHtml(truncateText(productDesc(p), 40))}</p>` : ''}
           </div>
 
           <!-- ADMIN CONTROLS -->
@@ -765,7 +801,9 @@
     function renderCategories(container) {
       const currentCat = categories.find(c => c.id === adminCatParentId);
       const subCats = categories.filter(c => c.parentId === adminCatParentId);
-      const catProds = products.filter(p => p.categoryId === adminCatParentId && p.status !== 'DELETED');
+      const catProdsRaw = products.filter(p => p.categoryId === adminCatParentId && p.status !== 'DELETED');
+      const catProds = applyCategoryFilter(catProdsRaw);
+      const filterActive = isCategoryFilterActive();
 
       const totalPages = Math.ceil(catProds.length / 10) || 1;
       if (categoryPage > totalPages) categoryPage = 1;
@@ -821,7 +859,14 @@
 
           <!-- PRODUCTS LIST -->
           <div class="space-y-2 pt-2">
-            <h4 class="font-bold text-xs text-gray-500 uppercase px-1">📦 Tovarlar (${catProds.length})</h4>
+            <div class="flex items-center justify-between px-1">
+              <h4 class="font-bold text-xs text-gray-500 uppercase">📦 Tovarlar (${catProds.length})</h4>
+              ${catProdsRaw.length > 0 ? `
+                <button onclick="openCategoryFilterModal()" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${filterActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
+                  🔍 Filtr${filterActive ? ' •' : ''}
+                </button>
+              ` : ''}
+            </div>
             <div class="grid grid-cols-2 gap-3">
               ${paginatedProds.map((p, idx) => renderProductCardHTML(p, idx, paginatedProds.length)).join('')}
             </div>
@@ -838,6 +883,66 @@
           </div>
         </div>
       `;
+    }
+
+    function isCategoryFilterActive() {
+      return !!(categoryFilter.minPrice || categoryFilter.maxPrice || categoryFilter.sortPrice || categoryFilter.sortNew || categoryFilter.sortSold);
+    }
+
+    function applyCategoryFilter(list) {
+      let result = list.slice();
+      const min = parseFloat(categoryFilter.minPrice);
+      const max = parseFloat(categoryFilter.maxPrice);
+      if (!isNaN(min)) result = result.filter(p => p.price >= min);
+      if (!isNaN(max)) result = result.filter(p => p.price <= max);
+
+      const dirMul = (dir) => dir === 'asc' ? 1 : -1;
+      result.sort((a, b) => {
+        if (categoryFilter.sortPrice) {
+          const d = (a.price - b.price) * dirMul(categoryFilter.sortPrice);
+          if (d !== 0) return d;
+        }
+        if (categoryFilter.sortNew) {
+          const d = (new Date(a.createdAt || 0) - new Date(b.createdAt || 0)) * dirMul(categoryFilter.sortNew);
+          if (d !== 0) return d;
+        }
+        if (categoryFilter.sortSold) {
+          const d = ((a.soldCount || 0) - (b.soldCount || 0)) * dirMul(categoryFilter.sortSold);
+          if (d !== 0) return d;
+        }
+        return 0;
+      });
+      return result;
+    }
+
+    function openCategoryFilterModal() {
+      activePopupModal = 'CAT_FILTER';
+      render();
+    }
+
+    function closeCategoryFilterModal() {
+      activePopupModal = null;
+      render();
+    }
+
+    function setCategoryPriceBound(field, value) {
+      categoryFilter[field] = value;
+      categoryPage = 1;
+    }
+
+    // Har bir saralash: yo'q -> o'suvchi -> kamayuvchi -> yo'q, mustaqil ravishda
+    function toggleCategorySortOption(key) {
+      const order = [null, 'asc', 'desc'];
+      const idx = order.indexOf(categoryFilter[key]);
+      categoryFilter[key] = order[(idx + 1) % order.length];
+      categoryPage = 1;
+      render();
+    }
+
+    function clearCategoryFilter() {
+      categoryFilter = { minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null };
+      categoryPage = 1;
+      render();
     }
 
     function goBackCatLevel() {
@@ -876,10 +981,10 @@
             ${items.map(item => `
               <div class="py-3 flex items-center justify-between">
                 <div class="flex items-center gap-2.5">
-                  <img src="${escapeHtml(item.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-10 h-10 object-cover rounded-lg flex-shrink-0" loading="lazy">
+                  <img src="${escapeHtml(item.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-12 h-12 object-cover rounded-lg flex-shrink-0" loading="lazy">
                   <div>
                     <h4 class="font-bold text-sm text-gray-800">${escapeHtml(productName(item))} ${item.size ? `<span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-500">${escapeHtml(item.size)}</span>` : ''}</h4>
-                    <p class="text-xs text-gray-500">${item.price.toLocaleString()} so'm</p>
+                    <p class="text-xs text-gray-500">${item.price.toLocaleString()} so'm / ${t('total').toLowerCase()}: <b class="text-gray-700">${(item.price * item.qty).toLocaleString()} so'm</b></p>
                   </div>
                 </div>
                 <div class="flex items-center space-x-2">
@@ -892,75 +997,67 @@
           </div>
 
           <div class="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-            <h3 class="font-bold text-sm border-b pb-2">📍 Buyurtmani Rasmiylashtirish</h3>
-
-            <div>
-              <label class="text-xs font-bold text-gray-600">Ism va Familiyangiz *</label>
-              <input type="text" id="chk-fullname" value="${escapeHtml((currentUser.firstName + ' ' + currentUser.lastName).trim())}" placeholder="Ali Valiyev" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
-            </div>
-
-            <div>
-              <label class="text-xs font-bold text-gray-600">Telefon Raqamingiz *</label>
-              <input type="text" id="chk-phone" value="${escapeHtml(currentUser.phone)}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2.5 border rounded-xl text-xs font-mono">
-            </div>
-
-          <div>
-              <label class="text-xs font-bold text-gray-600">Hududni Tanlang *</label>
-              <select id="chk-region" onchange="handleRegionChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
-                <option value="TASHKENT">Toshkent shahri (Bepul yetkazib berish)</option>
-                <option value="PROVINCE">Viloyatlar (BTS Pochta)</option>
-              </select>
-            </div>
-
-            <div id="bts-warning" class="hidden bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[11px] text-amber-800 font-medium">
-              ⚠️ Viloyatlarga BTS pochta orqali jo'natiladi. Yo'l kira mijoz tomonidan to'lanadi.
-            </div>
-
-            <div id="chk-viloyat-wrap" class="hidden">
-              <label class="text-xs font-bold text-gray-600">Viloyatni Tanlang *</label>
-              <select id="chk-viloyat" onchange="handleViloyatChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
-                <option value="">— Tanlang —</option>
-              </select>
-            </div>
-
-            <div>
-              <label class="text-xs font-bold text-gray-600">Tumanni Tanlang *</label>
-              <select id="chk-district" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
-                <option value="">— Tanlang —</option>
-              </select>
-            </div>
-
-            <div>
-              <label id="chk-address-label" class="text-xs font-bold text-gray-600">Manzil *</label>
-              <input type="text" id="chk-address" placeholder="Ko'cha, mahalla va uy raqami" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
-            </div>
-
-           <div>
-              <label class="text-xs font-bold text-gray-600">To'lov Turi *</label>
-              <div id="pay-method-wrap" class="grid grid-cols-2 gap-2 mt-1">
-                <button type="button" id="pay-cash-btn" onclick="selectPayment('CASH')" class="py-2.5 border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold rounded-xl text-xs">💵 Naqd pul</button>
-                <button type="button" id="pay-card-btn" onclick="selectPayment('CARD')" class="py-2.5 border rounded-xl font-bold text-xs text-gray-400 bg-gray-50">
-                  💳 Karta orqali
-                  <span class="block text-[9px] text-gray-400">(Tez kunda)</span>
-                </button>
-              </div>
-            </div>
-
-            <div class="border-t pt-3 flex justify-between items-center text-lg font-black">
-              <span>Jami:</span>
+            <div class="flex justify-between items-center text-lg font-black">
+              <span>${t('total')}:</span>
               <span class="text-green-600">${total.toLocaleString()} so'm</span>
             </div>
-
-            <button onclick="submitOrder()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl text-sm shadow-md">
+            <button onclick="openCheckoutForm()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl text-sm shadow-md">
               ✅ ${t('place_order')}
             </button>
           </div>
         </div>
       `;
-      handleRegionChange();
     }
 
     let selectedPayMethod = 'CASH';
+
+    function openCheckoutForm() {
+      if (Object.keys(cart).length === 0) return;
+      activePopupModal = 'CHECKOUT_FORM';
+      render();
+    }
+
+    function closeCheckoutForm() {
+      activePopupModal = null;
+      render();
+    }
+
+    function saveCheckoutDraft() {
+      checkoutDraft = {
+        fullname: document.getElementById('chk-fullname')?.value || '',
+        phone: document.getElementById('chk-phone')?.value || '',
+        region: document.getElementById('chk-region')?.value || 'TASHKENT',
+        viloyat: document.getElementById('chk-viloyat')?.value || '',
+        district: document.getElementById('chk-district')?.value || '',
+        address: document.getElementById('chk-address')?.value || ''
+      };
+      localStorage.setItem('checkoutDraft', JSON.stringify(checkoutDraft));
+    }
+
+    // Modal ochilganda saqlangan qoralamani (yoki ro'yxatdan o'tishda kiritilgan
+    // ism/telefonni) maydonlarga qaytarib qo'yadi.
+    function applyCheckoutDraftToForm() {
+      const fullnameEl = document.getElementById('chk-fullname');
+      const phoneEl = document.getElementById('chk-phone');
+      if (fullnameEl) fullnameEl.value = checkoutDraft.fullname || (currentUser.firstName + ' ' + currentUser.lastName).trim();
+      if (phoneEl) phoneEl.value = checkoutDraft.phone || currentUser.phone || '';
+
+      const regionEl = document.getElementById('chk-region');
+      if (regionEl) regionEl.value = checkoutDraft.region || 'TASHKENT';
+      handleRegionChange();
+
+      if (checkoutDraft.region === 'PROVINCE' && checkoutDraft.viloyat) {
+        const viloyatEl = document.getElementById('chk-viloyat');
+        if (viloyatEl) viloyatEl.value = checkoutDraft.viloyat;
+        handleViloyatChange();
+      }
+
+      const districtEl = document.getElementById('chk-district');
+      if (districtEl && checkoutDraft.district) districtEl.value = checkoutDraft.district;
+
+      const addressEl = document.getElementById('chk-address');
+      if (addressEl) addressEl.value = checkoutDraft.address || '';
+    }
 
    function handleRegionChange() {
       const region = document.getElementById('chk-region').value;
@@ -1102,6 +1199,9 @@
         orders.unshift(newOrder);
         cart = {};
         localStorage.setItem('cart', JSON.stringify(cart));
+        activePopupModal = null;
+        checkoutDraft = { fullname: '', phone: '', region: 'TASHKENT', viloyat: '', district: '', address: '' };
+        localStorage.removeItem('checkoutDraft');
         openOrderSuccessCelebration(newOrder.id);
       } catch (e) {
         console.error(e);
@@ -1312,12 +1412,22 @@
           <div class="font-bold text-blue-900">
             ${indent}${depth === 0 ? '📂' : '└─ 📁'} ${escapeHtml(cat.name)}
           </div>
-          ${catProds.map(p => `
-            <div class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1">
-              <span>${indent}&nbsp;&nbsp;* [ID: ${escapeHtml(p.sku)}] ${escapeHtml(p.name)}</span>
-              <b class="${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ta</b>
-            </div>
-          `).join('')}
+          ${catProds.map(p => {
+            if (p.sizes && p.sizes.length > 0) {
+              return p.sizes.map(s => `
+                <div class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1">
+                  <span>${indent}&nbsp;&nbsp;* [ID: ${escapeHtml(s.sku)}] ${escapeHtml(p.name)} ${escapeHtml(s.size)}</span>
+                  <b class="${s.qty > 0 ? 'text-green-600' : 'text-red-500'}">${s.qty} ta</b>
+                </div>
+              `).join('');
+            }
+            return `
+              <div class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1">
+                <span>${indent}&nbsp;&nbsp;* [ID: ${escapeHtml(p.sku)}] ${escapeHtml(p.name)}</span>
+                <b class="${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ta</b>
+              </div>
+            `;
+          }).join('')}
           ${children.map(child => renderCategoryTreeNodeHTML(child, depth + 1)).join('')}
         </div>
       `;
@@ -1374,6 +1484,7 @@
       const note = document.getElementById('bl-note').value.trim();
       if (!confirm("Rostdan ham bu mijozni bloklaysizmi? U buyurtma bera olmaydi.")) return;
 
+      showLoader("Bajarilmoqda...");
       try {
         await callApi('block_user', { tgId, reason, note });
         await refreshUsersSummary();
@@ -1384,11 +1495,14 @@
       } catch (e) {
         console.error(e);
         alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      } finally {
+        hideLoader();
       }
     }
 
     async function unblockUser(tgId) {
       if (!confirm("Bu mijoz blokdan chiqarilsinmi?")) return;
+      showLoader("Bajarilmoqda...");
       try {
         await callApi('unblock_user', { tgId });
         await refreshUsersSummary();
@@ -1398,6 +1512,8 @@
       } catch (e) {
         console.error(e);
         alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      } finally {
+        hideLoader();
       }
     }
 
@@ -1405,11 +1521,6 @@
     function renderProfile(container) {
       container.innerHTML = `
         <div class="space-y-4">
-          <button onclick="toggleUiLang()" class="w-full bg-white border rounded-2xl p-3 flex items-center justify-between shadow-sm">
-            <span class="font-bold text-sm text-gray-700">🌐 ${uiLang === 'uz' ? "O'zbekcha" : "Русский"}</span>
-            <span class="text-xs text-blue-600 font-bold">${uiLang === 'uz' ? "Перейти на русский" : "O'zbekchaga o'tish"}</span>
-          </button>
-
           <div class="bg-white p-5 rounded-2xl shadow-sm flex items-center space-x-4 border">
             <div class="bg-blue-100 p-3 rounded-full text-blue-600">
               <i data-lucide="user" class="w-8 h-8"></i>
@@ -1436,7 +1547,10 @@
           ` : ''}
 
           <div class="bg-white p-4 rounded-2xl shadow-sm border space-y-3">
-            <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📍 Do'kon haqida</h3>
+            <div class="flex items-center justify-between border-b pb-2">
+              <h3 class="font-bold text-sm text-gray-900">📍 Do'kon haqida</h3>
+              ${shopLogoUrl ? `<img src="${escapeHtml(shopLogoUrl)}" class="h-9 max-w-[90px] object-contain rounded-lg">` : ''}
+            </div>
 
             <a href="https://www.google.com/maps?q=41.217408,69.211225" target="_blank" class="flex items-start space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
               <i data-lucide="map-pin" class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0"></i>
@@ -1469,6 +1583,17 @@
             </button>
           ` : ''}
 
+          ${(isUserAnAdmin && isAdminMode) ? `
+            <div class="bg-white p-4 rounded-2xl border space-y-2 shadow-sm">
+              <h3 class="font-bold text-xs text-gray-900 border-b pb-2">🖼️ Do'kon Logotipi</h3>
+              <div class="flex items-center gap-3">
+                ${shopLogoUrl ? `<img id="logo-upload-prev" src="${escapeHtml(shopLogoUrl)}" class="w-14 h-14 object-contain rounded-xl border bg-gray-50">` : `<img id="logo-upload-prev" src="" class="w-14 h-14 object-contain rounded-xl border bg-gray-50 hidden">`}
+                <input type="file" accept="image/*" onchange="onImagePicked(event, 'logo-upload-prev')" class="flex-1 text-xs">
+              </div>
+              <button onclick="saveShopLogo()" class="w-full bg-slate-800 text-white font-bold py-2 rounded-xl text-xs">Saqlash</button>
+            </div>
+          ` : ''}
+
           <!-- BOSH ADMINGA VA ADMINLARGA KO'RINADIGAN BO'LIM -->
           ${(isSuperAdmin && isAdminMode) ? `
             <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
@@ -1495,8 +1620,25 @@
       `;
     }
 
+    async function saveShopLogo() {
+      if (!tempImageFile) return alert("Iltimos, avval rasm tanlang!");
+      try {
+        const url = await uploadImageIfNeeded(shopLogoUrl);
+        await callApi('set_shop_logo', { logoUrl: url });
+        shopLogoUrl = url;
+        tempImageFile = null;
+        tempImagePreviewUrl = null;
+        alert("✅ Logotip saqlandi!");
+        render();
+      } catch (e) {
+        console.error(e);
+        alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      }
+    }
+
     async function removeAdmin(admId) {
       if (!confirm("Ushbu admin huquqini bekor qilmoqchimisiz?")) return;
+      showLoader("Bajarilmoqda...");
       try {
         await callApi('remove_admin', { tgId: admId });
         adminsList = adminsList.filter(a => a !== admId);
@@ -1505,6 +1647,8 @@
       } catch (e) {
         console.error(e);
         alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      } finally {
+        hideLoader();
       }
     }
 
@@ -1515,8 +1659,8 @@
       // REGISTRATION MODAL
       if (activePopupModal === 'REGISTRATION') {
         container.innerHTML = `
-          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2 text-center">📝 FITCORE Ro'yxatdan O'tish</h3>
               <p class="text-[11px] text-gray-500 text-center">Buyurtmalar tezkor rasmiylashtirilishi uchun ma'lumotlaringizni kiriting:</p>
               <div>
@@ -1828,6 +1972,139 @@
         return;
       }
 
+      // CHECKOUT FORM MODAL (savatchadan "Buyurtma berish" bosilganda ochiladi)
+      if (activePopupModal === 'CHECKOUT_FORM') {
+        const items = Object.entries(cart).map(([key, itemData]) => {
+          const productId = cartEntryProductId(key, itemData);
+          const p = products.find(prod => prod.id === productId);
+          return p ? { ...p, key, qty: itemData.qty, size: itemData.size || null } : null;
+        }).filter(Boolean);
+        const total = items.reduce((sum, item) => sum + (item.price * item.qty), 0);
+
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="closeCheckoutForm();">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📍 Buyurtmani Rasmiylashtirish</h3>
+
+              <div>
+                <label class="text-xs font-bold text-gray-600">Ism va Familiyangiz *</label>
+                <input type="text" id="chk-fullname" oninput="saveCheckoutDraft()" placeholder="Ali Valiyev" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
+              </div>
+
+              <div>
+                <label class="text-xs font-bold text-gray-600">Telefon Raqamingiz *</label>
+                <input type="text" id="chk-phone" oninput="saveCheckoutDraft()" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2.5 border rounded-xl text-xs font-mono">
+              </div>
+
+              <div>
+                <label class="text-xs font-bold text-gray-600">Hududni Tanlang *</label>
+                <select id="chk-region" onchange="handleRegionChange(); saveCheckoutDraft();" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                  <option value="TASHKENT">Toshkent shahri (Bepul yetkazib berish)</option>
+                  <option value="PROVINCE">Viloyatlar (BTS Pochta)</option>
+                </select>
+              </div>
+
+              <div id="bts-warning" class="hidden bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[11px] text-amber-800 font-medium">
+                ⚠️ Viloyatlarga BTS pochta orqali jo'natiladi. Yo'l kira mijoz tomonidan to'lanadi.
+              </div>
+
+              <div id="chk-viloyat-wrap" class="hidden">
+                <label class="text-xs font-bold text-gray-600">Viloyatni Tanlang *</label>
+                <select id="chk-viloyat" onchange="handleViloyatChange(); saveCheckoutDraft();" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                  <option value="">— Tanlang —</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="text-xs font-bold text-gray-600">Tumanni Tanlang *</label>
+                <select id="chk-district" onchange="saveCheckoutDraft()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                  <option value="">— Tanlang —</option>
+                </select>
+              </div>
+
+              <div>
+                <label id="chk-address-label" class="text-xs font-bold text-gray-600">Manzil *</label>
+                <input type="text" id="chk-address" oninput="saveCheckoutDraft()" placeholder="Ko'cha, mahalla va uy raqami" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
+              </div>
+
+              <div>
+                <label class="text-xs font-bold text-gray-600">To'lov Turi *</label>
+                <div id="pay-method-wrap" class="grid grid-cols-2 gap-2 mt-1">
+                  <button type="button" id="pay-cash-btn" onclick="selectPayment('CASH')" class="py-2.5 border-2 border-blue-600 bg-blue-50 text-blue-700 font-bold rounded-xl text-xs">💵 Naqd pul</button>
+                  <button type="button" id="pay-card-btn" onclick="selectPayment('CARD')" class="py-2.5 border rounded-xl font-bold text-xs text-gray-400 bg-gray-50">
+                    💳 Karta orqali
+                    <span class="block text-[9px] text-gray-400">(Tez kunda)</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="border-t pt-3 flex justify-between items-center text-lg font-black">
+                <span>${t('total')}:</span>
+                <span class="text-green-600">${total.toLocaleString()} so'm</span>
+              </div>
+
+              <button onclick="submitOrder()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl text-sm shadow-md">
+                ✅ Rasmiylashtirish
+              </button>
+            </div>
+          </div>
+        `;
+        applyCheckoutDraftToForm();
+        return;
+      }
+
+      // KATALOG FILTR/SARALASH PANELI
+      if (activePopupModal === 'CAT_FILTER') {
+        const sortBtnClass = (key) => {
+          const v = categoryFilter[key];
+          if (v === 'asc') return 'bg-blue-600 text-white';
+          if (v === 'desc') return 'bg-blue-600 text-white';
+          return 'bg-gray-100 text-gray-600';
+        };
+        const sortBtnArrow = (key) => {
+          const v = categoryFilter[key];
+          if (v === 'asc') return '↑';
+          if (v === 'desc') return '↓';
+          return '';
+        };
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="closeCategoryFilterModal();">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">🔍 Filtr va Saralash</h3>
+
+              <div>
+                <label class="font-bold text-gray-600">Narx oralig'i (so'm)</label>
+                <div class="flex items-center gap-2 mt-1">
+                  <input type="number" inputmode="numeric" placeholder="Dan" value="${escapeHtml(categoryFilter.minPrice)}" oninput="setCategoryPriceBound('minPrice', this.value)" class="w-full p-2.5 border rounded-xl">
+                  <span class="text-gray-400">—</span>
+                  <input type="number" inputmode="numeric" placeholder="Gacha" value="${escapeHtml(categoryFilter.maxPrice)}" oninput="setCategoryPriceBound('maxPrice', this.value)" class="w-full p-2.5 border rounded-xl">
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <label class="font-bold text-gray-600">Saralash</label>
+                <button onclick="toggleCategorySortOption('sortPrice')" class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold ${sortBtnClass('sortPrice')}">
+                  <span>💰 Narx bo'yicha</span><span>${sortBtnArrow('sortPrice')}</span>
+                </button>
+                <button onclick="toggleCategorySortOption('sortNew')" class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold ${sortBtnClass('sortNew')}">
+                  <span>🆕 Yangiligi bo'yicha</span><span>${sortBtnArrow('sortNew')}</span>
+                </button>
+                <button onclick="toggleCategorySortOption('sortSold')" class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold ${sortBtnClass('sortSold')}">
+                  <span>🔥 Ko'p sotib olinganlari</span><span>${sortBtnArrow('sortSold')}</span>
+                </button>
+                <p class="text-[10px] text-gray-400">Har birini bosganingizda: o'chiq → o'suvchi (↑) → kamayuvchi (↓) → o'chiq. Bir nechtasi birga yoqilsa, tepadagi ustuvor bo'ladi.</p>
+              </div>
+
+              <div class="flex gap-2 pt-1">
+                <button onclick="clearCategoryFilter()" class="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl">🗑️ Filtrni tozalash</button>
+                <button onclick="closeCategoryFilterModal()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ Tayyor</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
       // PRODUCT DETAILS MODAL
       if (selectedProductModal) {
         const p = selectedProductModal;
@@ -1848,7 +2125,7 @@
 
               <div class="space-y-1">
                 <div class="flex justify-between items-center">
-                  <span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: ${escapeHtml(p.sku)}</span>
+                  ${(isAdminMode && isUserAnAdmin) ? `<span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: ${escapeHtml(p.sku)}</span>` : '<span></span>'}
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">🗑️ O'chirish</button>` : ''}
                 </div>
 
@@ -1880,7 +2157,7 @@
                     <button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
                   </div>
                   <div class="flex justify-between items-center pt-1 text-xs">
-                    <span class="font-bold text-gray-600">O'lchamlar: <b>${(p.sizes && p.sizes.length) ? escapeHtml(p.sizes.map(s => `${s.size} (${s.qty})`).join(', ')) : 'kiritilmagan'}</b></span>
+                    <span class="font-bold text-gray-600">O'lchamlar: <b>${(p.sizes && p.sizes.length) ? escapeHtml(p.sizes.map(s => `${s.size} (${s.qty} ta, ID:${s.sku})`).join(', ')) : 'kiritilmagan'}</b></span>
                     <button onclick="openEditFieldModal('${p.id}', 'sizes')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
                   </div>
                 ` : ''}
@@ -1950,9 +2227,8 @@
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="selectedOrderModal=null; render();">
             <div class="bg-white rounded-3xl p-5 max-w-md w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              <div class="flex justify-between items-center border-b pb-2">
+              <div class="border-b pb-2">
                 <h3 class="font-black text-sm text-blue-600">Buyurtma #${o.id}</h3>
-                <button onclick="selectedOrderModal=null; render();" class="text-xs bg-gray-100 font-bold px-2.5 py-1 rounded-xl">⬅️ Orqaga</button>
               </div>
 
               <div class="space-y-1">
@@ -2361,6 +2637,7 @@
       const name = document.getElementById('ec-name').value.trim();
       if (!name) return alert("Katalog nomini kiriting!");
 
+      showLoader("Saqlanmoqda...");
       try {
         const newImg = await uploadImageIfNeeded(c.img);
         const result = await callApi('edit_category', { categoryId: id, name, img: newImg });
@@ -2372,6 +2649,8 @@
       } catch (e2) {
         console.error(e2);
         alert("❌ Xatolik yuz berdi: " + (e2.message || e2));
+      } finally {
+        hideLoader();
       }
     }
 
@@ -2393,10 +2672,13 @@
 
       render();
 
+      showLoader("Tartib saqlanmoqda...");
       try {
         await callApi('move_sort', { idA: prodA.id, sortOrderA: prodA.sortOrder, idB: prodB.id, sortOrderB: prodB.sortOrder });
       } catch (e) {
         console.error('Tartibni saqlashda xatolik:', e);
+      } finally {
+        hideLoader();
       }
     }
 
@@ -2404,6 +2686,7 @@
       const p = products.find(prod => prod.id === id);
       if (!p) return;
       const newVal = !p.isFeatured;
+      showLoader("Saqlanmoqda...");
       try {
         await callApi('toggle_featured', { productId: id, value: newVal });
         p.isFeatured = newVal;
@@ -2411,11 +2694,14 @@
       } catch (e) {
         console.error(e);
         alert("❌ Xatolik yuz berdi: " + (e.message || e));
+      } finally {
+        hideLoader();
       }
     }
 
     async function deleteProduct(id) {
       if (!confirm("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz?")) return;
+      showLoader("O'chirilmoqda...");
       try {
         await callApi('delete_product', { productId: id });
         products = products.filter(prod => prod.id !== id);
@@ -2423,12 +2709,15 @@
       } catch (e) {
         console.error(e);
         alert("❌ O'chirishda xatolik yuz berdi: " + (e.message || e));
+      } finally {
+        hideLoader();
       }
     }
 
     async function deleteCategory(id, e) {
       if (e) e.stopPropagation();
       if (!confirm("Katalog o'chirilsinmi?")) return;
+      showLoader("O'chirilmoqda...");
       try {
         await callApi('delete_category', { categoryId: id });
         categories = categories.filter(c => c.id !== id);
@@ -2440,6 +2729,8 @@
         } else {
           alert("❌ O'chirishda xatolik yuz berdi: " + (e2.message || e2));
         }
+      } finally {
+        hideLoader();
       }
     }
 
@@ -2610,6 +2901,7 @@
           isBlocked: !!bootData.isBlocked, blockReason: bootData.blockReason || null,
           isWarned: !!bootData.isWarned, warnReason: bootData.warnReason || null,
         };
+        shopLogoUrl = bootData.logoUrl || null;
         orders = (bootData.orders || []).map(formatOrderForUi);
         if (isUserAnAdmin) {
           adminsList = bootData.admins || [];
