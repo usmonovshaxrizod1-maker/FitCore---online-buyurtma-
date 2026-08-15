@@ -218,6 +218,7 @@
 
     let currentTab = 'home';
     let warehouseMissingImageOnly = false;
+    let warehouseImportedMissingImageOnly = false;
     let isAdminMode = false;
     let authReady = false;
     let adminCatParentId = null;
@@ -404,7 +405,8 @@
       const perfStarted = performance.now();
       const initData = tg?.initData || '';
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutMs = action === 'bulk_import_products' ? 45000 : 15000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/app-api`, {
           method: 'POST',
@@ -417,7 +419,11 @@
           signal: controller.signal
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || `Server xatosi (${res.status})`);
+        if (!res.ok) {
+          const apiError = new Error(data.error || `Server xatosi (${res.status})`);
+          apiError.details = data;
+          throw apiError;
+        }
         return data;
       } catch (e) {
         if (e.name === 'AbortError') throw new Error("Server javob bermadi (vaqt tugadi). Internetni tekshirib qayta urinib ko'ring.");
@@ -1525,7 +1531,7 @@
         <div class="space-y-4">
           <div class="flex items-center justify-between gap-2">
             <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
-            <button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; render();" class="px-3 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${products.filter(p=>p.status!=='DELETED'&&!p.img).length})</button>
+            <div class="flex gap-1"><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${products.filter(p=>p.status!=='DELETED'&&!p.img).length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly?'bg-blue-600 text-white':'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz','Импорт без фото')} (${products.filter(p=>p.status!=='DELETED'&&!p.img&&p.importBatchId).length})</button></div>
           </div>
 
           <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
@@ -1544,7 +1550,7 @@
 
     function renderCategoryTreeNodeHTML(cat, depth) {
       const children = categories.filter(c => c.parentId === cat.id);
-      const catProds = products.filter(p => p.categoryId === cat.id && p.status !== 'DELETED' && (!warehouseMissingImageOnly || !p.img));
+      const catProds = products.filter(p => p.categoryId === cat.id && p.status !== 'DELETED' && (!warehouseMissingImageOnly || !p.img) && (!warehouseImportedMissingImageOnly || (!p.img && p.importBatchId)));
       const indent = "&nbsp;&nbsp;".repeat(depth * 2);
 
       return `
@@ -2918,7 +2924,7 @@
     async function openExcelImportModal() {
       if (!isUserAnAdmin) return;
       try {
-        if (!excelModulePromise) excelModulePromise = ensureScript('./excel-import.js?v=2');
+        if (!excelModulePromise) excelModulePromise = ensureScript('./excel-import.js?v=3');
         await excelModulePromise;
         if (!window.FitcoreExcel) throw new Error('Excel moduli topilmadi');
         activePopupModal = 'EXCEL_IMPORT';

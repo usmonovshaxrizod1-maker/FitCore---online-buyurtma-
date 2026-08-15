@@ -11,7 +11,13 @@
     issues: [],
     decisions: {},
     aliases: [],
-    parseWarnings: [],
+    baseRowIssues: [],
+    rowIssues: [],
+    sourceRows: [],
+    lastBatch: null,
+    prepared: false,
+    progressDone: 0,
+    progressTotal: 0,
     result: null,
   };
 
@@ -81,7 +87,9 @@
       wb.creator='FITCORE'; wb.created=new Date();
       const paths=allCategoryPaths();
       const maxExistingDepth=Math.max(1,...paths.map(p=>p.length));
-      const depth=Math.min(10, Math.max(6, maxExistingDepth+2));
+      // Root + Katalog1..Katalog7 are always available. Deeper existing trees
+      // automatically receive two spare levels without an application-side depth cap.
+      const depth=Math.max(8, maxExistingDepth+2);
       const catHeaders=['Bosh katalog', ...Array.from({length:depth-1},(_,i)=>`Katalog${i+1}`)];
       const headers=['NO',...catHeaders,'Tovar nomi','Tovar nomi RU (ixtiyoriy)','Tovar narxi','Eski narxi','Soni','Izohi','Izohi RU (ixtiyoriy)','O\'lchami','Rang'];
 
@@ -126,7 +134,7 @@
       cats.getColumn(1).width=52; for(let i=2;i<=depth+1;i++)cats.getColumn(i).width=21; cats.getColumn(depth+2).width=28;
 
       // Hidden dictionary supplies dropdowns per depth. Manual new names are still allowed.
-      const dict=wb.addWorksheet("Lug'at");
+      const dict=wb.addWorksheet('Lugat');
       for(let d=0;d<depth;d++){
         const names=[...new Set(paths.map(p=>p[d]?.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'uz'));
         dict.getCell(1,d+1).value=catHeaders[d];
@@ -136,7 +144,7 @@
           for(let r=2;r<=1001;r++){
             ws.getCell(r,2+d).dataValidation={
               type:'list', allowBlank:true, showErrorMessage:false,
-              formulae:[`'Lug\'at'!$${colLetter}$2:$${colLetter}$${names.length+1}`]
+              formulae:[`Lugat!$${colLetter}$2:$${colLetter}$${names.length+1}`]
             };
           }
         }
@@ -162,6 +170,8 @@
         ['Faqat o\'lcham','O\'lchami: 48,2/50,5/52,17. Rang bo\'sh.'],
         ['Faqat rang','Rang: Qizil-3/Qora-2. O\'lchami bo\'sh.'],
         ['O\'lcham + rang',"O'lchami: 48/50/52. Rang: 48,Qizil-1,Qora-1/50,Qizil-3,Ko'k-3/52,Qora-15,Oq-2. Umumiy Soni avtomatik hisoblanadi."],
+        ['Qoldiq mosligi','Variant yozilgan bo\'lsa umumiy qoldiq variantlardan hisoblanadi. Soni yoki o\'lchamdagi miqdor ranglar yig\'indisiga mos kelmasa preview ogohlantiradi.'],
+        ['Xato qatorlar','Import bloklangan qatorlar previewda sababi va tuzatish tavsiyasi bilan chiqadi. Ularni CSV qilib yuklab olish mumkin.'],
         ['Rasm','Excel orqali rasm yuklanmaydi. Importdan keyin “rasmi yo\'q” tovarlarga admin qo\'lda rasm qo\'yadi.'],
         ['Ruscha matn','RU nom/izoh ixtiyoriy. Kiritilmasa ruscha rejimda o\'zbekcha original ko\'rsatiladi.'],
       ]);
@@ -194,9 +204,83 @@
     const s=String(v??'').replace(/\s/g,'').replace(/,/g,'.').replace(/[^0-9.\-]/g,'');
     const n=Number(s); return Number.isFinite(n)?n:NaN;
   }
-  function parseVariants(sizeText,colorText) {
-    try { return parseVariantInputs(sizeText,colorText,0); } catch {}
-    return [];
+  function makeRowIssue(severity, code, excelRow, message, suggestion) {
+    return {severity,code,excelRow,message,suggestion};
+  }
+  function parseVariantDetails(sizeText,colorText,stockText,excelRow) {
+    const issues=[]; const variants=[];
+    const sizeTokens=String(sizeText||'').split('/').map(x=>x.trim()).filter(Boolean);
+    const colorGroups=String(colorText||'').split('/').map(x=>x.trim()).filter(Boolean);
+    const declaredSizes=new Map();
+    const addError=(code,message,suggestion)=>issues.push(makeRowIssue('ERROR',code,excelRow,message,suggestion));
+    const addWarning=(code,message,suggestion)=>issues.push(makeRowIssue('WARNING',code,excelRow,message,suggestion));
+
+    for(const token of sizeTokens){
+      const parts=token.split(',').map(x=>x.trim()); const size=parts[0]||'';
+      if(!size){addError('SIZE_EMPTY',xl(`Qator ${excelRow}: o'lcham nomi bo'sh.`,`Строка ${excelRow}: пустое название размера.`),xl("Masalan: 48,2/50,5","Например: 48,2/50,5"));continue;}
+      if(declaredSizes.has(norm(size))){addError('SIZE_DUPLICATE',xl(`Qator ${excelRow}: “${size}” o'lchami takrorlangan.`,`Строка ${excelRow}: размер «${size}» повторяется.`),xl("Takroriy o'lchamni olib tashlang.","Удалите повторяющийся размер."));continue;}
+      let qty=null;
+      if(parts.length>1){
+        if(parts.length!==2||!/^\d+$/.test(parts[1]))addError('SIZE_QTY_INVALID',xl(`Qator ${excelRow}: “${token}” o'lcham miqdori noto'g'ri.`,`Строка ${excelRow}: неверное количество размера «${token}».`),xl("O'lcham,son ko'rinishida yozing: 48,2","Укажите в формате размер,количество: 48,2"));
+        else qty=Number(parts[1]);
+      }
+      declaredSizes.set(norm(size),{size,qty});
+    }
+
+    if(colorGroups.length){
+      const seenVariants=new Set(); const totalsBySize=new Map();
+      for(const group of colorGroups){
+        const parts=group.split(',').map(x=>x.trim()).filter(Boolean);
+        const first=parts[0]||'';
+        const looksLikeSizeGroup=parts.length>1&&!/[-–—]\s*\d+$/.test(first);
+        const size=looksLikeSizeGroup?first:null;
+        const colorParts=looksLikeSizeGroup?parts.slice(1):parts;
+        if(sizeTokens.length&&!size){
+          addError('COLOR_SIZE_MISSING',xl(`Qator ${excelRow}: “${group}” rang guruhida o'lcham ko'rsatilmagan.`,`Строка ${excelRow}: в группе цветов «${group}» не указан размер.`),xl("Masalan: 48,Qizil-1,Qora-2","Например: 48,Qizil-1,Qora-2"));
+        }
+        if(size&&sizeTokens.length&&!declaredSizes.has(norm(size))){
+          addWarning('COLOR_SIZE_UNKNOWN',xl(`Qator ${excelRow}: ranglardagi “${size}” o'lchami O'lchami ustunida yo'q.`,`Строка ${excelRow}: размера «${size}» из цветов нет в столбце размеров.`),xl("O'lcham nomlarini bir xil yozing.","Напишите размеры одинаково."));
+        }
+        let validInGroup=0;
+        for(const token of colorParts){
+          const m=token.match(/^(.*?)[-–—]\s*(\d+)$/);
+          if(!m||!m[1].trim()){
+            addError('COLOR_QTY_INVALID',xl(`Qator ${excelRow}: “${token}” rang miqdori noto'g'ri.`,`Строка ${excelRow}: неверное количество цвета «${token}».`),xl("Rang-son ko'rinishida yozing: Qizil-3","Укажите в формате цвет-количество: Qizil-3"));continue;
+          }
+          const color=m[1].trim(),qty=Number(m[2]); const key=`${norm(size||'')}|${norm(color)}`;
+          if(seenVariants.has(key)){
+            addError('VARIANT_DUPLICATE',xl(`Qator ${excelRow}: “${[size,color].filter(Boolean).join(' / ')}” varianti takrorlangan.`,`Строка ${excelRow}: вариант «${[size,color].filter(Boolean).join(' / ')}» повторяется.`),xl("Takroriy variantni olib tashlang.","Удалите повторяющийся вариант."));continue;
+          }
+          seenVariants.add(key); variants.push({size:size||null,color,qty}); validInGroup++;
+          const sizeKey=norm(size||''); totalsBySize.set(sizeKey,(totalsBySize.get(sizeKey)||0)+qty);
+        }
+        if(!validInGroup)addError('COLOR_GROUP_EMPTY',xl(`Qator ${excelRow}: “${group}” guruhida yaroqli rang topilmadi.`,`Строка ${excelRow}: в группе «${group}» нет корректного цвета.`),xl("Rang va sonni tekshiring.","Проверьте цвет и количество."));
+      }
+      for(const {size,qty} of declaredSizes.values()){
+        if(qty===null)continue;
+        const colorTotal=totalsBySize.get(norm(size))||0;
+        if(qty!==colorTotal)addWarning('SIZE_COLOR_STOCK_MISMATCH',xl(`Qator ${excelRow}: ${size} o'lchami ${qty} ta, ranglar yig'indisi esa ${colorTotal} ta.`,`Строка ${excelRow}: размер ${size} — ${qty}, сумма цветов — ${colorTotal}.`),xl("O'lcham va rang miqdorlarini tenglashtiring.","Сделайте количества размеров и цветов одинаковыми."));
+      }
+    }else if(sizeTokens.length){
+      for(const {size,qty} of declaredSizes.values()){
+        if(qty===null){
+          addError('SIZE_QTY_REQUIRED',xl(`Qator ${excelRow}: “${size}” o'lchami uchun son ko'rsatilmagan.`,`Строка ${excelRow}: для размера «${size}» не указано количество.`),xl("Faqat o'lchamli tovar uchun 48,2/50,5 ko'rinishida yozing.","Для товара только с размерами укажите 48,2/50,5."));
+          variants.push({size,color:null,qty:0});
+        }else variants.push({size,color:null,qty});
+      }
+    }
+
+    const stockString=String(stockText??'').trim();
+    let stock=null;
+    if(stockString){
+      const parsed=numValue(stockText);
+      if(!Number.isFinite(parsed)||parsed<0||!Number.isInteger(parsed))addError('STOCK_INVALID',xl(`Qator ${excelRow}: Soni musbat butun son bo'lishi kerak.`,`Строка ${excelRow}: количество должно быть целым неотрицательным числом.`),xl("Masalan: 15","Например: 15"));
+      else stock=parsed;
+    }
+    const variantTotal=variants.reduce((sum,v)=>sum+(Number(v.qty)||0),0);
+    if(variants.length&&stock!==null&&stock!==variantTotal)addWarning('TOTAL_STOCK_MISMATCH',xl(`Qator ${excelRow}: Soni ${stock} ta, variantlar yig'indisi ${variantTotal} ta. Importda ${variantTotal} ta olinadi.`,`Строка ${excelRow}: количество ${stock}, сумма вариантов ${variantTotal}. При импорте будет ${variantTotal}.`),xl("Soni ustunini variantlar yig'indisiga tenglang yoki bo'sh qoldiring.","Сделайте общее количество равным сумме вариантов или оставьте пустым."));
+    if(!variants.length&&stock===null)addError('STOCK_REQUIRED',xl(`Qator ${excelRow}: oddiy tovar uchun Soni ko'rsatilmagan.`,`Строка ${excelRow}: для обычного товара не указано количество.`),xl("Soni ustuniga 0 yoki undan katta butun son yozing.","Укажите в столбце количества целое число от 0."));
+    return {variants,stock:variants.length?variantTotal:(stock??0),issues};
   }
   async function sha256(file) {
     const buf=await file.arrayBuffer();
@@ -282,6 +366,71 @@
     return {canonical,newPaths,aliases};
   }
 
+  function existingLeafId(rawPath) {
+    const {byParent,byId,aliasMap}=buildCategoryMaps(); let parentId=null;
+    for(let i=0;i<rawPath.length;i++){
+      const rawName=rawPath[i]; const key=pathKey(rawPath.slice(0,i+1)); const decision=state.decisions[key];
+      if(decision?.type==='new')return null;
+      if(decision?.type==='existing'){
+        if(!byId.has(String(decision.targetCategoryId)))return null;
+        parentId=String(decision.targetCategoryId); continue;
+      }
+      const siblings=byParent.get(parentKey(parentId))||[];
+      const exact=siblings.find(c=>norm(c.name)===norm(rawName));
+      if(exact){parentId=String(exact.id);continue;}
+      const aliasTarget=aliasMap.get(`${parentKey(parentId)}|${norm(rawName)}`);
+      if(aliasTarget&&byId.has(aliasTarget)){parentId=aliasTarget;continue;}
+      return null;
+    }
+    return parentId;
+  }
+
+  function analyzeRows() {
+    const issues=[...(state.baseRowIssues||[])];
+    const exactSeen=new Map(); const productSeen=new Map();
+    const activeProducts=(products||[]).filter(p=>String(p.status||'').toUpperCase()!=='DELETED');
+    for(const r of state.rows){
+      if(r.price<0)issues.push(makeRowIssue('ERROR','PRICE_NEGATIVE',r.excelRow,xl(`Qator ${r.excelRow}: narx manfiy bo'lishi mumkin emas.`,`Строка ${r.excelRow}: цена не может быть отрицательной.`),xl("0 yoki undan katta narx yozing.","Укажите цену от 0.")));
+      if(r.oldPriceRaw&&r.oldPrice===null)issues.push(makeRowIssue('ERROR','OLD_PRICE_INVALID',r.excelRow,xl(`Qator ${r.excelRow}: eski narx noto'g'ri.`,`Строка ${r.excelRow}: неверная старая цена.`),xl("Eski narxni son bilan yozing yoki bo'sh qoldiring.","Укажите старую цену числом или оставьте пустой.")));
+      if(r.oldPrice!==null&&r.oldPrice<=r.price)issues.push(makeRowIssue('WARNING','OLD_PRICE_NOT_HIGHER',r.excelRow,xl(`Qator ${r.excelRow}: eski narx yangi narxdan katta emas; eski narx saqlanmaydi.`,`Строка ${r.excelRow}: старая цена не выше новой и не будет сохранена.`),xl("Chegirma bo'lsa eski narxni kattaroq yozing.","Для скидки укажите старую цену выше новой.")));
+
+      const productKey=`${pathKey(r.categoryPath)}|${norm(r.name)}`;
+      const exactKey=[productKey,r.price,r.oldPrice??'',r.stock,norm(r.nameRu),norm(r.desc),norm(r.descRu),norm(r.sizeText),norm(r.colorText)].join('|');
+      const isExactDuplicate=exactSeen.has(exactKey);
+      if(isExactDuplicate)issues.push(makeRowIssue('ERROR','ROW_DUPLICATE',r.excelRow,xl(`Qator ${r.excelRow}: ${exactSeen.get(exactKey)}-qator bilan aynan bir xil.`,`Строка ${r.excelRow}: полностью совпадает со строкой ${exactSeen.get(exactKey)}.`),xl("Takroriy qatorni olib tashlang.","Удалите повторяющуюся строку.")));
+      else exactSeen.set(exactKey,r.excelRow);
+      if(!productSeen.has(productKey))productSeen.set(productKey,r.excelRow);
+      else if(!isExactDuplicate){
+        const first=productSeen.get(productKey);
+        if(first!==r.excelRow)issues.push(makeRowIssue('WARNING','PRODUCT_NAME_DUPLICATE',r.excelRow,xl(`Qator ${r.excelRow}: shu katalogda “${r.name}” nomi ${first}-qatorda ham bor.`,`Строка ${r.excelRow}: название «${r.name}» уже есть в строке ${first} этого каталога.`),xl("Bu alohida tovar ekanini tekshiring.","Проверьте, что это отдельный товар.")));
+      }
+
+      const leafId=existingLeafId(r.categoryPath);
+      if(leafId&&activeProducts.some(p=>String(p.categoryId??p.category_id??'')===String(leafId)&&norm(p.name)===norm(r.name))){
+        issues.push(makeRowIssue('WARNING','PRODUCT_EXISTS',r.excelRow,xl(`Qator ${r.excelRow}: “${r.name}” shu katalogda bazada mavjud bo'lishi mumkin.`,`Строка ${r.excelRow}: товар «${r.name}», возможно, уже есть в этом каталоге.`),xl("Admin katalogidagi mavjud tovarni tekshiring.","Проверьте существующий товар в админ-каталоге.")));
+      }
+    }
+    state.rowIssues=issues;
+  }
+
+  function correctCategory(key) {
+    const issue=state.issues.find(x=>x.key===key); if(!issue)return;
+    const next=prompt(xl('Katalog nomini to‘g‘rilang:','Исправьте название каталога:'),issue.rawName);
+    if(next===null)return; const corrected=String(next).trim();
+    if(!corrected)return alert(xl("Katalog nomi bo'sh bo'lmasin.","Название каталога не должно быть пустым."));
+    const level=issue.rawPath.length-1;
+    for(const r of state.rows){
+      if(pathKey(r.categoryPath.slice(0,level+1))===key)r.categoryPath[level]=corrected;
+    }
+    for(const r of state.sourceRows||[]){
+      if(pathKey((r.categoryPath||[]).slice(0,level+1))===key)r.categoryPath[level]=corrected;
+    }
+    state.decisions={}; analyzeIssues(state.rows); analyzeRows(); rerender();
+  }
+  function acceptSuggestionAt(index){const issue=state.issues[Number(index)];if(issue)acceptSuggestion(issue.key);}
+  function approveNewAt(index){const issue=state.issues[Number(index)];if(issue)approveNew(issue.key);}
+  function correctCategoryAt(index){const issue=state.issues[Number(index)];if(issue)correctCategory(issue.key);}
+
   async function handleFile(event) {
     const file=event?.target?.files?.[0]; if(!file)return;
     state.busy=true;state.busyText=xl('Excel tekshirilmoqda...','Excel проверяется...');state.result=null;rerender();
@@ -311,58 +460,89 @@
       };
       if(!cols.name||!cols.price)throw new Error(xl('Tovar nomi yoki Tovar narxi ustuni topilmadi','Не найден столбец названия или цены товара'));
 
-      let lastPath=[]; const rows=[]; const warnings=[];
+      let lastPath=[]; const rows=[]; const baseIssues=[]; const sourceRows=[];
       for(let r=2;r<=ws.rowCount;r++){
         const row=ws.getRow(r); const catVals=catCols.map(x=>cellText(row.getCell(x.col)));
-        const anyCat=catVals.some(Boolean); let effective;
+        const anyCat=catVals.some(Boolean); let effective; let categoryGap=false;
         if(!anyCat) effective=[...lastPath];
         else{
           const deepest=catVals.reduce((m,v,i)=>v?i:m,-1); effective=[...lastPath];
-          for(let i=0;i<=deepest;i++){if(catVals[i])effective[i]=catVals[i]; else if(!effective[i])effective[i]='';}
+          for(let i=0;i<=deepest;i++){
+            if(catVals[i])effective[i]=catVals[i];
+            else if(!effective[i]){effective[i]='';categoryGap=true;}
+          }
           effective=effective.slice(0,deepest+1).filter(Boolean); lastPath=[...effective];
         }
         const name=cellText(row.getCell(cols.name));
         const priceRaw=cellText(row.getCell(cols.price));
-        const other=[cols.stock,cols.desc,cols.size,cols.color].filter(Boolean).map(c=>cellText(row.getCell(c))).join('');
-        if(!name && !priceRaw && !other)continue;
-        if(!name){warnings.push(xl(`Qator ${r}: tovar nomi yo'q`,`Строка ${r}: нет названия товара`));continue;}
-        const price=numValue(row.getCell(cols.price).value); if(!Number.isFinite(price)){warnings.push(xl(`Qator ${r}: narx noto'g'ri`,`Строка ${r}: неверная цена`));continue;}
-        const oldPrice=cols.oldPrice?numValue(row.getCell(cols.oldPrice).value):NaN;
-        const stock=cols.stock?numValue(row.getCell(cols.stock).value):0;
+        const nameRu=cols.nameRu?cellText(row.getCell(cols.nameRu)):'';
+        const oldPriceRaw=cols.oldPrice?cellText(row.getCell(cols.oldPrice)):'';
+        const stockRaw=cols.stock?cellText(row.getCell(cols.stock)):'';
+        const desc=cols.desc?cellText(row.getCell(cols.desc)):'';
+        const descRu=cols.descRu?cellText(row.getCell(cols.descRu)):'';
         const sizeText=cols.size?cellText(row.getCell(cols.size)):'';
         const colorText=cols.color?cellText(row.getCell(cols.color)):'';
-        const variants=parseVariants(sizeText,colorText);
-        const finalStock=variants.length?variants.reduce((s,v)=>s+(Number(v.qty)||0),0):(Number.isFinite(stock)?Math.max(0,Math.trunc(stock)):0);
+        const other=[nameRu,oldPriceRaw,stockRaw,desc,descRu,sizeText,colorText].join('');
+        if(!name && !priceRaw && !other)continue;
+        const source={excelRow:r,categoryPath:[...effective],name,nameRu,priceRaw,oldPriceRaw,stockRaw,desc,descRu,sizeText,colorText};
+        sourceRows.push(source);
+        if(categoryGap)baseIssues.push(makeRowIssue('ERROR','CATEGORY_GAP',r,xl(`Qator ${r}: katalog yo'lida yuqori bosqich bo'sh qolgan.`,`Строка ${r}: в пути каталога пропущен верхний уровень.`),xl("Bosh katalogdan boshlab yo'lni to'ldiring yoki yuqoridagi yo'lni davom ettiring.","Заполните путь от корневого каталога или продолжите путь сверху.")));
+        if(!effective.length)baseIssues.push(makeRowIssue('WARNING','CATEGORY_EMPTY',r,xl(`Qator ${r}: katalog ko'rsatilmagan; tovar bosh darajaga tushadi.`,`Строка ${r}: каталог не указан; товар попадёт на корневой уровень.`),xl("Kerak bo'lsa katalog yo'lini kiriting.","При необходимости укажите путь каталога.")));
+        if(!name){baseIssues.push(makeRowIssue('ERROR','NAME_REQUIRED',r,xl(`Qator ${r}: tovar nomi yo'q.`,`Строка ${r}: нет названия товара.`),xl("Tovar nomi ustunini to'ldiring.","Заполните название товара.")));continue;}
+        const price=numValue(row.getCell(cols.price).value);
+        if(!priceRaw||!Number.isFinite(price)){baseIssues.push(makeRowIssue('ERROR','PRICE_INVALID',r,xl(`Qator ${r}: narx noto'g'ri.`,`Строка ${r}: неверная цена.`),xl("Tovar narxini 0 yoki undan katta son bilan yozing.","Укажите цену товара числом от 0.")));continue;}
+        const oldPrice=cols.oldPrice?numValue(row.getCell(cols.oldPrice).value):NaN;
+        const variantData=parseVariantDetails(sizeText,colorText,stockRaw,r);
+        baseIssues.push(...variantData.issues);
         rows.push({
-          excelRow:r,categoryPath:effective,name,nameRu:cols.nameRu?cellText(row.getCell(cols.nameRu)):'',price,
-          oldPrice:Number.isFinite(oldPrice)?oldPrice:null,stock:finalStock,desc:cols.desc?cellText(row.getCell(cols.desc)):'',
-          descRu:cols.descRu?cellText(row.getCell(cols.descRu)):'',variants,sizeText,colorText
+          excelRow:r,categoryPath:effective,name,nameRu,price,priceRaw,oldPriceRaw,
+          oldPrice:Number.isFinite(oldPrice)?oldPrice:null,stock:variantData.stock,desc,descRu,
+          variants:variantData.variants,sizeText,colorText
         });
       }
-      if(!rows.length)throw new Error(xl('Import qilinadigan tovar topilmadi','Товары для импорта не найдены'));
-      state.rows=rows;state.parseWarnings=warnings;state.decisions={};analyzeIssues(rows);
-    }catch(e){console.error(e);alert(xl("❌ Excelni o'qishda xatolik: ",'❌ Ошибка чтения Excel: ')+(e.message||e));state.rows=[];state.issues=[];}
+      if(!rows.length&&!baseIssues.length)throw new Error(xl('Import qilinadigan tovar topilmadi','Товары для импорта не найдены'));
+      state.rows=rows;state.sourceRows=sourceRows;state.baseRowIssues=baseIssues;state.decisions={};
+      analyzeIssues(rows);analyzeRows();
+    }catch(e){console.error(e);alert(xl("❌ Excelni o'qishda xatolik: ",'❌ Ошибка чтения Excel: ')+(e.message||e));state.rows=[];state.issues=[];state.baseRowIssues=[];state.rowIssues=[];state.sourceRows=[];}
     finally{state.busy=false;state.busyText='';rerender();}
   }
 
   function acceptSuggestion(key) {
     const issue=state.issues.find(x=>x.key===key); if(!issue||!issue.targetCategoryId)return;
     state.decisions[key]={type:'existing',targetCategoryId:issue.targetCategoryId,targetName:issue.targetName};
-    analyzeIssues(state.rows);rerender();
+    analyzeIssues(state.rows);analyzeRows();rerender();
   }
   function approveNew(key) {
     const issue=state.issues.find(x=>x.key===key); if(!issue)return;
-    state.decisions[key]={type:'new',name:issue.rawName}; analyzeIssues(state.rows);rerender();
+    state.decisions[key]={type:'new',name:issue.rawName}; analyzeIssues(state.rows);analyzeRows();rerender();
   }
   function reset() {
-    Object.assign(state,{busy:false,busyText:'',file:null,fileName:'',fileHash:'',rows:[],issues:[],decisions:{},parseWarnings:[],result:null});rerender();
+    Object.assign(state,{busy:false,busyText:'',file:null,fileName:'',fileHash:'',rows:[],issues:[],decisions:{},baseRowIssues:[],rowIssues:[],sourceRows:[],progressDone:0,progressTotal:0,result:null});rerender();
+  }
+
+  function downloadErrorRowsCsv() {
+    const errors=state.rowIssues.filter(x=>x.severity==='ERROR'); if(!errors.length)return;
+    const byRow=new Map();
+    for(const issue of errors){if(!byRow.has(issue.excelRow))byRow.set(issue.excelRow,[]);byRow.get(issue.excelRow).push(issue);}
+    const headers=['Excel qatori',"Katalog yo'li",'Tovar nomi','Tovar nomi RU','Tovar narxi','Eski narxi','Soni','Izohi','Izohi RU',"O'lchami",'Rang','Xato sababi','Tuzatish tavsiyasi'];
+    const quote=v=>`"${String(v??'').replace(/"/g,'""')}"`;
+    const lines=[headers.map(quote).join(',')];
+    for(const src of state.sourceRows){
+      const found=byRow.get(src.excelRow); if(!found)continue;
+      lines.push([src.excelRow,(src.categoryPath||[]).join(' / '),src.name,src.nameRu,src.priceRaw,src.oldPriceRaw,src.stockRaw,src.desc,src.descRu,src.sizeText,src.colorText,found.map(x=>x.message).join(' | '),found.map(x=>x.suggestion).join(' | ')].map(quote).join(','));
+    }
+    const blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}); const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=`${(state.fileName||'FITCORE_import').replace(/\.xlsx$/i,'')}_xato_qatorlar.csv`; document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
   }
 
   async function doImport() {
+    if(state.busy)return;
     if(!state.rows.length)return alert(xl('Avval Excel faylni tanlang.','Сначала выберите файл Excel.'));
-    analyzeIssues(state.rows);
+    analyzeIssues(state.rows);analyzeRows();
     if(state.issues.length)return alert(`⚠️ ${state.issues.length} ${xl('ta katalog masalasini avval hal qiling.','вопросов по каталогам: сначала решите их.')}`);
-    state.busy=true;state.busyText=xl('Tovarlar import qilinmoqda...','Товары импортируются...');state.result=null;rerender();
+    const blocking=state.rowIssues.filter(x=>x.severity==='ERROR');
+    if(blocking.length)return alert(`❌ ${blocking.length} ${xl('ta qator xatosini avval tuzating.','ошибок строк: сначала исправьте их.')}`);
+    state.busy=true;state.progressDone=0;state.progressTotal=state.rows.length;state.busyText=xl(`Tovarlar import qilinmoqda: 0 / ${state.rows.length}`,`Импорт товаров: 0 / ${state.rows.length}`);state.result=null;rerender();
     let batchId=null;
     try{
       const prepared=[]; const approvedMap=new Map(); const aliasMap=new Map();
@@ -370,77 +550,107 @@
         const resolved=resolveCanonicalPath(r.categoryPath);
         for(const p of resolved.newPaths)approvedMap.set(pathKey(p),p);
         for(const a of resolved.aliases)aliasMap.set(`${parentKey(a.parentCategoryId)}|${norm(a.alias)}`,a);
-        prepared.push({categoryPath:resolved.canonical,name:r.name,nameRu:r.nameRu||null,price:r.price,oldPrice:r.oldPrice,stock:r.stock,desc:r.desc,descRu:r.descRu||null,variants:r.variants});
+        prepared.push({excelRow:r.excelRow,categoryPath:resolved.canonical,name:r.name,nameRu:r.nameRu||null,price:r.price,oldPrice:r.oldPrice,stock:r.stock,desc:r.desc,descRu:r.descRu||null,variants:r.variants});
       }
-      const chunks=[];for(let i=0;i<prepared.length;i+=100)chunks.push(prepared.slice(i,i+100));
+      const chunks=[];for(let i=0;i<prepared.length;i+=75)chunks.push(prepared.slice(i,i+75));
       const started=await callApi('start_import_batch',{fileName:state.fileName,fileHash:state.fileHash,totalRows:prepared.length});
       batchId=Number(started.batchId);
       if(!batchId)throw new Error('import_batch_start_failed');
+      state.lastBatch={id:batchId,fileName:state.fileName,status:'IN_PROGRESS',totalRows:prepared.length,importedRows:0};
       let imported=0; const createdCats=[]; const importedProducts=[];
       for(let i=0;i<chunks.length;i++){
         const data=await callApi('bulk_import_products',{
-          rows:chunks[i],approvedNewPaths:[...approvedMap.values()],aliases:[...aliasMap.values()],
-          batchId,isFinal:i===chunks.length-1
+          rows:chunks[i],approvedNewPaths:[...approvedMap.values()],aliases:i===0?[...aliasMap.values()]:[],
+          batchId,isFinal:i===chunks.length-1,offset:imported
         });
         batchId=data.batchId; imported+=Number(data.imported)||0;
+        state.progressDone=imported;state.busyText=xl(`Tovarlar import qilinmoqda: ${imported} / ${prepared.length}`,`Импорт товаров: ${imported} / ${prepared.length}`);
+        state.lastBatch={...state.lastBatch,importedRows:imported,status:i===chunks.length-1?'COMPLETED':'IN_PROGRESS'};
         (data.categories||[]).forEach(c=>{createdCats.push(c);try{upsertLocalCategory(c);}catch{}});
         (data.products||[]).forEach(p=>{importedProducts.push(p);try{upsertLocalProduct(p);}catch{}});
+        rerender();
       }
       try{saveCatalogCache();}catch{}
-      state.result={ok:true,batchId,imported,createdCategories:createdCats.length,rasmsiz:importedProducts.filter(p=>!p.img).length};
+      const uniqueCategories=new Set(createdCats.map(c=>String(c.id))).size;
+      state.result={ok:true,batchId,imported,createdCategories:uniqueCategories,rasmsiz:importedProducts.filter(p=>!p.img).length,warnings:state.rowIssues.filter(x=>x.severity==='WARNING').length};
+      state.lastBatch={...state.lastBatch,status:'COMPLETED',importedRows:imported};
     }catch(e){
       console.error(e);
-      if(batchId){try{await callApi('rollback_import_batch',{batchId});}catch(re){console.error('auto rollback failed',re);}}
-      state.result={ok:false,batchId,error:e.message||String(e),rolledBack:!!batchId};
-    }finally{state.busy=false;state.busyText='';rerender();}
+      let autoRolledBack=false;
+      if(batchId){try{await callApi('rollback_import_batch',{batchId});autoRolledBack=true;}catch(re){console.error('auto rollback failed',re);}}
+      const raw=e.message||String(e); const serverRows=Array.isArray(e.details?.errors)?e.details.errors:[];
+      const serverMessage=serverRows.length?serverRows.slice(0,10).map(x=>xl(`Qator ${x.row}: ${x.error}`,`Строка ${x.row}: ${x.error}`)).join(' · '):'';
+      const friendly=raw==='duplicate_import'?xl('Bu fayl avval muvaffaqiyatli import qilingan. Duplicate import bloklandi.','Этот файл уже успешно импортирован. Повторный импорт заблокирован.'):raw==='import_in_progress'?xl('Bu fayl bo‘yicha import allaqachon ketmoqda. Ikkinchi import bloklandi.','Импорт этого файла уже выполняется. Повторный запуск заблокирован.'):(serverMessage||raw);
+      state.result={ok:false,batchId,error:autoRolledBack?friendly:`${friendly}${batchId?xl(' Avtomatik rollback tugamadi; batchni qo‘lda bekor qiling.',' Автоматический откат не завершён; отмените batch вручную.'):''}`,rolledBack:autoRolledBack};
+      if(batchId)state.lastBatch={...state.lastBatch,status:autoRolledBack?'ROLLED_BACK':'FAILED'};
+      else if(raw==='import_in_progress'){try{const last=await callApi('get_last_import_batch',{});state.lastBatch=last.batch||state.lastBatch;}catch{}}
+    }finally{state.busy=false;state.busyText='';state.progressDone=0;state.progressTotal=0;rerender();}
   }
 
   async function rollbackBatch() {
-    const id=state.result?.batchId; if(!id)return;
+    if(state.busy)return;
+    const id=state.result?.batchId||state.lastBatch?.id; if(!id)return;
     if(!confirm(xl(`Import #${id} bekor qilinsinmi? Shu importdagi tovarlar o'chiriladi.`,`Отменить импорт #${id}? Товары из этого импорта будут удалены.`)))return;
     state.busy=true;state.busyText=xl('Import bekor qilinmoqda...','Импорт отменяется...');rerender();
-    try{await callApi('rollback_import_batch',{batchId:id});state.result={...state.result,rolledBack:true,ok:false,error:xl('Import admin tomonidan bekor qilindi','Импорт отменён администратором')};await loadCatalog();}
+    try{await callApi('rollback_import_batch',{batchId:id});state.result={...(state.result||{}),batchId:id,rolledBack:true,ok:false,error:xl('Import admin tomonidan bekor qilindi','Импорт отменён администратором')};state.lastBatch={...(state.lastBatch||{}),id,status:'ROLLED_BACK'};await loadCatalog();}
     catch(e){alert(xl('❌ Bekor qilishda xato: ','❌ Ошибка отмены: ')+(e.message||e));}
     finally{state.busy=false;state.busyText='';rerender();}
   }
 
   function renderModal() {
-    const issueHtml=state.issues.map(issue=>{
+    const errors=state.rowIssues.filter(x=>x.severity==='ERROR');
+    const warnings=state.rowIssues.filter(x=>x.severity==='WARNING');
+    const errorRows=new Set(errors.map(x=>x.excelRow));
+    const readyRows=state.rows.filter(r=>!errorRows.has(r.excelRow)).length;
+    const newCategoryCount=state.issues.filter(x=>x.type==='NEW').length+Object.values(state.decisions).filter(x=>x.type==='new').length;
+    const similarCount=state.issues.filter(x=>x.type==='TYPO').length;
+    const duplicateCount=state.rowIssues.filter(x=>['ROW_DUPLICATE','PRODUCT_NAME_DUPLICATE','PRODUCT_EXISTS','VARIANT_DUPLICATE','SIZE_DUPLICATE'].includes(x.code)).length;
+    const mismatchCount=state.rowIssues.filter(x=>String(x.code).includes('MISMATCH')).length;
+    const issueHtml=state.issues.map((issue,index)=>{
       if(issue.type==='TYPO')return `
         <div class="border border-amber-300 bg-amber-50 rounded-2xl p-3 space-y-2">
           <p class="font-bold text-amber-900">⚠️ ${xl("O'xshash katalog topildi",'Найден похожий каталог')}</p>
           <p><b>${esc(issue.rawName)}</b> → <b class="text-blue-700">${esc(issue.targetName)}</b> <span class="text-gray-400">(${Math.round(issue.score*100)}%)</span></p>
           <p class="text-[10px] text-gray-500">${xl("Yo'l",'Путь')}: ${esc(issue.rawPath.join(' / '))}</p>
-          <div class="flex gap-2"><button onclick="FitcoreExcel.acceptSuggestion('${issue.key}')" class="flex-1 bg-blue-600 text-white py-2 rounded-xl font-bold">✅ ${xl('Mavjud katalog','Существующий каталог')}</button><button onclick="FitcoreExcel.approveNew('${issue.key}')" class="flex-1 bg-white border border-amber-400 text-amber-800 py-2 rounded-xl font-bold">➕ ${xl('Yangi yaratish','Создать новый')}</button></div>
+          <div class="grid grid-cols-1 gap-2"><button onclick="FitcoreExcel.acceptSuggestionAt(${index})" class="bg-blue-600 text-white py-2 rounded-xl font-bold">✅ ${xl('Mavjud katalogni tanlash','Выбрать существующий каталог')}</button><button onclick="FitcoreExcel.correctCategoryAt(${index})" class="bg-white border border-slate-300 text-slate-700 py-2 rounded-xl font-bold">✏️ ${xl("Nomni qo'lda to'g'rilash",'Исправить название вручную')}</button><button onclick="FitcoreExcel.approveNewAt(${index})" class="bg-white border border-amber-400 text-amber-800 py-2 rounded-xl font-bold">➕ ${xl('Ataylab yangi yaratish','Создать как новый')}</button></div>
         </div>`;
       return `
         <div class="border border-blue-200 bg-blue-50 rounded-2xl p-3 space-y-2">
           <p class="font-bold text-blue-900">🆕 ${xl('Yangi katalog topildi','Найден новый каталог')}</p>
           <p><b>${esc(issue.rawName)}</b></p><p class="text-[10px] text-gray-500">${xl("Yo'l",'Путь')}: ${esc(issue.rawPath.join(' / '))}</p>
-          <button onclick="FitcoreExcel.approveNew('${issue.key}')" class="w-full bg-blue-600 text-white py-2 rounded-xl font-bold">✅ ${xl('Yangi katalog sifatida tasdiqlash','Подтвердить как новый каталог')}</button>
+          <div class="grid grid-cols-1 gap-2"><button onclick="FitcoreExcel.correctCategoryAt(${index})" class="bg-white border border-slate-300 text-slate-700 py-2 rounded-xl font-bold">✏️ ${xl("Nomni qo'lda to'g'rilash",'Исправить название вручную')}</button><button onclick="FitcoreExcel.approveNewAt(${index})" class="bg-blue-600 text-white py-2 rounded-xl font-bold">✅ ${xl('Yangi katalog sifatida tasdiqlash','Подтвердить как новый каталог')}</button></div>
         </div>`;
     }).join('');
+    const rowIssueHtml=[...errors,...warnings].slice(0,50).map(x=>`<div class="${x.severity==='ERROR'?'bg-red-50 border-red-200 text-red-900':'bg-amber-50 border-amber-200 text-amber-900'} border rounded-xl p-2"><p class="font-bold">${x.severity==='ERROR'?'❌':'⚠️'} ${esc(x.message)}</p><p class="text-[10px] opacity-75">${esc(x.suggestion)}</p></div>`).join('');
     const uniquePaths=new Set(state.rows.map(r=>pathKey(r.categoryPath))).size;
+    const progressPercent=state.progressTotal?Math.min(100,Math.round(state.progressDone/state.progressTotal*100)):0;
+    const canRollbackLast=(!state.result||(!state.result.ok&&!state.result.batchId))&&state.lastBatch?.id&&['COMPLETED','IN_PROGRESS','FAILED'].includes(state.lastBatch?.status);
     return `
       <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3" onclick="activePopupModal=null; render();">
         <div class="bg-white rounded-3xl p-4 max-w-md w-full max-h-[94vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
           <div class="flex items-center justify-between border-b pb-2"><div><h3 class="font-black text-base">📊 ${xl('Excel orqali tovar importi','Импорт товаров из Excel')}</h3><p class="text-[10px] text-gray-400">${xl('Xavfsiz preview + katalog typo tekshiruvi','Безопасный предпросмотр + проверка опечаток каталогов')}</p></div><button onclick="activePopupModal=null;render();" class="bg-gray-100 rounded-xl px-3 py-1.5 font-bold">✕</button></div>
-          ${state.busy?`<div class="bg-blue-50 border border-blue-200 p-4 rounded-2xl text-center"><div class="w-7 h-7 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div><b>${esc(state.busyText||xl('Bajarilmoqda...','Выполняется...'))}</b></div>`:''}
+          ${state.busy?`<div class="bg-blue-50 border border-blue-200 p-4 rounded-2xl text-center"><div class="w-7 h-7 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div><b>${esc(state.busyText||xl('Bajarilmoqda...','Выполняется...'))}</b>${state.progressTotal?`<div class="mt-3 h-2 bg-blue-100 rounded-full overflow-hidden"><div class="h-full bg-blue-600 transition-all" style="width:${progressPercent}%"></div></div><p class="mt-1 text-[10px] text-blue-700">${progressPercent}%</p>`:''}</div>`:''}
           <div class="grid grid-cols-2 gap-2">
             <button onclick="FitcoreExcel.downloadTemplate()" ${state.busy?'disabled':''} class="bg-slate-900 text-white font-bold py-2.5 rounded-xl">📥 ${xl('Yangi shablon','Новый шаблон')}</button>
             <label class="bg-blue-600 text-white font-bold py-2.5 rounded-xl text-center cursor-pointer ${state.busy?'opacity-50':''}" >📤 ${xl('Excel tanlash','Выбрать Excel')}<input type="file" accept=".xlsx" class="hidden" onchange="FitcoreExcel.handleFile(event)" ${state.busy?'disabled':''}></label>
           </div>
           <div class="bg-gray-50 border rounded-2xl p-3 text-[10px] text-gray-600">💡 ${xl("Shablonda mavjud kataloglar <b>Kataloglar</b> varag'ida ko'rinadi va kategoriya ustunlarida dropdown bor. Pastdagi qatorda katalog kataklari bo'sh qolsa, <b>yuqoridagi oxirgi katalog davom etadi</b>.","В шаблоне существующие каталоги видны на листе <b>Kataloglar</b>, а в столбцах категорий есть выпадающие списки. Если в следующей строке каталог пуст, <b>продолжается последний каталог сверху</b>.")}</div>
-          ${state.fileName?`<div class="bg-white border rounded-2xl p-3"><b>${xl('Fayl','Файл')}:</b> ${esc(state.fileName)}<br><b>${xl('Tovar','Товар')}:</b> ${state.rows.length} ${xl('ta','шт.')} · <b>${xl("Katalog yo'li",'Пути каталогов')}:</b> ${uniquePaths} ${xl('ta','шт.')} · <b>${xl('Hal qilinmagan katalog','Нерешённые каталоги')}:</b> <span class="${state.issues.length?'text-red-600':'text-green-600'} font-black">${state.issues.length}</span></div>`:''}
-          ${state.parseWarnings.length?`<div class="bg-red-50 border border-red-200 rounded-2xl p-3"><b>❌ ${xl('Excel qator xatolari','Ошибки строк Excel')} (${state.parseWarnings.length})</b><div class="mt-1 max-h-24 overflow-y-auto">${state.parseWarnings.slice(0,20).map(x=>`<p>• ${esc(x)}</p>`).join('')}</div></div>`:''}
+          ${state.fileName?`<div class="bg-white border border-slate-200 rounded-2xl p-3 space-y-2"><p><b>${xl('Fayl','Файл')}:</b> ${esc(state.fileName)}</p><div class="grid grid-cols-3 gap-1 text-center"><div class="bg-slate-50 rounded-xl p-2"><b class="block text-base">${state.sourceRows.length}</b>${xl('jami qator','всего строк')}</div><div class="bg-emerald-50 rounded-xl p-2"><b class="block text-base text-emerald-700">${readyRows}</b>${xl('tayyor','готово')}</div><div class="bg-red-50 rounded-xl p-2"><b class="block text-base text-red-700">${errors.length}</b>${xl('xato','ошибок')}</div><div class="bg-amber-50 rounded-xl p-2"><b class="block text-base text-amber-700">${warnings.length}</b>${xl('ogohlantirish','предупр.')}</div><div class="bg-blue-50 rounded-xl p-2"><b class="block text-base text-blue-700">${newCategoryCount}</b>${xl('yangi katalog','новых каталогов')}</div><div class="bg-violet-50 rounded-xl p-2"><b class="block text-base text-violet-700">${similarCount}</b>${xl("o'xshash nom",'похожих имён')}</div></div><p class="text-[10px] text-slate-500">${xl("Katalog yo'llari",'Пути каталогов')}: ${uniquePaths} · ${xl('Duplicate belgilar','Признаки дублей')}: ${duplicateCount} · ${xl('Variant qoldiq farqi','Расхождения остатков')}: ${mismatchCount}</p></div>`:''}
+          ${rowIssueHtml?`<div class="space-y-2"><div class="flex items-center justify-between"><h4 class="font-black">${xl('Qator tekshiruvi','Проверка строк')}</h4>${errors.length?`<button onclick="FitcoreExcel.downloadErrorRowsCsv()" class="bg-red-600 text-white px-3 py-1.5 rounded-xl font-bold">⬇️ ${xl('Xato CSV','CSV ошибок')}</button>`:''}</div><div class="space-y-1 max-h-56 overflow-y-auto">${rowIssueHtml}</div>${state.rowIssues.length>50?`<p class="text-[10px] text-gray-500">+ ${state.rowIssues.length-50} ${xl('ta boshqa xabar','других сообщений')}</p>`:''}</div>`:''}
           ${issueHtml?`<div class="space-y-2"><h4 class="font-black">${xl('Katalog qarorlari','Решения по каталогам')}</h4>${issueHtml}</div>`:''}
-          ${state.rows.length && !state.issues.length?`<div class="bg-green-50 border border-green-200 rounded-2xl p-3"><p class="font-bold text-green-800">✅ ${xl('Kataloglar tekshirildi. Importga tayyor.','Каталоги проверены. Готово к импорту.')}</p><p class="text-[10px] text-green-700">${xl("Rasmlar import qilinmaydi; keyin qo'lda qo'shiladi.",'Изображения не импортируются; их можно добавить вручную после импорта.')}</p></div>`:''}
-          ${state.result?`<div class="${state.result.ok?'bg-emerald-50 border-emerald-200':'bg-red-50 border-red-200'} border rounded-2xl p-3 space-y-1"><p class="font-black">${state.result.ok?xl('✅ Import tugadi','✅ Импорт завершён'):xl('❌ Import tugamadi','❌ Импорт не завершён')}</p>${state.result.ok?`<p>${state.result.imported} ${xl('ta tovar','товаров')} · ${state.result.createdCategories} ${xl('ta yangi katalog','новых каталогов')} · ${state.result.rasmsiz} ${xl('ta rasmsiz','без изображений')}</p>`:`<p>${esc(state.result.error||xl('Xato','Ошибка'))}</p>`}${state.result.batchId?`<p class="font-mono text-[10px]">Batch #${state.result.batchId}</p>`:''}${state.result.ok&&!state.result.rolledBack?`<button onclick="FitcoreExcel.rollbackBatch()" class="mt-2 w-full bg-red-600 text-white py-2 rounded-xl font-bold">↩️ ${xl('Shu importni bekor qilish','Отменить этот импорт')}</button>`:''}</div>`:''}
-          <div class="flex gap-2 pt-1">${state.rows.length?`<button onclick="FitcoreExcel.doImport()" ${state.busy||state.issues.length||state.parseWarnings.length?'disabled':''} class="flex-1 ${state.issues.length||state.parseWarnings.length?'bg-gray-200 text-gray-400':'bg-green-600 text-white'} font-black py-3 rounded-xl">✅ ${state.rows.length} ${xl('ta tovarni import qilish','товаров: импортировать')}</button>`:''}<button onclick="FitcoreExcel.reset()" class="bg-gray-100 text-gray-700 font-bold px-4 py-3 rounded-xl">${xl('Tozalash','Очистить')}</button></div>
+          ${state.rows.length && !state.issues.length && !errors.length?`<div class="bg-green-50 border border-green-200 rounded-2xl p-3"><p class="font-bold text-green-800">✅ ${xl('Preview tekshirildi. Importga tayyor.','Предпросмотр проверен. Готово к импорту.')}</p><p class="text-[10px] text-green-700">${warnings.length?xl(`${warnings.length} ta ogohlantirish importni bloklamaydi.`,`${warnings.length} предупреждений не блокируют импорт.`):''} ${xl("Rasmlar import qilinmaydi; keyin 'rasmi yo'q' filtri orqali qo'shiladi.","Изображения не импортируются; их можно добавить через фильтр «без изображения».")}</p></div>`:''}
+          ${state.result?`<div class="${state.result.ok?'bg-emerald-50 border-emerald-200':'bg-red-50 border-red-200'} border rounded-2xl p-3 space-y-1"><p class="font-black">${state.result.ok?xl('✅ Import tugadi','✅ Импорт завершён'):xl('❌ Import tugamadi','❌ Импорт не завершён')}</p>${state.result.ok?`<p>${state.result.imported} ${xl('ta tovar','товаров')} · ${state.result.createdCategories} ${xl('ta yangi katalog','новых каталогов')} · ${state.result.rasmsiz} ${xl('ta rasmsiz','без изображений')} · ${state.result.warnings||0} ${xl('ta ogohlantirish','предупреждений')}</p>`:`<p>${esc(state.result.error||xl('Xato','Ошибка'))}</p>`}${state.result.batchId?`<p class="font-mono text-[10px]">Batch #${state.result.batchId}</p>`:''}${state.result.batchId&&!state.result.rolledBack?`<button onclick="FitcoreExcel.rollbackBatch()" class="mt-2 w-full bg-red-600 text-white py-2 rounded-xl font-bold">↩️ ${xl('Shu importni bekor qilish','Отменить этот импорт')}</button>`:''}</div>`:''}
+          ${canRollbackLast?`<div class="bg-slate-50 border border-slate-200 rounded-2xl p-3"><p class="font-bold">${xl('Oxirgi import','Последний импорт')}: #${state.lastBatch.id}</p><p class="text-[10px] text-slate-500">${esc(state.lastBatch.fileName||'')} · ${state.lastBatch.importedRows||state.lastBatch.totalRows||0} ${xl('ta tovar','товаров')}</p><button onclick="FitcoreExcel.rollbackBatch()" class="mt-2 w-full bg-red-600 text-white py-2 rounded-xl font-bold">↩️ ${xl('Oxirgi importni bekor qilish','Отменить последний импорт')}</button></div>`:''}
+          <div class="flex gap-2 pt-1">${state.rows.length?`<button onclick="FitcoreExcel.doImport()" ${state.busy||state.issues.length||errors.length?'disabled':''} class="flex-1 ${state.issues.length||errors.length?'bg-gray-200 text-gray-400':'bg-green-600 text-white'} font-black py-3 rounded-xl">✅ ${state.rows.length} ${xl('ta tovarni import qilish','товаров: импортировать')}</button>`:''}<button onclick="FitcoreExcel.reset()" ${state.busy?'disabled':''} class="bg-gray-100 text-gray-700 font-bold px-4 py-3 rounded-xl">${xl('Tozalash','Очистить')}</button></div>
         </div>
       </div>`;
   }
 
-  async function prepare(){ return true; }
-  window.FitcoreExcel={prepare,renderModal,downloadTemplate,handleFile,acceptSuggestion,approveNew,doImport,rollbackBatch,reset,state};
+  async function prepare(){
+    if(state.prepared)return true; state.prepared=true;
+    try{const data=await callApi('get_last_import_batch',{});state.lastBatch=data.batch||null;}
+    catch(e){console.warn('Last import batch unavailable',e);}
+    return true;
+  }
+  window.FitcoreExcel={prepare,renderModal,downloadTemplate,handleFile,acceptSuggestionAt,approveNewAt,correctCategoryAt,downloadErrorRowsCsv,doImport,rollbackBatch,reset,state};
 })();
