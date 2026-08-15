@@ -1,4 +1,4 @@
-// FITCORE v2 — Excel import module. Lazy-loaded only for admins.
+// FITCORE v3 — Excel import module. Lazy-loaded only for admins.
 (() => {
   const EXCELJS_LOCAL = './vendor/exceljs.min.js?v=4.4.0';
   const EXCELJS_LOAD_TIMEOUT_MS = 9000;
@@ -21,6 +21,8 @@
     progressTotal: 0,
     templateStatus: null,
     result: null,
+    editingRow: null,
+    editSequential: false,
   };
 
   function esc(v) {
@@ -372,6 +374,69 @@
   function approveNewAt(index){const issue=state.issues[Number(index)];if(issue)approveNew(issue.key);}
   function correctCategoryAt(index){const issue=state.issues[Number(index)];if(issue)correctCategory(issue.key);}
 
+  function openRowEditor(excelRow, sequential=false) {
+    const rowNumber=Number(excelRow);
+    if(!state.sourceRows.some(r=>r.excelRow===rowNumber))return;
+    state.editingRow=rowNumber;
+    state.editSequential=!!sequential;
+    rerender();
+  }
+  function closeRowEditor(){state.editingRow=null;state.editSequential=false;rerender();}
+  function openFirstErrorEditor(){
+    const first=state.rowIssues.filter(x=>x.severity==='ERROR').map(x=>x.excelRow).sort((a,b)=>a-b)[0];
+    if(first)openRowEditor(first,true);
+  }
+  function rebuildSourceRow(source) {
+    const issues=[];
+    const r=source.excelRow;
+    const effective=Array.isArray(source.categoryPath)?source.categoryPath.map(normalizeCategorySegment).filter(Boolean):[];
+    if(source.categoryGap)issues.push(makeRowIssue('ERROR','CATEGORY_GAP',r,xl(`Qator ${r}: katalog yo'lida yuqori bosqich bo'sh qolgan.`,`Строка ${r}: в пути каталога пропущен верхний уровень.`),xl("Bosh katalogdan boshlab yo'lni to'ldiring yoki yuqoridagi yo'lni davom ettiring.","Заполните путь от корневого каталога или продолжите путь сверху.")));
+    if(!effective.length)issues.push(makeRowIssue('WARNING','CATEGORY_EMPTY',r,xl(`Qator ${r}: katalog ko'rsatilmagan; tovar bosh darajaga tushadi.`,`Строка ${r}: каталог не указан; товар попадёт на корневой уровень.`),xl("Kerak bo'lsa katalog yo'lini kiriting.","При необходимости укажите путь каталога.")));
+    const name=String(source.name||'').trim();
+    if(!name){
+      issues.push(makeRowIssue('ERROR','NAME_REQUIRED',r,xl(`Qator ${r}: tovar nomi yo'q.`,`Строка ${r}: нет названия товара.`),xl("Tovar nomi ustunini to'ldiring.","Заполните название товара.")));
+      return {row:null,issues};
+    }
+    const price=numValue(source.priceRaw);
+    if(!String(source.priceRaw??'').trim()||!Number.isFinite(price)){
+      issues.push(makeRowIssue('ERROR','PRICE_INVALID',r,xl(`Qator ${r}: narx noto'g'ri.`,`Строка ${r}: неверная цена.`),xl("Tovar narxini 0 yoki undan katta son bilan yozing.","Укажите цену товара числом от 0.")));
+      return {row:null,issues};
+    }
+    const oldPrice=numValue(source.oldPriceRaw);
+    const variantData=parseVariantDetails(source.sizeText,source.colorText,source.stockRaw,r);
+    issues.push(...variantData.issues);
+    return {row:{
+      excelRow:r,categoryPath:effective,name,nameRu:source.nameRu||'',price,priceRaw:String(source.priceRaw??''),oldPriceRaw:String(source.oldPriceRaw??''),
+      oldPrice:Number.isFinite(oldPrice)?oldPrice:null,stock:variantData.stock,desc:String(source.desc||''),descRu:source.descRu||'',
+      variants:variantData.variants,sizeText:String(source.sizeText||''),colorText:String(source.colorText||'')
+    },issues};
+  }
+  async function saveRowEditor() {
+    const excelRow=Number(state.editingRow); const source=state.sourceRows.find(r=>r.excelRow===excelRow); if(!source)return;
+    source.categoryPath=parseCategoryPath(document.getElementById('xe-path')?.value||''); source.categoryGap=false;
+    source.name=document.getElementById('xe-name')?.value.trim()||'';
+    source.priceRaw=document.getElementById('xe-price')?.value.trim()||'';
+    source.oldPriceRaw=document.getElementById('xe-oldprice')?.value.trim()||'';
+    source.stockRaw=document.getElementById('xe-stock')?.value.trim()||'';
+    source.desc=document.getElementById('xe-desc')?.value.trim()||'';
+    source.sizeText=document.getElementById('xe-size')?.value.trim()||'';
+    source.colorText=document.getElementById('xe-color')?.value.trim()||'';
+    const rebuilt=rebuildSourceRow(source);
+    state.rows=state.rows.filter(r=>r.excelRow!==excelRow);
+    if(rebuilt.row)state.rows.push(rebuilt.row);
+    state.rows.sort((a,b)=>a.excelRow-b.excelRow);
+    state.baseRowIssues=state.baseRowIssues.filter(x=>x.excelRow!==excelRow).concat(rebuilt.issues);
+    state.decisions={};
+    analyzeIssues(state.rows);analyzeRows();
+    state.fileHash=await fingerprintImportRows(state.rows);
+    if(state.editSequential){
+      const next=state.rowIssues.filter(x=>x.severity==='ERROR'&&x.excelRow!==excelRow).map(x=>x.excelRow).sort((a,b)=>a-b)[0];
+      state.editingRow=next||null;
+      if(!next)state.editSequential=false;
+    }else state.editingRow=null;
+    rerender();
+  }
+
   async function handleFile(event) {
     const file=event?.target?.files?.[0]; if(!file)return;
     state.busy=true;state.busyText=xl('Excel tekshirilmoqda...','Excel проверяется...');state.result=null;rerender();
@@ -416,7 +481,11 @@
       }
       const isNewSinglePathTemplate=!!pathCol;
       const dataStartRow=isNewSinglePathTemplate
-        ? Math.max(5,metadataTemplateId==='FITCORE_EXCEL_IMPORT_V2'&&metadataStartRow?metadataStartRow:5)
+        ? (metadataTemplateId==='FITCORE_EXCEL_IMPORT_V3'&&metadataStartRow
+          ? Math.max(6,metadataStartRow)
+          : metadataTemplateId==='FITCORE_EXCEL_IMPORT_V2'&&metadataStartRow
+            ? Math.max(5,metadataStartRow)
+            : 2)
         : 2;
 
       let lastPath=[]; const rows=[]; const baseIssues=[]; const sourceRows=[];
@@ -450,7 +519,7 @@
         const colorText=cols.color?cellText(row.getCell(cols.color)):'';
         const other=[nameRu,oldPriceRaw,stockRaw,desc,descRu,sizeText,colorText].join('');
         if(!name && !priceRaw && !other)continue;
-        const source={excelRow:r,categoryPath:[...effective],name,nameRu,priceRaw,oldPriceRaw,stockRaw,desc,descRu,sizeText,colorText};
+        const source={excelRow:r,categoryPath:[...effective],categoryGap,name,nameRu,priceRaw,oldPriceRaw,stockRaw,desc,descRu,sizeText,colorText};
         sourceRows.push(source);
         if(categoryGap)baseIssues.push(makeRowIssue('ERROR','CATEGORY_GAP',r,xl(`Qator ${r}: katalog yo'lida yuqori bosqich bo'sh qolgan.`,`Строка ${r}: в пути каталога пропущен верхний уровень.`),xl("Bosh katalogdan boshlab yo'lni to'ldiring yoki yuqoridagi yo'lni davom ettiring.","Заполните путь от корневого каталога или продолжите путь сверху.")));
         if(!effective.length)baseIssues.push(makeRowIssue('WARNING','CATEGORY_EMPTY',r,xl(`Qator ${r}: katalog ko'rsatilmagan; tovar bosh darajaga tushadi.`,`Строка ${r}: каталог не указан; товар попадёт на корневой уровень.`),xl("Kerak bo'lsa katalog yo'lini kiriting.","При необходимости укажите путь каталога.")));
@@ -469,6 +538,7 @@
       if(!rows.length&&!baseIssues.length)throw new Error(xl('Import qilinadigan tovar topilmadi','Товары для импорта не найдены'));
       state.fileHash=await fingerprintImportRows(rows);
       state.rows=rows;state.sourceRows=sourceRows;state.baseRowIssues=baseIssues;state.decisions={};
+      state.editingRow=null;state.editSequential=false;
       analyzeIssues(rows);analyzeRows();
     }catch(e){console.error(e);alert(xl("❌ Excelni o'qishda xatolik: ",'❌ Ошибка чтения Excel: ')+(e.message||e));state.rows=[];state.issues=[];state.baseRowIssues=[];state.rowIssues=[];state.sourceRows=[];}
     finally{state.busy=false;state.busyText='';rerender();}
@@ -484,19 +554,19 @@
     state.decisions[key]={type:'new',name:issue.rawName}; analyzeIssues(state.rows);analyzeRows();rerender();
   }
   function reset() {
-    Object.assign(state,{busy:false,busyText:'',file:null,fileName:'',fileHash:'',rows:[],issues:[],decisions:{},baseRowIssues:[],rowIssues:[],sourceRows:[],progressDone:0,progressTotal:0,templateStatus:null,result:null});rerender();
+    Object.assign(state,{busy:false,busyText:'',file:null,fileName:'',fileHash:'',rows:[],issues:[],decisions:{},baseRowIssues:[],rowIssues:[],sourceRows:[],progressDone:0,progressTotal:0,templateStatus:null,result:null,editingRow:null,editSequential:false});rerender();
   }
 
   function downloadErrorRowsCsv() {
     const errors=state.rowIssues.filter(x=>x.severity==='ERROR'); if(!errors.length)return;
     const byRow=new Map();
     for(const issue of errors){if(!byRow.has(issue.excelRow))byRow.set(issue.excelRow,[]);byRow.get(issue.excelRow).push(issue);}
-    const headers=['Excel qatori',"Katalog yo'li",'Tovar nomi','Tovar nomi RU','Tovar narxi','Eski narxi','Soni','Izohi','Izohi RU',"O'lchami",'Rang','Xato sababi','Tuzatish tavsiyasi'];
+    const headers=['Excel qatori',"Katalog yo'li",'Tovar nomi','Tovar narxi','Eski narxi','Soni','Izohi',"O'lchami",'Rang','Xato sababi','Tuzatish tavsiyasi'];
     const quote=v=>`"${String(v??'').replace(/"/g,'""')}"`;
     const lines=[headers.map(quote).join(',')];
     for(const src of state.sourceRows){
       const found=byRow.get(src.excelRow); if(!found)continue;
-      lines.push([src.excelRow,(src.categoryPath||[]).join(' / '),src.name,src.nameRu,src.priceRaw,src.oldPriceRaw,src.stockRaw,src.desc,src.descRu,src.sizeText,src.colorText,found.map(x=>x.message).join(' | '),found.map(x=>x.suggestion).join(' | ')].map(quote).join(','));
+      lines.push([src.excelRow,(src.categoryPath||[]).join(' / '),src.name,src.priceRaw,src.oldPriceRaw,src.stockRaw,src.desc,src.sizeText,src.colorText,found.map(x=>x.message).join(' | '),found.map(x=>x.suggestion).join(' | ')].map(quote).join(','));
     }
     const blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}); const url=URL.createObjectURL(blob);
     const a=document.createElement('a'); a.href=url; a.download=`${(state.fileName||'FITCORE_import').replace(/\.xlsx$/i,'')}_xato_qatorlar.csv`; document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
@@ -541,6 +611,13 @@
       const uniqueCategories=new Set(createdCats.map(c=>String(c.id))).size;
       state.result={ok:true,batchId,imported,createdCategories:uniqueCategories,rasmsiz:importedProducts.filter(p=>!p.img).length,warnings:state.rowIssues.filter(x=>x.severity==='WARNING').length};
       state.lastBatch={...state.lastBatch,status:'COMPLETED',importedRows:imported};
+      setTimeout(()=>{
+        if(state.result?.ok&&activePopupModal==='EXCEL_IMPORT'){
+          activePopupModal=null;
+          try{saveCatalogCache();}catch{}
+          render();
+        }
+      },1500);
     }catch(e){
       console.error(e);
       let autoRolledBack=false;
@@ -588,23 +665,31 @@
           <div class="grid grid-cols-1 gap-2"><button onclick="FitcoreExcel.correctCategoryAt(${index})" class="bg-white border border-slate-300 text-slate-700 py-2 rounded-xl font-bold">✏️ ${xl("Nomni qo'lda to'g'rilash",'Исправить название вручную')}</button><button onclick="FitcoreExcel.approveNewAt(${index})" class="bg-blue-600 text-white py-2 rounded-xl font-bold">✅ ${xl('Yangi katalog sifatida tasdiqlash','Подтвердить как новый каталог')}</button></div>
         </div>`;
     }).join('');
-    const rowIssueHtml=[...errors,...warnings].slice(0,50).map(x=>`<div class="${x.severity==='ERROR'?'bg-red-50 border-red-200 text-red-900':'bg-amber-50 border-amber-200 text-amber-900'} border rounded-xl p-2"><p class="font-bold">${x.severity==='ERROR'?'❌':'⚠️'} ${esc(x.message)}</p><p class="text-[10px] opacity-75">${esc(x.suggestion)}</p></div>`).join('');
+    const issuesByRow=new Map();
+    for(const item of [...errors,...warnings]){if(!issuesByRow.has(item.excelRow))issuesByRow.set(item.excelRow,[]);issuesByRow.get(item.excelRow).push(item);}
+    const rowIssueHtml=[...issuesByRow.entries()].sort((a,b)=>a[0]-b[0]).slice(0,50).map(([excelRow,items])=>{
+      const hasError=items.some(x=>x.severity==='ERROR');
+      return `<div class="${hasError?'bg-red-50 border-red-200 text-red-900':'bg-amber-50 border-amber-200 text-amber-900'} border rounded-xl p-2 space-y-1"><div class="flex items-center justify-between gap-2"><p class="font-black">${hasError?'❌':'⚠️'} ${xl('Qator','Строка')} ${excelRow}</p><button onclick="FitcoreExcel.openRowEditor(${excelRow})" class="bg-white border border-current px-2.5 py-1 rounded-lg font-bold">✏️ ${xl('Tuzatish','Исправить')}</button></div>${items.map(x=>`<div><p class="font-bold">${esc(x.message)}</p><p class="text-[10px] opacity-75">${esc(x.suggestion)}</p></div>`).join('')}</div>`;
+    }).join('');
     const uniquePaths=new Set(state.rows.map(r=>pathKey(r.categoryPath))).size;
     const progressPercent=state.progressTotal?Math.min(100,Math.round(state.progressDone/state.progressTotal*100)):0;
     const canRollbackLast=(!state.result||(!state.result.ok&&!state.result.batchId))&&state.lastBatch?.id&&['COMPLETED','IN_PROGRESS','FAILED'].includes(state.lastBatch?.status);
+    const editSource=state.sourceRows.find(r=>r.excelRow===Number(state.editingRow));
+    const editorHtml=editSource?`<div class="bg-slate-50 border border-slate-300 rounded-2xl p-3 space-y-2"><div class="flex items-center justify-between"><h4 class="font-black">✏️ ${xl('Qatorni tuzatish','Исправление строки')} ${editSource.excelRow}</h4><button onclick="FitcoreExcel.closeRowEditor()" class="bg-white border px-2 py-1 rounded-lg font-bold">✕</button></div><div><label class="font-bold">${xl("Katalog yo'li","Katalog yo'li")}</label><input id="xe-path" value="${esc((editSource.categoryPath||[]).join(' / '))}" class="w-full mt-1 p-2 border rounded-xl"></div><div><label class="font-bold">${xl('Tovar nomi','Название товара')}</label><input id="xe-name" value="${esc(editSource.name||'')}" class="w-full mt-1 p-2 border rounded-xl"></div><div class="grid grid-cols-2 gap-2"><div><label class="font-bold">${xl('Narx','Цена')}</label><input id="xe-price" inputmode="decimal" value="${esc(editSource.priceRaw||'')}" class="w-full mt-1 p-2 border rounded-xl"></div><div><label class="font-bold">${xl('Eski narx','Старая цена')}</label><input id="xe-oldprice" inputmode="decimal" value="${esc(editSource.oldPriceRaw||'')}" class="w-full mt-1 p-2 border rounded-xl"></div></div><div><label class="font-bold">${xl('Soni','Количество')}</label><input id="xe-stock" inputmode="numeric" value="${esc(editSource.stockRaw||'')}" class="w-full mt-1 p-2 border rounded-xl"></div><div><label class="font-bold">${xl('Izoh','Описание')}</label><textarea id="xe-desc" rows="2" class="w-full mt-1 p-2 border rounded-xl">${esc(editSource.desc||'')}</textarea></div><div><label class="font-bold">${xl("O'lchami",'Размер')}</label><input id="xe-size" value="${esc(editSource.sizeText||'')}" class="w-full mt-1 p-2 border rounded-xl"></div><div><label class="font-bold">${xl('Rang','Цвет')}</label><input id="xe-color" value="${esc(editSource.colorText||'')}" class="w-full mt-1 p-2 border rounded-xl"></div><button onclick="FitcoreExcel.saveRowEditor()" class="w-full bg-blue-600 text-white font-black py-2.5 rounded-xl">✅ ${xl('Saqlash va qayta tekshirish','Сохранить и перепроверить')}</button></div>`:'';
     return `
       <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3" onclick="activePopupModal=null; render();">
         <div class="bg-white rounded-3xl p-4 max-w-md w-full max-h-[94vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
           <div class="flex items-center justify-between border-b pb-2"><div><h3 class="font-black text-base">📊 ${xl('Excel orqali tovar importi','Импорт товаров из Excel')}</h3><p class="text-[10px] text-gray-400">${xl('Xavfsiz preview + katalog typo tekshiruvi','Безопасный предпросмотр + проверка опечаток каталогов')}</p></div><button onclick="activePopupModal=null;render();" class="bg-gray-100 rounded-xl px-3 py-1.5 font-bold">✕</button></div>
           ${state.busy?`<div class="bg-blue-50 border border-blue-200 p-4 rounded-2xl text-center"><div class="w-7 h-7 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div><b>${esc(state.busyText||xl('Bajarilmoqda...','Выполняется...'))}</b>${state.progressTotal?`<div class="mt-3 h-2 bg-blue-100 rounded-full overflow-hidden"><div class="h-full bg-blue-600 transition-all" style="width:${progressPercent}%"></div></div><p class="mt-1 text-[10px] text-blue-700">${progressPercent}%</p>`:''}</div>`:''}
+          ${editorHtml}
           <div class="grid grid-cols-2 gap-2">
             <button onclick="FitcoreExcel.downloadTemplate()" ${state.busy?'disabled':''} class="bg-slate-900 text-white font-bold py-2.5 rounded-xl">📥 ${xl('Yangi shablon','Новый шаблон')}</button>
             <label class="bg-blue-600 text-white font-bold py-2.5 rounded-xl text-center cursor-pointer ${state.busy?'opacity-50':''}" >📤 ${xl('Excel tanlash','Выбрать Excel')}<input type="file" accept=".xlsx" class="hidden" onchange="FitcoreExcel.handleFile(event)" ${state.busy?'disabled':''}></label>
           </div>
           ${state.templateStatus?`<div class="${state.templateStatus.type==='error'?'bg-red-50 border-red-200 text-red-800':state.templateStatus.type==='success'?'bg-emerald-50 border-emerald-200 text-emerald-800':'bg-slate-50 border-slate-200 text-slate-700'} border rounded-2xl p-3 font-bold">${state.templateStatus.type==='error'?'❌':state.templateStatus.type==='success'?'✅':'ℹ️'} ${esc(state.templateStatus.message)}</div>`:''}
-          <div class="bg-gray-50 border rounded-2xl p-3 text-[10px] text-gray-600">💡 ${xl("Shablonda mavjud to'liq yo'llar <b>Kataloglar</b> varag'ida ko'rinadi va <b>Katalog yo'li</b> ustunida dropdown bor. 2–4-qatorlar namuna, import 5-qatordan boshlanadi. Katalog yo'li bo'sh qolsa, <b>yuqoridagi oxirgi yo'l davom etadi</b>.","Полные пути видны на листе <b>Kataloglar</b>, а в столбце <b>Katalog yo'li</b> есть список. Строки 2–4 — примеры, импорт начинается со строки 5. Если путь пуст, <b>продолжается последний путь сверху</b>.")}</div>
+          <div class="bg-gray-50 border rounded-2xl p-3 text-[10px] text-gray-600">💡 ${xl("Shablonda mavjud to'liq yo'llar <b>Kataloglar</b> varag'ida ko'rinadi va <b>Katalog yo'li</b> ustunida dropdown bor. 2–4-qatorlar namuna, 5-qator ogohlantirish, import 6-qatordan boshlanadi. Katalog yo'li bo'sh qolsa, <b>yuqoridagi oxirgi yo'l davom etadi</b>.","Полные пути видны на листе <b>Kataloglar</b>, а в столбце <b>Katalog yo'li</b> есть список. Строки 2–4 — примеры, строка 5 — предупреждение, импорт начинается со строки 6. Если путь пуст, <b>продолжается последний путь сверху</b>.")}</div>
           ${state.fileName?`<div class="bg-white border border-slate-200 rounded-2xl p-3 space-y-2"><p><b>${xl('Fayl','Файл')}:</b> ${esc(state.fileName)}</p><div class="grid grid-cols-3 gap-1 text-center"><div class="bg-slate-50 rounded-xl p-2"><b class="block text-base">${state.sourceRows.length}</b>${xl('jami qator','всего строк')}</div><div class="bg-emerald-50 rounded-xl p-2"><b class="block text-base text-emerald-700">${readyRows}</b>${xl('tayyor','готово')}</div><div class="bg-red-50 rounded-xl p-2"><b class="block text-base text-red-700">${errors.length}</b>${xl('xato','ошибок')}</div><div class="bg-amber-50 rounded-xl p-2"><b class="block text-base text-amber-700">${warnings.length}</b>${xl('ogohlantirish','предупр.')}</div><div class="bg-blue-50 rounded-xl p-2"><b class="block text-base text-blue-700">${newCategoryCount}</b>${xl('yangi katalog','новых каталогов')}</div><div class="bg-violet-50 rounded-xl p-2"><b class="block text-base text-violet-700">${similarCount}</b>${xl("o'xshash nom",'похожих имён')}</div></div><p class="text-[10px] text-slate-500">${xl("Katalog yo'llari",'Пути каталогов')}: ${uniquePaths} · ${xl('Duplicate belgilar','Признаки дублей')}: ${duplicateCount} · ${xl('Variant qoldiq farqi','Расхождения остатков')}: ${mismatchCount}</p></div>`:''}
-          ${rowIssueHtml?`<div class="space-y-2"><div class="flex items-center justify-between"><h4 class="font-black">${xl('Qator tekshiruvi','Проверка строк')}</h4>${errors.length?`<button onclick="FitcoreExcel.downloadErrorRowsCsv()" class="bg-red-600 text-white px-3 py-1.5 rounded-xl font-bold">⬇️ ${xl('Xato CSV','CSV ошибок')}</button>`:''}</div><div class="space-y-1 max-h-56 overflow-y-auto">${rowIssueHtml}</div>${state.rowIssues.length>50?`<p class="text-[10px] text-gray-500">+ ${state.rowIssues.length-50} ${xl('ta boshqa xabar','других сообщений')}</p>`:''}</div>`:''}
+          ${rowIssueHtml?`<div class="space-y-2"><div class="flex items-center justify-between gap-2"><h4 class="font-black">${xl('Qator tekshiruvi','Проверка строк')}</h4><div class="flex gap-1">${errors.length?`<button onclick="FitcoreExcel.openFirstErrorEditor()" class="bg-blue-600 text-white px-2 py-1.5 rounded-xl font-bold">✏️ ${xl('Barcha xatolar','Все ошибки')}</button><button onclick="FitcoreExcel.downloadErrorRowsCsv()" class="bg-red-600 text-white px-2 py-1.5 rounded-xl font-bold">⬇️ CSV</button>`:''}</div></div><div class="space-y-1 max-h-64 overflow-y-auto">${rowIssueHtml}</div>${issuesByRow.size>50?`<p class="text-[10px] text-gray-500">+ ${issuesByRow.size-50} ${xl('ta boshqa qator','других строк')}</p>`:''}</div>`:''}
           ${issueHtml?`<div class="space-y-2"><h4 class="font-black">${xl('Katalog qarorlari','Решения по каталогам')}</h4>${issueHtml}</div>`:''}
           ${state.rows.length && !state.issues.length && !errors.length?`<div class="bg-green-50 border border-green-200 rounded-2xl p-3"><p class="font-bold text-green-800">✅ ${xl('Preview tekshirildi. Importga tayyor.','Предпросмотр проверен. Готово к импорту.')}</p><p class="text-[10px] text-green-700">${warnings.length?xl(`${warnings.length} ta ogohlantirish importni bloklamaydi.`,`${warnings.length} предупреждений не блокируют импорт.`):''} ${xl("Rasmlar import qilinmaydi; keyin 'rasmi yo'q' filtri orqali qo'shiladi.","Изображения не импортируются; их можно добавить через фильтр «без изображения».")}</p></div>`:''}
           ${state.result?`<div class="${state.result.ok?'bg-emerald-50 border-emerald-200':'bg-red-50 border-red-200'} border rounded-2xl p-3 space-y-1"><p class="font-black">${state.result.ok?xl('✅ Import tugadi','✅ Импорт завершён'):xl('❌ Import tugamadi','❌ Импорт не завершён')}</p>${state.result.ok?`<p>${state.result.imported} ${xl('ta tovar','товаров')} · ${state.result.createdCategories} ${xl('ta yangi katalog','новых каталогов')} · ${state.result.rasmsiz} ${xl('ta rasmsiz','без изображений')} · ${state.result.warnings||0} ${xl('ta ogohlantirish','предупреждений')}</p>`:`<p>${esc(state.result.error||xl('Xato','Ошибка'))}</p>`}${state.result.batchId?`<p class="font-mono text-[10px]">Batch #${state.result.batchId}</p>`:''}${state.result.batchId&&!state.result.rolledBack?`<button onclick="FitcoreExcel.rollbackBatch()" class="mt-2 w-full bg-red-600 text-white py-2 rounded-xl font-bold">↩️ ${xl('Shu importni bekor qilish','Отменить этот импорт')}</button>`:''}</div>`:''}
@@ -620,5 +705,5 @@
     catch(e){console.warn('Last import batch unavailable',e);}
     return true;
   }
-  window.FitcoreExcel={prepare,renderModal,downloadTemplate,handleFile,acceptSuggestionAt,approveNewAt,correctCategoryAt,downloadErrorRowsCsv,doImport,rollbackBatch,reset,state};
+  window.FitcoreExcel={prepare,renderModal,downloadTemplate,handleFile,acceptSuggestionAt,approveNewAt,correctCategoryAt,downloadErrorRowsCsv,openRowEditor,closeRowEditor,openFirstErrorEditor,saveRowEditor,doImport,rollbackBatch,reset,state,__test:{parseVariantDetails,parseCategoryPath,fingerprintImportRows,rebuildSourceRow}};
 })();

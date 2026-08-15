@@ -220,7 +220,6 @@
     let currentTab = 'home';
     let warehouseMissingImageOnly = false;
     let warehouseImportedMissingImageOnly = false;
-    let categoryMissingImageOnly = false;
     let isAdminMode = false;
     let authReady = false;
     let adminCatParentId = null;
@@ -238,11 +237,15 @@
     let shopContact = { address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null };
     let activePopupModal = null;
     let editingFieldData = null;
+    let missingImageQueueIndex = 0;
+    let missingImageQueueSaving = false;
 
     // Rasm yuklash uchun: haqiqiy fayl (Storage'ga yuklanadi) va preview (faqat ko'rsatish uchun)
     let tempImageFile = null;
     let tempImagePreviewUrl = null;
     let tempImagePreparingPromise = null;
+    let tempImageUrl = null;
+    let tempImageExistingUrl = null;
 
     function clearTempImageSelection() {
       if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
@@ -251,16 +254,25 @@
       tempImageFile = null;
       tempImagePreviewUrl = null;
       tempImagePreparingPromise = null;
+      tempImageUrl = null;
+      tempImageExistingUrl = null;
+    }
+    function initializeTempImageEditor(existingUrl = null) {
+      clearTempImageSelection();
+      tempImageExistingUrl = hasProductImage({ img: existingUrl }) ? String(existingUrl).trim() : null;
     }
     function takeTempImageSnapshot() {
       const snap = {
         file: tempImageFile,
         preview: tempImagePreviewUrl,
         preparing: tempImagePreparingPromise,
+        url: tempImageUrl,
       };
       tempImageFile = null;
       tempImagePreviewUrl = null;
       tempImagePreparingPromise = null;
+      tempImageUrl = null;
+      tempImageExistingUrl = null;
       return snap;
     }
     function releaseImageSnapshot(snap) {
@@ -382,6 +394,40 @@
       for (const category of categories) countFor(String(category.id));
       return totals;
     }
+    function getMissingImageProducts() {
+      return products.filter(p => p.status !== 'DELETED' && !hasProductImage(p));
+    }
+    function categoryPathForProduct(product) {
+      const byId = new Map(categories.map(c => [String(c.id), c]));
+      const path = [];
+      const seen = new Set();
+      let currentId = product?.categoryId === null || product?.categoryId === undefined ? null : String(product.categoryId);
+      while (currentId && !seen.has(currentId)) {
+        seen.add(currentId);
+        const category = byId.get(currentId);
+        if (!category) break;
+        path.unshift(categoryName(category));
+        currentId = category.parentId === null || category.parentId === undefined ? null : String(category.parentId);
+      }
+      return path.length ? path.join(' / ') : tr('Bosh katalog', 'Главный каталог');
+    }
+    function openMissingImageQueue() {
+      if (!isUserAnAdmin || !isAdminMode) return;
+      missingImageQueueIndex = Math.min(missingImageQueueIndex, Math.max(0, getMissingImageProducts().length - 1));
+      missingImageQueueSaving = false;
+      initializeTempImageEditor(null);
+      activePopupModal = 'MISSING_IMAGE_QUEUE';
+      selectedProductModal = null;
+      render();
+    }
+    function moveMissingImageQueue(direction) {
+      if (missingImageQueueSaving) return;
+      const queue = getMissingImageProducts();
+      if (!queue.length) return;
+      missingImageQueueIndex = Math.max(0, Math.min(queue.length - 1, missingImageQueueIndex + Number(direction || 0)));
+      initializeTempImageEditor(null);
+      renderModalContainer();
+    }
     function regionLabel(v) { return v === 'TASHKENT' ? tr('Toshkent shahri','Город Ташкент') : (v === 'PROVINCE' ? tr('Viloyatlar','Области') : (v || '')); }
     function payMethodLabel(v) { return v === 'CASH' ? tr('Naqd pul','Наличные') : (v === 'CARD' ? tr('Karta','Карта') : (v || '')); }
 
@@ -407,7 +453,10 @@
       const perfStarted = performance.now();
       const initData = tg?.initData || '';
       const controller = new AbortController();
-      const timeoutMs = action === 'bulk_import_products' ? 45000 : action === 'get_excel_template_url' ? 9000 : 15000;
+      const timeoutMs = action === 'bulk_import_products' ? 45000
+        : action === 'get_excel_template_url' ? 9000
+        : action === 'add_product' || action === 'edit_product_field' ? 30000
+        : 15000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/app-api`, {
@@ -430,6 +479,7 @@
       } catch (e) {
         if (e.name === 'AbortError') {
           if (action === 'get_excel_template_url') throw new Error("Shablon serverda 9 soniyada tayyor bo'lmadi. Internetni tekshirib qayta urinib ko'ring.");
+          if (action === 'add_product' || action === 'edit_product_field') throw new Error(tr("Rasm/tovar 30 soniyada saqlanmadi. Internetni tekshirib qayta urinib ko'ring.", "Изображение/товар не сохранились за 30 секунд. Проверьте интернет и повторите."));
           throw new Error("Server javob bermadi (vaqt tugadi). Internetni tekshirib qayta urinib ko'ring.");
         }
         throw e;
@@ -680,7 +730,67 @@
       });
     }
 
-    async function onImagePicked(event, previewId, buttonId) {
+    function validateExternalImageUrl(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return null;
+      if (raw.length > 2048) throw new Error(tr("Rasm URL juda uzun.", "URL изображения слишком длинный."));
+      let parsed;
+      try { parsed = new URL(raw); } catch { throw new Error(tr("Rasm URL noto'g'ri. To'liq HTTPS havola kiriting.", "Неверный URL изображения. Введите полный HTTPS-адрес.")); }
+      if (parsed.protocol !== 'https:') throw new Error(tr("Rasm URL faqat HTTPS bo'lishi kerak.", "URL изображения должен использовать HTTPS."));
+      return parsed.href;
+    }
+
+    function setImageUrlError(errorId, message = '') {
+      const el = document.getElementById(errorId);
+      if (!el) return;
+      el.textContent = message;
+      el.classList.toggle('hidden', !message);
+    }
+
+    function onImageUrlInput(value, previewId, errorId, buttonId) {
+      const raw = String(value || '').trim();
+      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
+        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
+      }
+      tempImageFile = null;
+      tempImagePreparingPromise = null;
+      tempImagePreviewUrl = null;
+      tempImageUrl = raw || null;
+      const preview = document.getElementById(previewId);
+      const pickerButton = buttonId ? document.getElementById(buttonId) : null;
+      if (pickerButton) pickerButton.textContent = `🖼 ${tr('Rasm tanlash', 'Выбрать фото')}`;
+
+      if (!raw) {
+        setImageUrlError(errorId, '');
+        if (preview) {
+          if (tempImageExistingUrl) { preview.src = tempImageExistingUrl; preview.classList.remove('hidden'); }
+          else { preview.removeAttribute('src'); preview.classList.add('hidden'); }
+        }
+        return;
+      }
+
+      let validUrl;
+      try { validUrl = validateExternalImageUrl(raw); }
+      catch (e) {
+        setImageUrlError(errorId, e.message || String(e));
+        if (preview) preview.classList.add('hidden');
+        return;
+      }
+      tempImageUrl = validUrl;
+      setImageUrlError(errorId, xlImageText('Rasm tekshirilmoqda…', 'Изображение проверяется…'));
+      if (!preview) return;
+      preview.onload = () => setImageUrlError(errorId, '');
+      preview.onerror = () => {
+        preview.classList.add('hidden');
+        setImageUrlError(errorId, tr("Rasmni bu URL orqali ko'rsatib bo'lmadi. Havolani tekshiring.", "Не удалось показать изображение по этому URL. Проверьте ссылку."));
+      };
+      preview.src = validUrl;
+      preview.classList.remove('hidden');
+    }
+
+    function xlImageText(uz, ru) { return tr(uz, ru); }
+
+    async function onImagePicked(event, previewId, buttonId, urlInputId, errorId) {
       const file = event.target.files[0];
       if (!file) return;
 
@@ -701,6 +811,10 @@
       }
       tempImageFile = file;
       tempImagePreviewUrl = URL.createObjectURL(file);
+      tempImageUrl = null;
+      const urlInput = urlInputId ? document.getElementById(urlInputId) : null;
+      if (urlInput) urlInput.value = '';
+      if (errorId) setImageUrlError(errorId, '');
       const prev = document.getElementById(previewId);
       if (prev) {
         prev.src = tempImagePreviewUrl;
@@ -713,6 +827,53 @@
       // ammo ekran hech qachon global loader bilan qotmaydi.
       tempImagePreparingPromise = compressImage(file, 1000, 0.8);
       showActionToast(tr("🖼️ Rasm tanlandi", "🖼️ Фото выбрано"), 'success', 1200);
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || '');
+          const comma = result.indexOf(',');
+          if (comma < 0) return reject(new Error(tr("Rasmni o'qib bo'lmadi.", "Не удалось прочитать изображение.")));
+          resolve(result.slice(comma + 1));
+        };
+        reader.onerror = () => reject(new Error(tr("Rasm faylini o'qishda xato.", "Ошибка чтения файла изображения.")));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function productImagePayloadFromSnapshot(snapshot, requireImage = false) {
+      if (snapshot?.file || snapshot?.preparing) {
+        const prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file;
+        if (!prepared) throw new Error(tr("Tanlangan rasm tayyor bo'lmadi.", "Выбранное изображение не подготовлено."));
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) {
+          throw new Error(tr("Rasm formati qo'llab-quvvatlanmaydi. JPG, PNG yoki WebP tanlang.", "Формат изображения не поддерживается. Выберите JPG, PNG или WebP."));
+        }
+        if (prepared.size > 6 * 1024 * 1024) {
+          throw new Error(tr("Siqilgandan keyin ham rasm 6MB dan katta. Kichikroq rasm tanlang.", "После сжатия изображение всё ещё больше 6 МБ. Выберите файл меньшего размера."));
+        }
+        return {
+          imageUpload: {
+            base64: await fileToBase64(prepared),
+            mimeType: prepared.type,
+            fileName: prepared.name || 'product.jpg',
+          },
+          img: null,
+        };
+      }
+      if (snapshot?.url) return { imageUpload: null, img: validateExternalImageUrl(snapshot.url) };
+      if (requireImage) throw new Error(tr("Rasm faylini tanlang yoki HTTPS rasm URL kiriting.", "Выберите файл изображения или укажите HTTPS URL."));
+      return { imageUpload: null, img: null };
+    }
+    function friendlyImageError(error) {
+      const raw = String(error?.message || error || '');
+      if (/failed to fetch|networkerror|load failed/i.test(raw)) return tr("Internet yoki Telegram WebView tarmoq xatosi. Eski rasm o'zgarmadi; internetni tekshirib qayta urinib ko'ring.", "Ошибка сети или Telegram WebView. Старое изображение не изменено; проверьте интернет и повторите.");
+      if (/invalid_image_url/i.test(raw)) return tr("Rasm URL noto'g'ri. To'liq HTTPS havola kiriting.", "Неверный URL изображения. Введите полный HTTPS-адрес.");
+      if (/invalid_image_upload|invalid_image_type/i.test(raw)) return tr("Rasm formati noto'g'ri. JPG, PNG yoki WebP fayl tanlang.", "Неверный формат изображения. Выберите JPG, PNG или WebP.");
+      if (/image_too_large/i.test(raw)) return tr("Rasm juda katta. Kichikroq rasm tanlang.", "Изображение слишком большое. Выберите файл меньшего размера.");
+      if (/image_upload_failed|image_public_url_failed/i.test(raw)) return tr("Rasm server xotirasiga yuklanmadi. Eski rasm saqlanib qoldi; qayta urinib ko'ring.", "Не удалось загрузить изображение в хранилище. Старое изображение сохранено; повторите попытку.");
+      return raw || tr("Noma'lum rasm xatosi.", "Неизвестная ошибка изображения.");
     }
 
     function cancelProductEditor() {
@@ -955,8 +1116,8 @@
       const subCats = categories.filter(c => c.parentId === adminCatParentId);
       const recursiveProductCounts = buildRecursiveProductCountMap();
       const catProdsRaw = products.filter(p => p.categoryId === adminCatParentId && p.status !== 'DELETED');
-      const missingImageCount = catProdsRaw.filter(p => !hasProductImage(p)).length;
-      const catProds = applyCategoryFilter(categoryMissingImageOnly ? catProdsRaw.filter(p => !hasProductImage(p)) : catProdsRaw);
+      const catProds = applyCategoryFilter(catProdsRaw);
+      const globalMissingImageCount = getMissingImageProducts().length;
       const filterActive = isCategoryFilterActive();
 
       const totalPages = Math.ceil(catProds.length / 10) || 1;
@@ -982,6 +1143,7 @@
                 <button onclick="openAddCatModal()" class="flex-1 bg-blue-600 text-white font-bold py-1.5 rounded-xl text-xs">${tr("➕ Katalog qo'shish", "➕ Добавить каталог")}</button>
                 <button onclick="openAddProductModal()" class="flex-1 bg-emerald-600 text-white font-bold py-1.5 rounded-xl text-xs">${tr("➕ Tovar qo'shish", "➕ Добавить товар")}</button>
               </div>
+              <button onclick="openMissingImageQueue()" class="w-full bg-amber-50 text-amber-900 border border-amber-200 font-bold py-1.5 rounded-xl text-xs shadow-sm">🖼 ${tr('Rasmsiz','Без фото')} · ${globalMissingImageCount}</button>
               <button onclick="openExcelImportModal()" class="w-full bg-slate-800 text-white font-bold py-1.5 rounded-xl text-xs">${tr("📊 Excel orqali ko'p tovar qo'shish", "📊 Массовый импорт из Excel")}</button>
             ` : ''}
           </div>
@@ -1016,11 +1178,6 @@
             <div class="flex items-center justify-between px-1">
               <h4 class="font-bold text-xs text-gray-500 uppercase">${tr("📦 Tovarlar", "📦 Товары")} (${catProds.length})</h4>
               <div class="flex gap-1">
-                ${(isAdminMode && isUserAnAdmin) ? `
-                  <button onclick="categoryMissingImageOnly=!categoryMissingImageOnly; categoryPage=1; render();" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${categoryMissingImageOnly ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-800 border border-amber-200'}">
-                    🖼 ${tr('Rasmsiz','Без фото')} (${missingImageCount})
-                  </button>
-                ` : ''}
                 ${catProdsRaw.length > 0 ? `
                   <button onclick="openCategoryFilterModal()" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${filterActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
                     🔍 Filtr${filterActive ? ' •' : ''}
@@ -2038,13 +2195,7 @@
               <div>
                 <label class="font-bold text-gray-600">${tr("Tovar nomi *", "Название товара *")}</label>
                 <input type="text" id="m-prod-name" placeholder="${tr('Masalan: Whey Protein','Например: Whey Protein')}" class="w-full mt-1 p-2 border rounded-xl">
-                <input type="text" id="m-prod-name-ru" placeholder="${tr('Rus tilida nomi','Название на русском')}" class="w-full mt-1 p-2 border rounded-xl hidden">
               </div>
-
-              <label class="flex items-center gap-2 font-bold text-gray-600">
-                <input type="checkbox" id="m-prod-ru-toggle" onchange="toggleRuFields(this.checked, 'm-prod')">
-                <span>${tr("+ Ruscha tarjima qo'shish", "+ Добавить русский перевод")}</span>
-              </label>
 
               <div class="grid grid-cols-2 gap-2">
                 <div>
@@ -2076,13 +2227,14 @@
               <div>
                 <label class="font-bold text-gray-600">${tr("Izoh / Tavsif", "Описание")}</label>
                 <textarea id="m-prod-desc" rows="2" placeholder="${tr('Tovar haqida ma\'lumot','Описание товара')}" class="w-full mt-1 p-2 border rounded-xl"></textarea>
-                <textarea id="m-prod-desc-ru" rows="2" placeholder="${tr('Rus tilida izoh','Описание на русском')}" class="w-full mt-1 p-2 border rounded-xl hidden"></textarea>
               </div>
 
               <div>
                 <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
-                <input id="m-prod-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'm-prod-prev', 'm-prod-image-button')" class="hidden">
+                <input id="m-prod-image-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'm-prod-prev', 'm-prod-image-button', 'm-prod-image-url', 'm-prod-image-url-error')" class="hidden">
                 <button id="m-prod-image-button" type="button" onclick="document.getElementById('m-prod-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr("Rasm tanlash", "Выбрать фото")}</button>
+                <input id="m-prod-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-prod-prev', 'm-prod-image-url-error', 'm-prod-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full mt-2 p-2 border rounded-xl">
+                <p id="m-prod-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
                 <img id="m-prod-prev" src="" class="w-24 h-24 object-cover rounded-xl mt-2 hidden border">
               </div>
 
@@ -2153,6 +2305,48 @@
         return;
       }
 
+      if (activePopupModal === 'MISSING_IMAGE_QUEUE') {
+        const queue = getMissingImageProducts();
+        if (missingImageQueueIndex >= queue.length) missingImageQueueIndex = Math.max(0, queue.length - 1);
+        const p = queue[missingImageQueueIndex] || null;
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-sm w-full max-h-[94vh] overflow-y-auto space-y-3 shadow-2xl text-xs">
+              <div class="flex items-center justify-between border-b pb-2">
+                <div><h3 class="font-black text-base">🖼 ${tr('Rasmsiz tovarlar','Товары без фото')}</h3><p class="text-[10px] text-gray-400">${tr('Barcha kataloglar bo‘yicha global navbat','Общая очередь по всем каталогам')}</p></div>
+                <button onclick="clearTempImageSelection(); activePopupModal=null; render();" class="bg-gray-100 rounded-xl px-3 py-1.5 font-bold">✕</button>
+              </div>
+              ${p ? `
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="font-black text-sm text-gray-900">${escapeHtml(p.name)}</p>
+                    <p class="mt-1 text-[10px] text-blue-700 font-bold break-words">📁 ${escapeHtml(categoryPathForProduct(p))}</p>
+                    <p class="mt-1 text-[10px] font-mono text-gray-500">SKU: ${escapeHtml(p.sku || '—')}</p>
+                  </div>
+                  <span class="flex-shrink-0 bg-slate-100 text-slate-700 font-black px-2.5 py-1 rounded-xl">${missingImageQueueIndex + 1} / ${queue.length}</span>
+                </div>
+                <div class="rounded-2xl bg-slate-50 border border-slate-200 p-3">
+                  <img id="miq-img-prev" src="" class="hidden w-full h-48 object-contain rounded-xl bg-white">
+                  <div id="miq-empty-preview" class="h-32 flex items-center justify-center text-center text-gray-400 font-bold">🖼<br>${tr('Rasm preview','Предпросмотр фото')}</div>
+                </div>
+                <input id="miq-image-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="document.getElementById('miq-empty-preview')?.classList.add('hidden'); onImagePicked(event, 'miq-img-prev', 'miq-image-button', 'miq-image-url', 'miq-image-url-error')" class="hidden">
+                <button id="miq-image-button" type="button" onclick="document.getElementById('miq-image-input').click()" class="w-full bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr('Rasm tanlash','Выбрать фото')}</button>
+                <input id="miq-image-url" type="url" inputmode="url" oninput="document.getElementById('miq-empty-preview')?.classList.toggle('hidden', !!this.value.trim()); onImageUrlInput(this.value, 'miq-img-prev', 'miq-image-url-error', 'miq-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full p-2.5 border rounded-xl">
+                <p id="miq-image-url-error" class="hidden text-[10px] text-red-600"></p>
+                <button onclick="saveMissingImageQueueItem('${p.id}')" ${missingImageQueueSaving ? 'disabled' : ''} class="w-full ${missingImageQueueSaving ? 'bg-gray-300 text-gray-500' : 'bg-emerald-600 text-white'} font-black py-3 rounded-xl">${missingImageQueueSaving ? tr('⏳ Saqlanmoqda…','⏳ Сохранение…') : tr('✅ Saqlash','✅ Сохранить')}</button>
+                <div class="grid grid-cols-2 gap-2 sticky bottom-0 bg-white pt-2">
+                  <button onclick="moveMissingImageQueue(-1)" ${missingImageQueueSaving || missingImageQueueIndex === 0 ? 'disabled' : ''} class="bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl disabled:opacity-40">⬅️ ${tr('Oldingi','Предыдущий')}</button>
+                  <button onclick="moveMissingImageQueue(1)" ${missingImageQueueSaving || missingImageQueueIndex >= queue.length - 1 ? 'disabled' : ''} class="bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl disabled:opacity-40">${tr('Keyingi','Следующий')} ➡️</button>
+                </div>
+              ` : `
+                <div class="py-10 text-center space-y-3"><div class="text-5xl">✅</div><p class="font-black text-emerald-700">${tr('Rasmsiz tovar qolmadi.','Товаров без фото не осталось.')}</p><button onclick="clearTempImageSelection(); activePopupModal=null; render();" class="bg-slate-800 text-white font-bold px-5 py-2.5 rounded-xl">${tr('Yopish','Закрыть')}</button></div>
+              `}
+            </div>
+          </div>
+        `;
+        return;
+      }
+
       if (activePopupModal === 'EXCEL_IMPORT') {
         if (window.FitcoreExcel && typeof window.FitcoreExcel.renderModal === 'function') {
           container.innerHTML = window.FitcoreExcel.renderModal();
@@ -2193,8 +2387,6 @@
               ${field === 'name' ? `
                 <label class="font-bold text-gray-600">${tr("Yangi nomi:", "Новое название:")}</label>
                 <input type="text" id="ef-val" value="${escapeHtml(p.name)}" class="w-full p-2 border rounded-xl">
-                <label class="font-bold text-gray-600 mt-2 block">${tr("Ruscha nomi (ixtiyoriy):", "Название на русском (необязательно):")}</label>
-                <input type="text" id="ef-val-ru" value="${escapeHtml(p.nameRu || '')}" placeholder="${tr('Rus tilida nomi','Название на русском')}" class="w-full p-2 border rounded-xl">
               ` : ''}
 
               ${field === 'price' ? `
@@ -2216,14 +2408,14 @@
               ${field === 'desc' ? `
                 <label class="font-bold text-gray-600">${tr("Yangi izoh / tavsif:", "Новое описание:")}</label>
                 <textarea id="ef-val" rows="3" class="w-full p-2 border rounded-xl">${escapeHtml(p.desc || '')}</textarea>
-                <label class="font-bold text-gray-600 mt-2 block">${tr("Ruscha izoh (ixtiyoriy):", "Описание на русском (необязательно):")}</label>
-                <textarea id="ef-val-ru" rows="3" class="w-full p-2 border rounded-xl">${escapeHtml(p.descRu || '')}</textarea>
               ` : ''}
 
               ${field === 'img' ? `
                 <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
-                <input id="ef-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev', 'ef-image-button')" class="hidden">
+                <input id="ef-image-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'ef-img-prev', 'ef-image-button', 'ef-image-url', 'ef-image-url-error')" class="hidden">
                 <button id="ef-image-button" type="button" onclick="document.getElementById('ef-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${hasProductImage(p) ? tr("Rasmni almashtirish", "Заменить фото") : tr("Rasm tanlash", "Выбрать фото")}</button>
+                <input id="ef-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'ef-img-prev', 'ef-image-url-error', 'ef-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full mt-2 p-2 border rounded-xl">
+                <p id="ef-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
                 <img id="ef-img-prev" src="${escapeHtml(hasProductImage(p) ? p.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border ${hasProductImage(p) ? '' : 'hidden'}">
               ` : ''}
 
@@ -2691,8 +2883,7 @@
     function openEditFieldModal(prodId, fieldName) {
       selectedProductModal = products.find(p => p.id === prodId);
       editingFieldData = fieldName;
-      clearTempImageSelection();
-      tempImagePreviewUrl = (fieldName === 'img' && selectedProductModal) ? selectedProductModal.img : null;
+      initializeTempImageEditor((fieldName === 'img' && selectedProductModal) ? selectedProductModal.img : null);
       activePopupModal = 'EDIT_PROD_FIELD';
       render();
     }
@@ -2762,7 +2953,6 @@
 
     async function saveProductFromModal() {
       const name = document.getElementById('m-prod-name').value.trim();
-      const nameRu = document.getElementById('m-prod-name-ru').value.trim();
       const price = parseFloat(document.getElementById('m-prod-price').value);
       const oldPriceVal = parseFloat(document.getElementById('m-prod-oldprice').value);
       const stockVal = document.getElementById('m-prod-stock').value;
@@ -2771,7 +2961,6 @@
       const colorText = document.getElementById('m-prod-colors').value;
       const variants = parseVariantInputs(sizeText, colorText, isNaN(stock) ? 0 : stock);
       const desc = document.getElementById('m-prod-desc').value.trim();
-      const descRu = document.getElementById('m-prod-desc-ru').value.trim();
       if (!name || isNaN(price) || (variants.length === 0 && isNaN(stock))) {
         return alert(tr("Iltimos, barcha majburiy maydonlarni to'ldiring!", "Заполните все обязательные поля!"));
       }
@@ -2784,13 +2973,12 @@
       render();
       showActionToast(tr("⏳ Tovar saqlanmoqda...", "⏳ Товар сохраняется..."), 'saving');
       try {
-        const imgUrl = await uploadImageSnapshot(imageSnap, null, false);
+        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, false);
         const result = await callApi('add_product', {
-          name, nameRu: nameRu || null, price, oldPrice,
+          name, price, oldPrice,
           stock: isNaN(stock) ? 0 : stock,
           variants: variants.length > 0 ? variants : null,
-          desc, descRu: descRu || null,
-          categoryId, img: imgUrl
+          desc, categoryId, img: imagePayload.img, imageUpload: imagePayload.imageUpload
         });
         upsertLocalProduct(result.product);
         saveCatalogCache();
@@ -2803,7 +2991,7 @@
           const limit = String(e.message).split(':')[1];
           alert(`${tr('⚠️ Tovar soni chegarasiga yetdingiz','⚠️ Достигнут лимит количества товаров')} (${limit}). ${tr("Ko'proq tovar qo'shish uchun tarifingizni oshiring.",'Чтобы добавить больше товаров, увеличьте тариф.')}`);
         } else {
-          alert(tr("❌ Tovarni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения товара: ") + (e.message || e));
+          alert(tr("❌ Tovarni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения товара: ") + ((imageSnap?.file || imageSnap?.preparing || imageSnap?.url) ? friendlyImageError(e) : (e.message || e)));
         }
       } finally { releaseImageSnapshot(imageSnap); }
     }
@@ -2863,11 +3051,7 @@
         const val = document.getElementById('ef-val').value.trim();
         if (!val) { activePopupModal = null; render(); return; }
         payload.value = val;
-        const ruVal = document.getElementById('ef-val-ru').value.trim();
         p.name = val;
-        p.nameRu = ruVal || null;
-        if (ruVal) { payload.field2 = 'nameRu'; payload.value2 = ruVal; }
-        else { payload.field2 = 'nameRu'; payload.value2 = null; }
       } else if (field === 'price') {
         const price = parseFloat(document.getElementById('ef-price').value);
         const oldVal = parseFloat(document.getElementById('ef-oldprice').value);
@@ -2882,15 +3066,13 @@
         p.stock = stock; p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
       } else if (field === 'desc') {
         const val = document.getElementById('ef-val').value.trim();
-        const ruVal = document.getElementById('ef-val-ru').value.trim();
         payload.value = val;
-        payload.field2 = 'descRu'; payload.value2 = ruVal || null;
-        p.desc = val; p.descRu = ruVal || null;
+        p.desc = val;
       } else if (field === 'img') {
         imageSnap = takeTempImageSnapshot();
-        if (!imageSnap.file && !imageSnap.preparing) { activePopupModal = null; render(); return; }
+        if (!imageSnap.file && !imageSnap.preparing && !imageSnap.url) { activePopupModal = null; render(); return; }
         // Tanlangan rasm kartochkada ham darhol ko'rinsin.
-        if (imageSnap.preview) p.img = imageSnap.preview;
+        if (imageSnap.preview || imageSnap.url) p.img = imageSnap.preview || imageSnap.url;
       } else if (field === 'sizes' || field === 'variants') {
         const sizeText = document.getElementById('ef-size-val').value;
         const colorText = document.getElementById('ef-color-val').value;
@@ -2911,7 +3093,11 @@
       showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохраняется..."), 'saving');
 
       try {
-        if (field === 'img') payload.value = await uploadImageSnapshot(imageSnap, old.img, true);
+        if (field === 'img') {
+          const imagePayload = await productImagePayloadFromSnapshot(imageSnap, true);
+          payload.value = imagePayload.img;
+          payload.imageUpload = imagePayload.imageUpload;
+        }
         const result = await callApi('edit_product_field', payload);
         const current = products.find(prod => prod.id === prodId);
         if (current) Object.assign(current, mapProductFromDB(result.product));
@@ -2925,14 +3111,51 @@
         selectedProductModal = products.find(prod => prod.id === prodId) || null;
         render();
         showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 1800);
-        alert(tr("❌ Saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения: ") + (e.message || e));
+        alert(tr("❌ Saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения: ") + (field === 'img' ? friendlyImageError(e) : (e.message || e)));
       } finally {
         releaseImageSnapshot(imageSnap);
       }
     }
 
+    async function saveMissingImageQueueItem(prodId) {
+      if (missingImageQueueSaving) return;
+      const product = products.find(p => p.id === prodId);
+      if (!product || product.status === 'DELETED' || hasProductImage(product)) {
+        renderModalContainer();
+        return;
+      }
+      const imageSnap = takeTempImageSnapshot();
+      missingImageQueueSaving = true;
+      renderModalContainer();
+      showActionToast(tr("⏳ Rasm saqlanmoqda...", "⏳ Изображение сохраняется..."), 'saving');
+      try {
+        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, true);
+        const result = await callApi('edit_product_field', {
+          productId: prodId,
+          field: 'img',
+          value: imagePayload.img,
+          imageUpload: imagePayload.imageUpload,
+        });
+        const current = products.find(p => p.id === prodId);
+        if (current) Object.assign(current, mapProductFromDB(result.product));
+        saveCatalogCache();
+        const remaining = getMissingImageProducts();
+        if (missingImageQueueIndex >= remaining.length) missingImageQueueIndex = Math.max(0, remaining.length - 1);
+        initializeTempImageEditor(null);
+        showActionToast(tr("✅ Rasm saqlandi", "✅ Изображение сохранено"), 'success', 1200);
+      } catch (e) {
+        console.error('Global rasmsiz navbatda rasm saqlash xatosi:', e);
+        showActionToast(tr("❌ Rasm saqlanmadi", "❌ Изображение не сохранено"), 'error', 1800);
+        alert(tr("❌ Rasm saqlanmadi. Eski ma'lumot o'zgarmadi: ", "❌ Изображение не сохранено. Старые данные не изменены: ") + friendlyImageError(e));
+      } finally {
+        releaseImageSnapshot(imageSnap);
+        missingImageQueueSaving = false;
+        render();
+      }
+    }
+
     function openAddProductModal() {
-      clearTempImageSelection();
+      initializeTempImageEditor(null);
       activePopupModal = 'ADD_PROD';
       render();
     }
@@ -2956,7 +3179,7 @@
     async function openExcelImportModal() {
       if (!isUserAnAdmin) return;
       try {
-        if (!excelModulePromise) excelModulePromise = ensureScript('./excel-import.js?v=5');
+        if (!excelModulePromise) excelModulePromise = ensureScript('./excel-import.js?v=6');
         await excelModulePromise;
         if (!window.FitcoreExcel) throw new Error('Excel moduli topilmadi');
         activePopupModal = 'EXCEL_IMPORT';
