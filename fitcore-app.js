@@ -405,7 +405,7 @@
       const perfStarted = performance.now();
       const initData = tg?.initData || '';
       const controller = new AbortController();
-      const timeoutMs = action === 'bulk_import_products' ? 45000 : 15000;
+      const timeoutMs = action === 'bulk_import_products' ? 45000 : action === 'get_excel_template_url' ? 9000 : 15000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/app-api`, {
@@ -426,7 +426,10 @@
         }
         return data;
       } catch (e) {
-        if (e.name === 'AbortError') throw new Error("Server javob bermadi (vaqt tugadi). Internetni tekshirib qayta urinib ko'ring.");
+        if (e.name === 'AbortError') {
+          if (action === 'get_excel_template_url') throw new Error("Shablon serverda 9 soniyada tayyor bo'lmadi. Internetni tekshirib qayta urinib ko'ring.");
+          throw new Error("Server javob bermadi (vaqt tugadi). Internetni tekshirib qayta urinib ko'ring.");
+        }
         throw e;
       } finally {
         clearTimeout(timeoutId);
@@ -2924,7 +2927,7 @@
     async function openExcelImportModal() {
       if (!isUserAnAdmin) return;
       try {
-        if (!excelModulePromise) excelModulePromise = ensureScript('./excel-import.js?v=3');
+        if (!excelModulePromise) excelModulePromise = ensureScript('./excel-import.js?v=4');
         await excelModulePromise;
         if (!window.FitcoreExcel) throw new Error('Excel moduli topilmadi');
         activePopupModal = 'EXCEL_IMPORT';
