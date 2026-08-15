@@ -339,7 +339,46 @@
       const n = Math.round(Number(v || 0));
       return String(Number.isFinite(n) ? n : 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
     }
-    function money(v) { return `${formatNumber(v)} ${tr("so'm", 'сум')}`; }
+    function money(v) { return `${formatNumber(v)} ${tr("so‘m", 'сум')}`; }
+
+    // Har bir katalog uchun o'zidagi va barcha avlod kataloglaridagi tovarlar
+    // sonini xotiradagi products/categories ma'lumotidan bir marta hisoblaydi.
+    // Bunda qo'shimcha Supabase so'rovi yo'q; noto'g'ri sikl bo'lsa ham cheksiz
+    // rekursiyaga tushmaslik uchun visiting to'plami ishlatiladi.
+    function buildRecursiveProductCountMap() {
+      const childrenByParent = new Map();
+      const directProductCount = new Map();
+
+      for (const category of categories) {
+        const parentKey = category.parentId === null || category.parentId === undefined
+          ? null
+          : String(category.parentId);
+        if (!childrenByParent.has(parentKey)) childrenByParent.set(parentKey, []);
+        childrenByParent.get(parentKey).push(String(category.id));
+      }
+
+      for (const product of products) {
+        if (product.status === 'DELETED' || product.categoryId === null || product.categoryId === undefined) continue;
+        const categoryKey = String(product.categoryId);
+        directProductCount.set(categoryKey, (directProductCount.get(categoryKey) || 0) + 1);
+      }
+
+      const totals = new Map();
+      const visiting = new Set();
+      const countFor = (categoryKey) => {
+        if (totals.has(categoryKey)) return totals.get(categoryKey);
+        if (visiting.has(categoryKey)) return 0;
+        visiting.add(categoryKey);
+        let total = directProductCount.get(categoryKey) || 0;
+        for (const childKey of childrenByParent.get(categoryKey) || []) total += countFor(childKey);
+        visiting.delete(categoryKey);
+        totals.set(categoryKey, total);
+        return total;
+      };
+
+      for (const category of categories) countFor(String(category.id));
+      return totals;
+    }
     function regionLabel(v) { return v === 'TASHKENT' ? tr('Toshkent shahri','Город Ташкент') : (v === 'PROVINCE' ? tr('Viloyatlar','Области') : (v || '')); }
     function payMethodLabel(v) { return v === 'CASH' ? tr('Naqd pul','Наличные') : (v === 'CARD' ? tr('Karta','Карта') : (v || '')); }
 
@@ -737,6 +776,7 @@
 
       if (isAdminMode && isUserAnAdmin) {
         roleTag.innerText = "ADMIN";
+        roleTag.dataset.role = 'admin';
         whBtn.classList.remove('hidden');
         whBtn.classList.add('flex');
         usersBtn.classList.remove('hidden');
@@ -746,6 +786,7 @@
         if (currentTab === 'cart') currentTab = 'home';
       } else {
         roleTag.innerText = "STORE";
+        roleTag.dataset.role = 'store';
         whBtn.classList.add('hidden');
         usersBtn.classList.add('hidden');
         cartNavBtn.classList.remove('hidden');
@@ -839,7 +880,7 @@
             <div class="mt-1">
               ${hasDiscount ? `
                 <div class="flex items-center space-x-1">
-                  <span class="text-[10px] text-gray-400 line-through font-bold">${formatNumber(p.oldPrice)}</span>
+                  <span class="text-[10px] text-gray-400 line-through font-bold">${money(p.oldPrice)}</span>
                   <span class="text-xs text-red-600 font-black">${money(p.price)}</span>
                 </div>
               ` : `
@@ -893,6 +934,7 @@
     function renderCategories(container) {
       const currentCat = categories.find(c => c.id === adminCatParentId);
       const subCats = categories.filter(c => c.parentId === adminCatParentId);
+      const recursiveProductCounts = buildRecursiveProductCountMap();
       const catProdsRaw = products.filter(p => p.categoryId === adminCatParentId && p.status !== 'DELETED');
       const catProds = applyCategoryFilter(catProdsRaw);
       const filterActive = isCategoryFilterActive();
@@ -935,7 +977,7 @@
                   }
                   <div>
                     <h5 class="font-bold text-sm text-gray-800">${escapeHtml(categoryName(sub))}</h5>
-                    <p class="text-[10px] text-gray-400">${categories.filter(c => c.parentId === sub.id).length} ${tr('katalog','кат.')} | ${products.filter(p => p.categoryId === sub.id && p.status !== 'DELETED').length} ${tr('tovar','тов.')}</p>
+                    <p class="text-[10px] text-gray-400">${categories.filter(c => c.parentId === sub.id).length} ${tr('katalog','кат.')} | ${recursiveProductCounts.get(String(sub.id)) || 0} ${tr('tovar','тов.')}</p>
                   </div>
                 </div>
                 <div class="flex items-center space-x-2">
@@ -2541,8 +2583,8 @@
                   <p class="text-[10px] text-gray-500">${tr("Jami buyurtma", "Всего заказов")}</p>
                 </div>
                 <div class="bg-gray-50 p-2.5 rounded-xl text-center">
-                  <p class="text-lg font-black text-green-600">${formatNumber(u.totalSpent)}</p>
-                  <p class="text-[10px] text-gray-500">${tr("Jami xarid (so'm)", "Всего покупок (сум)")}</p>
+                  <p class="text-lg font-black text-green-600">${money(u.totalSpent)}</p>
+                  <p class="text-[10px] text-gray-500">${tr("Jami xarid", "Всего покупок")}</p>
                 </div>
                 <div class="bg-gray-50 p-2.5 rounded-xl text-center">
                   <p class="text-lg font-black text-amber-600">${u.active}</p>
