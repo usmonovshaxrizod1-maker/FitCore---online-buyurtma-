@@ -1,6 +1,7 @@
 // FITCORE v2 — Excel import module. Lazy-loaded only for admins.
 (() => {
-  const EXCELJS_CDN = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+  const EXCELJS_LOCAL = './vendor/exceljs.min.js?v=4.4.0';
+  const EXCELJS_LOAD_TIMEOUT_MS = 9000;
   const state = {
     busy: false,
     busyText: '',
@@ -18,6 +19,7 @@
     prepared: false,
     progressDone: 0,
     progressTotal: 0,
+    templateStatus: null,
     result: null,
   };
 
@@ -58,134 +60,59 @@
     if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
     if (window.__fitcoreExcelJsPromise) return window.__fitcoreExcelJsPromise;
     window.__fitcoreExcelJsPromise = new Promise((resolve,reject) => {
-      const sc=document.createElement('script'); sc.src=EXCELJS_CDN; sc.async=true;
-      sc.onload=()=>window.ExcelJS?resolve(window.ExcelJS):reject(new Error(xl('ExcelJS yuklanmadi','ExcelJS не загрузился')));
-      sc.onerror=()=>reject(new Error(xl('ExcelJS CDN bilan ulanishda xato','Ошибка подключения к ExcelJS CDN')));
+      const old=document.querySelector('script[data-fitcore-exceljs="1"]'); if(old)old.remove();
+      const sc=document.createElement('script'); sc.src=EXCELJS_LOCAL; sc.async=true; sc.dataset.fitcoreExceljs='1';
+      let finished=false;
+      const finish=(error)=>{
+        if(finished)return;finished=true;clearTimeout(timer);
+        if(error){sc.remove();reject(error);return;}
+        if(window.ExcelJS)resolve(window.ExcelJS);
+        else reject(new Error(xl('Lokal ExcelJS yuklanmadi. GitHubga vendor faylini ham yuklang.','Локальный ExcelJS не загрузился. Загрузите vendor-файл в GitHub.')));
+      };
+      const timer=setTimeout(()=>finish(new Error(xl('Excel moduli 9 soniyada yuklanmadi. Internetni tekshiring.','Модуль Excel не загрузился за 9 секунд. Проверьте интернет.'))),EXCELJS_LOAD_TIMEOUT_MS);
+      sc.onload=()=>finish();
+      sc.onerror=()=>finish(new Error(xl('Lokal Excel modulini yuklab bo‘lmadi.','Не удалось загрузить локальный модуль Excel.')));
       document.head.appendChild(sc);
-    });
+    }).catch(error=>{window.__fitcoreExcelJsPromise=null;throw error;});
     return window.__fitcoreExcelJsPromise;
   }
 
-  function categoryPath(cat) {
-    const out=[]; let cur=cat; const seen=new Set();
-    while (cur && !seen.has(String(cur.id))) {
-      seen.add(String(cur.id)); out.unshift(cur);
-      cur=categories.find(c => String(c.id) === String(cur.parentId));
+  function canUseTelegramDownload() {
+    const webApp=window.Telegram?.WebApp;
+    if(!webApp||typeof webApp.downloadFile!=='function')return false;
+    return typeof webApp.isVersionAtLeast!=='function'||webApp.isVersionAtLeast('8.0');
+  }
+  function browserDownload(url,fileName,pendingWindow) {
+    if(pendingWindow&&!pendingWindow.closed){pendingWindow.location.replace(url);return;}
+    const a=document.createElement('a');a.href=url;a.download=fileName;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove();
+  }
+  function startTemplateDownload(url,fileName,pendingWindow) {
+    if(!/^https:\/\//i.test(url))throw new Error(xl('Server xavfsiz HTTPS download URL qaytarmadi.','Сервер не вернул безопасный HTTPS URL.'));
+    if(canUseTelegramDownload()){
+      try{
+        window.Telegram.WebApp.downloadFile({url,file_name:fileName},accepted=>{
+          if(accepted===false){state.templateStatus={type:'info',message:xl('Yuklab olish bekor qilindi.','Загрузка отменена.')};rerender();}
+        });
+        return 'telegram';
+      }catch(error){console.warn('Telegram native download failed, using browser fallback',error);}
     }
-    return out;
+    browserDownload(url,fileName,pendingWindow);return 'browser';
   }
-  function allCategoryPaths() {
-    return categories.map(c => categoryPath(c)).filter(p => p.length).sort((a,b)=>
-      a.map(x=>x.name).join(' / ').localeCompare(b.map(x=>x.name).join(' / '),'uz'));
-  }
-
   async function downloadTemplate() {
-    state.busy=true; state.busyText=xl('Excel shablon tayyorlanmoqda...','Подготавливается шаблон Excel...'); rerender();
-    try {
-      const ExcelJS=await ensureExcelJS();
-      const wb=new ExcelJS.Workbook();
-      wb.creator='FITCORE'; wb.created=new Date();
-      const paths=allCategoryPaths();
-      const maxExistingDepth=Math.max(1,...paths.map(p=>p.length));
-      // Root + Katalog1..Katalog7 are always available. Deeper existing trees
-      // automatically receive two spare levels without an application-side depth cap.
-      const depth=Math.max(8, maxExistingDepth+2);
-      const catHeaders=['Bosh katalog', ...Array.from({length:depth-1},(_,i)=>`Katalog${i+1}`)];
-      const headers=['NO',...catHeaders,'Tovar nomi','Tovar nomi RU (ixtiyoriy)','Tovar narxi','Eski narxi','Soni','Izohi','Izohi RU (ixtiyoriy)','O\'lchami','Rang'];
-
-      const ws=wb.addWorksheet('Tovarlar',{views:[{state:'frozen',ySplit:1,xSplit:1}]});
-      ws.addRow(headers);
-      ws.getRow(1).height=28;
-      ws.getRow(1).eachCell(cell=>{
-        cell.font={bold:true,color:{argb:'FFFFFFFF'}};
-        cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1E3A5F'}};
-        cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};
-      });
-      const widths=[7,...catHeaders.map(()=>20),28,28,16,16,12,32,32,24,42];
-      widths.forEach((w,i)=>ws.getColumn(i+1).width=w);
-
-      // 1000 rows: left-side category cells may be blank; importer inherits last path.
-      for (let r=2;r<=1001;r++) {
-        ws.getCell(r,1).value=r-1;
-        ws.getCell(r,1).alignment={horizontal:'center'};
-      }
-      ws.autoFilter={from:{row:1,column:1},to:{row:1001,column:headers.length}};
-
-      // Examples that match the new universal variant format.
-      const firstProductCol=2+catHeaders.length;
-      const ex1=['Sport ozuqalari','Protein','Whey',...Array(depth-3).fill(''),'Whey protein','',250000,350000,15,'Zo\'r protein','','',''];
-      const ex2=['Kiyimlar','Erkaklar kiyimlari','Ustki kiyimlar','Futbolka',...Array(Math.max(0,depth-4)).fill(''),'Futbolka','',50000,150000,'','Oq/qora futbolka','','48/50/52',"48,Qizil-1,Qora-1/50,Qizil-3,Ko'k-3/52,Qora-15,Oq-2"];
-      const ex3=[...Array(depth).fill(''),'Adidas futbolka','',70000,'',8,'Chapdagi kataloglar bo\'sh — yuqoridagi Futbolka katalogiga tushadi','','48,3/50,5',''];
-      [ex1,ex2,ex3].forEach((arr,idx)=>{
-        const row=ws.getRow(2+idx);
-        // arr excludes NO; write starting col 2
-        arr.forEach((v,j)=>row.getCell(2+j).value=v);
-      });
-
-      // Visible canonical catalogue sheet.
-      const cats=wb.addWorksheet('Kataloglar',{views:[{state:'frozen',ySplit:1}]});
-      const catSheetHeaders=['To\'liq katalog yo\'li',...catHeaders,'Ruscha nomi (mavjud bo\'lsa)'];
-      cats.addRow(catSheetHeaders);
-      cats.getRow(1).eachCell(cell=>{cell.font={bold:true,color:{argb:'FFFFFFFF'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF334155'}};});
-      for (const p of paths) {
-        const row=[p.map(x=>x.name).join(' / '),...Array.from({length:depth},(_,i)=>p[i]?.name||''),p[p.length-1]?.nameRu||''];
-        cats.addRow(row);
-      }
-      cats.getColumn(1).width=52; for(let i=2;i<=depth+1;i++)cats.getColumn(i).width=21; cats.getColumn(depth+2).width=28;
-
-      // Hidden dictionary supplies dropdowns per depth. Manual new names are still allowed.
-      const dict=wb.addWorksheet('Lugat');
-      for(let d=0;d<depth;d++){
-        const names=[...new Set(paths.map(p=>p[d]?.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'uz'));
-        dict.getCell(1,d+1).value=catHeaders[d];
-        names.forEach((n,i)=>dict.getCell(i+2,d+1).value=n);
-        const colLetter=dict.getColumn(d+1).letter;
-        if(names.length){
-          for(let r=2;r<=1001;r++){
-            ws.getCell(r,2+d).dataValidation={
-              type:'list', allowBlank:true, showErrorMessage:false,
-              formulae:[`Lugat!$${colLetter}$2:$${colLetter}$${names.length+1}`]
-            };
-          }
-        }
-      }
-      dict.state='veryHidden';
-
-      // Number validations.
-      const priceCol=firstProductCol+2, oldPriceCol=firstProductCol+3, stockCol=firstProductCol+4;
-      for(let r=2;r<=1001;r++){
-        ws.getCell(r,priceCol).dataValidation={type:'decimal',operator:'greaterThanOrEqual',formulae:[0],allowBlank:true};
-        ws.getCell(r,oldPriceCol).dataValidation={type:'decimal',operator:'greaterThanOrEqual',formulae:[0],allowBlank:true};
-        ws.getCell(r,stockCol).dataValidation={type:'whole',operator:'greaterThanOrEqual',formulae:[0],allowBlank:true};
-      }
-
-      const guide=wb.addWorksheet("Qo'llanma");
-      guide.columns=[{width:28},{width:85}];
-      guide.addRows([
-        ['QOIDA','TUSHUNTIRISH'],
-        ['Katalogni takrorlamang','Bir xil katalogdagi keyingi tovarlarda chapdagi katalog ustunlarini bo\'sh qoldiring. Tizim yuqoridagi oxirgi katalog yo\'lini davom ettiradi.'],
-        ['Mavjud katalog','Dropdown orqali tanlash tavsiya qilinadi. Qo\'lda yozsangiz ham import oldidan xato/yaqin nom tekshiriladi.'],
-        ['Yangi katalog','Dropdownda yo\'q nomni qo\'lda yozish mumkin. Import previewda alohida tasdiqlamaguningizcha yangi katalog yaratilmaydi.'],
-        ['Oddiy tovar','O\'lcham va Rang bo\'sh. Soni ustuniga umumiy qoldiq yoziladi.'],
-        ['Faqat o\'lcham','O\'lchami: 48,2/50,5/52,17. Rang bo\'sh.'],
-        ['Faqat rang','Rang: Qizil-3/Qora-2. O\'lchami bo\'sh.'],
-        ['O\'lcham + rang',"O'lchami: 48/50/52. Rang: 48,Qizil-1,Qora-1/50,Qizil-3,Ko'k-3/52,Qora-15,Oq-2. Umumiy Soni avtomatik hisoblanadi."],
-        ['Qoldiq mosligi','Variant yozilgan bo\'lsa umumiy qoldiq variantlardan hisoblanadi. Soni yoki o\'lchamdagi miqdor ranglar yig\'indisiga mos kelmasa preview ogohlantiradi.'],
-        ['Xato qatorlar','Import bloklangan qatorlar previewda sababi va tuzatish tavsiyasi bilan chiqadi. Ularni CSV qilib yuklab olish mumkin.'],
-        ['Rasm','Excel orqali rasm yuklanmaydi. Importdan keyin “rasmi yo\'q” tovarlarga admin qo\'lda rasm qo\'yadi.'],
-        ['Ruscha matn','RU nom/izoh ixtiyoriy. Kiritilmasa ruscha rejimda o\'zbekcha original ko\'rsatiladi.'],
-      ]);
-      guide.getRow(1).eachCell(cell=>{cell.font={bold:true,color:{argb:'FFFFFFFF'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0F766E'}};});
-      guide.eachRow(r=>{r.alignment={vertical:'top',wrapText:true};});
-
-      const buffer=await wb.xlsx.writeBuffer();
-      const blob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-      const url=URL.createObjectURL(blob); const a=document.createElement('a');
-      a.href=url; a.download='FITCORE_tovar_import_shablon.xlsx'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),1500);
-    } catch(e) {
-      console.error(e); alert(xl('❌ Excel shablonni yaratishda xatolik: ','❌ Ошибка создания шаблона Excel: ')+(e.message||e));
-    } finally { state.busy=false; state.busyText=''; rerender(); }
+    if(state.busy)return;
+    const nativeDownload=canUseTelegramDownload();
+    let pendingWindow=null;
+    if(!nativeDownload){try{pendingWindow=window.open('about:blank','_blank');}catch{}}
+    state.busy=true;state.busyText=xl('Shablon tayyorlanmoqda…','Шаблон готовится…');state.templateStatus=null;rerender();
+    try{
+      const data=await callApi('get_excel_template_url',{});
+      const url=String(data?.url||'');const fileName=String(data?.fileName||'FITCORE_tovar_import_shablon.xlsx');
+      const mode=startTemplateDownload(url,fileName,pendingWindow);
+      state.templateStatus={type:'success',message:mode==='telegram'?xl('Telegram yuklab olish oynasi ochildi.','Открыто окно загрузки Telegram.'):xl('Shablonni yuklab olish boshlandi.','Загрузка шаблона началась.')};
+    }catch(e){
+      if(pendingWindow&&!pendingWindow.closed)pendingWindow.close();
+      console.error(e);state.templateStatus={type:'error',message:xl('Shablonni tayyorlab bo‘lmadi: ','Не удалось подготовить шаблон: ')+(e.message||e)};
+    }finally{state.busy=false;state.busyText='';rerender();}
   }
 
   function cellText(cell) {
@@ -517,7 +444,7 @@
     state.decisions[key]={type:'new',name:issue.rawName}; analyzeIssues(state.rows);analyzeRows();rerender();
   }
   function reset() {
-    Object.assign(state,{busy:false,busyText:'',file:null,fileName:'',fileHash:'',rows:[],issues:[],decisions:{},baseRowIssues:[],rowIssues:[],sourceRows:[],progressDone:0,progressTotal:0,result:null});rerender();
+    Object.assign(state,{busy:false,busyText:'',file:null,fileName:'',fileHash:'',rows:[],issues:[],decisions:{},baseRowIssues:[],rowIssues:[],sourceRows:[],progressDone:0,progressTotal:0,templateStatus:null,result:null});rerender();
   }
 
   function downloadErrorRowsCsv() {
@@ -634,6 +561,7 @@
             <button onclick="FitcoreExcel.downloadTemplate()" ${state.busy?'disabled':''} class="bg-slate-900 text-white font-bold py-2.5 rounded-xl">📥 ${xl('Yangi shablon','Новый шаблон')}</button>
             <label class="bg-blue-600 text-white font-bold py-2.5 rounded-xl text-center cursor-pointer ${state.busy?'opacity-50':''}" >📤 ${xl('Excel tanlash','Выбрать Excel')}<input type="file" accept=".xlsx" class="hidden" onchange="FitcoreExcel.handleFile(event)" ${state.busy?'disabled':''}></label>
           </div>
+          ${state.templateStatus?`<div class="${state.templateStatus.type==='error'?'bg-red-50 border-red-200 text-red-800':state.templateStatus.type==='success'?'bg-emerald-50 border-emerald-200 text-emerald-800':'bg-slate-50 border-slate-200 text-slate-700'} border rounded-2xl p-3 font-bold">${state.templateStatus.type==='error'?'❌':state.templateStatus.type==='success'?'✅':'ℹ️'} ${esc(state.templateStatus.message)}</div>`:''}
           <div class="bg-gray-50 border rounded-2xl p-3 text-[10px] text-gray-600">💡 ${xl("Shablonda mavjud kataloglar <b>Kataloglar</b> varag'ida ko'rinadi va kategoriya ustunlarida dropdown bor. Pastdagi qatorda katalog kataklari bo'sh qolsa, <b>yuqoridagi oxirgi katalog davom etadi</b>.","В шаблоне существующие каталоги видны на листе <b>Kataloglar</b>, а в столбцах категорий есть выпадающие списки. Если в следующей строке каталог пуст, <b>продолжается последний каталог сверху</b>.")}</div>
           ${state.fileName?`<div class="bg-white border border-slate-200 rounded-2xl p-3 space-y-2"><p><b>${xl('Fayl','Файл')}:</b> ${esc(state.fileName)}</p><div class="grid grid-cols-3 gap-1 text-center"><div class="bg-slate-50 rounded-xl p-2"><b class="block text-base">${state.sourceRows.length}</b>${xl('jami qator','всего строк')}</div><div class="bg-emerald-50 rounded-xl p-2"><b class="block text-base text-emerald-700">${readyRows}</b>${xl('tayyor','готово')}</div><div class="bg-red-50 rounded-xl p-2"><b class="block text-base text-red-700">${errors.length}</b>${xl('xato','ошибок')}</div><div class="bg-amber-50 rounded-xl p-2"><b class="block text-base text-amber-700">${warnings.length}</b>${xl('ogohlantirish','предупр.')}</div><div class="bg-blue-50 rounded-xl p-2"><b class="block text-base text-blue-700">${newCategoryCount}</b>${xl('yangi katalog','новых каталогов')}</div><div class="bg-violet-50 rounded-xl p-2"><b class="block text-base text-violet-700">${similarCount}</b>${xl("o'xshash nom",'похожих имён')}</div></div><p class="text-[10px] text-slate-500">${xl("Katalog yo'llari",'Пути каталогов')}: ${uniquePaths} · ${xl('Duplicate belgilar','Признаки дублей')}: ${duplicateCount} · ${xl('Variant qoldiq farqi','Расхождения остатков')}: ${mismatchCount}</p></div>`:''}
           ${rowIssueHtml?`<div class="space-y-2"><div class="flex items-center justify-between"><h4 class="font-black">${xl('Qator tekshiruvi','Проверка строк')}</h4>${errors.length?`<button onclick="FitcoreExcel.downloadErrorRowsCsv()" class="bg-red-600 text-white px-3 py-1.5 rounded-xl font-bold">⬇️ ${xl('Xato CSV','CSV ошибок')}</button>`:''}</div><div class="space-y-1 max-h-56 overflow-y-auto">${rowIssueHtml}</div>${state.rowIssues.length>50?`<p class="text-[10px] text-gray-500">+ ${state.rowIssues.length-50} ${xl('ta boshqa xabar','других сообщений')}</p>`:''}</div>`:''}
