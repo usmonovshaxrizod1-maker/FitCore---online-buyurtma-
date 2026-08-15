@@ -1699,7 +1699,6 @@
                 <i data-lucide="navigation" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
                 <div>
                   <p class="text-xs font-bold text-blue-700">${tr("Xaritada ochish", "Открыть на карте")} →</p>
-                  <p class="text-[10px] text-gray-400 font-mono">${escapeHtml(coords)}</p>
                 </div>
               </a>
             ` : ''}
