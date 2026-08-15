@@ -100,6 +100,7 @@
 
     // Universal variant modeli: oddiy / faqat o'lcham / faqat rang / o'lcham+rangi.
     function productVariants(p) { return Array.isArray(p?.variants) ? p.variants : []; }
+    function hasProductImage(p) { return typeof p?.img === 'string' && p.img.trim().length > 0; }
     function variantLabel(v) {
       return [v?.size, v?.color].filter(Boolean).join(' / ') || 'Asosiy';
     }
@@ -219,12 +220,13 @@
     let currentTab = 'home';
     let warehouseMissingImageOnly = false;
     let warehouseImportedMissingImageOnly = false;
+    let categoryMissingImageOnly = false;
     let isAdminMode = false;
     let authReady = false;
     let adminCatParentId = null;
     let categoryPage = 1;
     // sortPrice/sortNew/sortSold: null | 'asc' | 'desc' — har biri mustaqil yoqiladi
-    let categoryFilter = { minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null };
+    let categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null };
     let ordersPage = 1;
     let userOrderFilter = 'ALL';
     let selectedProductModal = null;
@@ -678,7 +680,7 @@
       });
     }
 
-    async function onImagePicked(event, previewId) {
+    async function onImagePicked(event, previewId, buttonId) {
       const file = event.target.files[0];
       if (!file) return;
 
@@ -704,11 +706,19 @@
         prev.src = tempImagePreviewUrl;
         prev.classList.remove('hidden');
       }
+      const pickerButton = buttonId ? document.getElementById(buttonId) : null;
+      if (pickerButton) pickerButton.textContent = `🖼 ${tr('Rasmni almashtirish', 'Заменить фото')}`;
 
       // Kichraytirish fon rejimida. Saqlash tez bosilsa ham save funksiyasi shu promise'ni kutadi,
       // ammo ekran hech qachon global loader bilan qotmaydi.
       tempImagePreparingPromise = compressImage(file, 1000, 0.8);
       showActionToast(tr("🖼️ Rasm tanlandi", "🖼️ Фото выбрано"), 'success', 1200);
+    }
+
+    function cancelProductEditor() {
+      clearTempImageSelection();
+      activePopupModal = null;
+      render();
     }
 
     async function uploadImageSnapshot(snapshot, existingImg, strict = false) {
@@ -945,7 +955,8 @@
       const subCats = categories.filter(c => c.parentId === adminCatParentId);
       const recursiveProductCounts = buildRecursiveProductCountMap();
       const catProdsRaw = products.filter(p => p.categoryId === adminCatParentId && p.status !== 'DELETED');
-      const catProds = applyCategoryFilter(catProdsRaw);
+      const missingImageCount = catProdsRaw.filter(p => !hasProductImage(p)).length;
+      const catProds = applyCategoryFilter(categoryMissingImageOnly ? catProdsRaw.filter(p => !hasProductImage(p)) : catProdsRaw);
       const filterActive = isCategoryFilterActive();
 
       const totalPages = Math.ceil(catProds.length / 10) || 1;
@@ -1004,11 +1015,18 @@
           <div class="space-y-2 pt-2">
             <div class="flex items-center justify-between px-1">
               <h4 class="font-bold text-xs text-gray-500 uppercase">${tr("📦 Tovarlar", "📦 Товары")} (${catProds.length})</h4>
-              ${catProdsRaw.length > 0 ? `
-                <button onclick="openCategoryFilterModal()" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${filterActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
-                  🔍 Filtr${filterActive ? ' •' : ''}
-                </button>
-              ` : ''}
+              <div class="flex gap-1">
+                ${(isAdminMode && isUserAnAdmin) ? `
+                  <button onclick="categoryMissingImageOnly=!categoryMissingImageOnly; categoryPage=1; render();" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${categoryMissingImageOnly ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-800 border border-amber-200'}">
+                    🖼 ${tr('Rasmsiz','Без фото')} (${missingImageCount})
+                  </button>
+                ` : ''}
+                ${catProdsRaw.length > 0 ? `
+                  <button onclick="openCategoryFilterModal()" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${filterActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
+                    🔍 Filtr${filterActive ? ' •' : ''}
+                  </button>
+                ` : ''}
+              </div>
             </div>
             <div class="grid grid-cols-2 gap-3">
               ${paginatedProds.map((p, idx) => renderProductCardHTML(p, idx, paginatedProds.length)).join('')}
@@ -1029,11 +1047,15 @@
     }
 
     function isCategoryFilterActive() {
-      return !!(categoryFilter.minPrice || categoryFilter.maxPrice || categoryFilter.sortPrice || categoryFilter.sortNew || categoryFilter.sortSold);
+      return !!(categoryFilter.search || categoryFilter.minPrice || categoryFilter.maxPrice || categoryFilter.sortPrice || categoryFilter.sortNew || categoryFilter.sortSold);
     }
 
     function applyCategoryFilter(list) {
       let result = list.slice();
+      if (categoryFilter.search && categoryFilter.search.trim()) {
+        const matchedIds = new Set(searchProducts(categoryFilter.search).map(p => String(p.id)));
+        result = result.filter(p => matchedIds.has(String(p.id)));
+      }
       const min = parseFloat(categoryFilter.minPrice);
       const max = parseFloat(categoryFilter.maxPrice);
       if (!isNaN(min)) result = result.filter(p => p.price >= min);
@@ -1083,7 +1105,7 @@
     }
 
     function clearCategoryFilter() {
-      categoryFilter = { minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null };
+      categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null };
       categoryPage = 1;
       render();
     }
@@ -1534,7 +1556,7 @@
         <div class="space-y-4">
           <div class="flex items-center justify-between gap-2">
             <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
-            <div class="flex gap-1"><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${products.filter(p=>p.status!=='DELETED'&&!p.img).length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly?'bg-blue-600 text-white':'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz','Импорт без фото')} (${products.filter(p=>p.status!=='DELETED'&&!p.img&&p.importBatchId).length})</button></div>
+            <div class="flex gap-1"><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${products.filter(p=>p.status!=='DELETED'&&!hasProductImage(p)).length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly?'bg-blue-600 text-white':'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz','Импорт без фото')} (${products.filter(p=>p.status!=='DELETED'&&!hasProductImage(p)&&p.importBatchId).length})</button></div>
           </div>
 
           <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
@@ -1553,7 +1575,7 @@
 
     function renderCategoryTreeNodeHTML(cat, depth) {
       const children = categories.filter(c => c.parentId === cat.id);
-      const catProds = products.filter(p => p.categoryId === cat.id && p.status !== 'DELETED' && (!warehouseMissingImageOnly || !p.img) && (!warehouseImportedMissingImageOnly || (!p.img && p.importBatchId)));
+      const catProds = products.filter(p => p.categoryId === cat.id && p.status !== 'DELETED' && (!warehouseMissingImageOnly || !hasProductImage(p)) && (!warehouseImportedMissingImageOnly || (!hasProductImage(p) && p.importBatchId)));
       const indent = "&nbsp;&nbsp;".repeat(depth * 2);
 
       return `
@@ -1806,7 +1828,7 @@
           </div>
 
           ${isUserAnAdmin ? `
-            <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-700 to-slate-800'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-md">
+            <button id="admin-role-toggle-btn" data-target-mode="${isAdminMode ? 'user' : 'admin'}" onclick="toggleAdminRole()" class="w-full p-4 rounded-2xl flex items-center justify-between font-bold shadow-md">
               <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
               <i data-lucide="refresh-cw" class="w-5 h-5"></i>
             </button>
@@ -2058,14 +2080,15 @@
               </div>
 
               <div>
-                <label class="font-bold text-gray-600">${tr("Tovar rasmi (Xotiradan yuklash)", "Фото товара (загрузить с устройства)")}</label>
-                <input type="file" accept="image/*" onchange="onImagePicked(event, 'm-prod-prev')" class="w-full mt-1 text-xs">
-                <img id="m-prod-prev" src="" class="w-20 h-20 object-cover rounded-xl mt-2 hidden border">
+                <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
+                <input id="m-prod-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'm-prod-prev', 'm-prod-image-button')" class="hidden">
+                <button id="m-prod-image-button" type="button" onclick="document.getElementById('m-prod-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr("Rasm tanlash", "Выбрать фото")}</button>
+                <img id="m-prod-prev" src="" class="w-24 h-24 object-cover rounded-xl mt-2 hidden border">
               </div>
 
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveProductFromModal()" class="flex-1 bg-green-600 text-white font-bold py-2.5 rounded-xl">${tr("✅ Saqlash va omborga kiritish", "✅ Сохранить и добавить на склад")}</button>
-                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Yopish", "Закрыть")}</button>
+                <button onclick="cancelProductEditor()" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Bekor qilish", "Отмена")}</button>
               </div>
             </div>
           </div>
@@ -2198,9 +2221,10 @@
               ` : ''}
 
               ${field === 'img' ? `
-                <label class="font-bold text-gray-600">${tr("Yangi rasm (Xotiradan yuklash):", "Новое фото (загрузить с устройства):")}</label>
-                <input type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev')" class="w-full mt-1 text-xs">
-                <img id="ef-img-prev" src="${escapeHtml(p.img || '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border">
+                <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
+                <input id="ef-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev', 'ef-image-button')" class="hidden">
+                <button id="ef-image-button" type="button" onclick="document.getElementById('ef-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${hasProductImage(p) ? tr("Rasmni almashtirish", "Заменить фото") : tr("Rasm tanlash", "Выбрать фото")}</button>
+                <img id="ef-img-prev" src="${escapeHtml(hasProductImage(p) ? p.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border ${hasProductImage(p) ? '' : 'hidden'}">
               ` : ''}
 
               ${(field === 'variants' || field === 'sizes') ? (() => { const vf = formatVariantInputs(productVariants(p)); return `
@@ -2213,7 +2237,7 @@
 
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveFieldEdit('${p.id}', '${field}')" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("Saqlash", "Сохранить")}</button>
-                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Bekor qilish", "Отмена")}</button>
+                <button onclick="cancelProductEditor()" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Bekor qilish", "Отмена")}</button>
               </div>
             </div>
           </div>
@@ -2353,6 +2377,11 @@
           <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="closeCategoryFilterModal();">
             <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl text-xs" onclick="event.stopPropagation()">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("🔍 Filtr va saralash", "🔍 Фильтр и сортировка")}</h3>
+
+              <div>
+                <label class="font-bold text-gray-600">${tr("Tovar qidirish", "Поиск товара")}</label>
+                <input type="text" value="${escapeHtml(categoryFilter.search || '')}" oninput="categoryFilter.search=this.value; categoryPage=1;" placeholder="${escapeHtml(t('search_placeholder'))}" class="w-full mt-1 p-2.5 border rounded-xl">
+              </div>
 
               <div>
                 <label class="font-bold text-gray-600">${tr("Narx oralig'i (so'm)", "Диапазон цен (сум)")}</label>
@@ -2927,7 +2956,7 @@
     async function openExcelImportModal() {
       if (!isUserAnAdmin) return;
       try {
-        if (!excelModulePromise) excelModulePromise = ensureScript('./excel-import.js?v=4');
+        if (!excelModulePromise) excelModulePromise = ensureScript('./excel-import.js?v=5');
         await excelModulePromise;
         if (!window.FitcoreExcel) throw new Error('Excel moduli topilmadi');
         activePopupModal = 'EXCEL_IMPORT';

@@ -32,7 +32,13 @@
   }
   function norm(v) {
     return String(v ?? '').trim().toLocaleLowerCase('uz')
-      .replace(/[ʻʼ’`]/g, "'").replace(/\s+/g, ' ');
+      .replace(/[ʻʼ‘’`]/g, "'").replace(/\s+/g, ' ');
+  }
+  function normalizeCategorySegment(v) {
+    return String(v ?? '').trim().replace(/[ʻʼ‘’`]/g, "'").replace(/\s+/g, ' ');
+  }
+  function parseCategoryPath(v) {
+    return String(v ?? '').split('/').map(normalizeCategorySegment).filter(Boolean);
   }
   function pathKey(parts) { return (parts || []).map(norm).filter(Boolean).join('\u001f'); }
   function parentKey(v) { return v === null || v === undefined ? '' : String(v); }
@@ -209,10 +215,18 @@
     if(!variants.length&&stock===null)addError('STOCK_REQUIRED',xl(`Qator ${excelRow}: oddiy tovar uchun Soni ko'rsatilmagan.`,`Строка ${excelRow}: для обычного товара не указано количество.`),xl("Soni ustuniga 0 yoki undan katta butun son yozing.","Укажите в столбце количества целое число от 0."));
     return {variants,stock:variants.length?variantTotal:(stock??0),issues};
   }
-  async function sha256(file) {
-    const buf=await file.arrayBuffer();
-    const digest=await crypto.subtle.digest('SHA-256',buf);
+  async function sha256Bytes(bytes) {
+    const digest=await crypto.subtle.digest('SHA-256',bytes);
     return Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('');
+  }
+  async function fingerprintImportRows(rows) {
+    const realRows=(rows||[]).map(row=>({
+      categoryPath:(row.categoryPath||[]).map(norm),name:norm(row.name),nameRu:norm(row.nameRu),
+      price:Number(row.price),oldPrice:row.oldPrice===null?null:Number(row.oldPrice),stock:Number(row.stock),
+      desc:String(row.desc||'').trim(),descRu:String(row.descRu||'').trim(),
+      variants:(row.variants||[]).map(v=>({size:norm(v.size),color:norm(v.color),qty:Number(v.qty)||0})),
+    }));
+    return sha256Bytes(new TextEncoder().encode(JSON.stringify(realRows)));
   }
 
   function buildCategoryMaps() {
@@ -343,7 +357,7 @@
   function correctCategory(key) {
     const issue=state.issues.find(x=>x.key===key); if(!issue)return;
     const next=prompt(xl('Katalog nomini to‘g‘rilang:','Исправьте название каталога:'),issue.rawName);
-    if(next===null)return; const corrected=String(next).trim();
+    if(next===null)return; const corrected=normalizeCategorySegment(next);
     if(!corrected)return alert(xl("Katalog nomi bo'sh bo'lmasin.","Название каталога не должно быть пустым."));
     const level=issue.rawPath.length-1;
     for(const r of state.rows){
@@ -364,21 +378,22 @@
     try{
       const ExcelJS=await ensureExcelJS();
       const aliasPromise=callApi('get_category_aliases',{}).catch(()=>({aliases:[]}));
-      const [hash,arrayBuffer,aliasData]=await Promise.all([sha256(file),file.arrayBuffer(),aliasPromise]);
-      state.aliases=aliasData.aliases||[]; state.file=file; state.fileName=file.name; state.fileHash=hash;
+      const [arrayBuffer,aliasData]=await Promise.all([file.arrayBuffer(),aliasPromise]);
+      state.aliases=aliasData.aliases||[]; state.file=file; state.fileName=file.name; state.fileHash='';
       const wb=new ExcelJS.Workbook(); await wb.xlsx.load(arrayBuffer);
       const ws=wb.getWorksheet('Tovarlar')||wb.worksheets[0]; if(!ws)throw new Error(xl("Excel ichida Tovarlar varag'i topilmadi",'В Excel не найден лист Tovarlar'));
 
       const headerMap=new Map();
       ws.getRow(1).eachCell((cell,col)=>{headerMap.set(norm(cellText(cell)),col);});
+      const findCol=(...names)=>{for(const n of names){const c=headerMap.get(norm(n));if(c)return c;}return null;};
+      const pathCol=findCol("Katalog yo'li","Katalog yo‘li");
       const catCols=[];
       for(const [h,col] of headerMap.entries()){
         if(h==='bosh katalog')catCols.push({depth:0,col});
         else {const m=h.match(/^katalog\s*(\d+)$/);if(m)catCols.push({depth:Number(m[1]),col});}
       }
       catCols.sort((a,b)=>a.depth-b.depth);
-      if(!catCols.length)throw new Error(xl('Bosh katalog / Katalog1 ustunlari topilmadi','Не найдены столбцы Bosh katalog / Katalog1'));
-      const findCol=(...names)=>{for(const n of names){const c=headerMap.get(norm(n));if(c)return c;}return null;};
+      if(!pathCol&&!catCols.length)throw new Error(xl("Katalog yo'li yoki eski Bosh katalog / Katalog1 ustunlari topilmadi","Не найден столбец Katalog yo'li или старые Bosh katalog / Katalog1"));
       const cols={
         name:findCol('Tovar nomi'), nameRu:findCol('Tovar nomi RU (ixtiyoriy)','Tovar nomi RU'),
         price:findCol('Tovar narxi','Narxi'), oldPrice:findCol('Eski narxi'), stock:findCol('Soni'),
@@ -387,18 +402,42 @@
       };
       if(!cols.name||!cols.price)throw new Error(xl('Tovar nomi yoki Tovar narxi ustuni topilmadi','Не найден столбец названия или цены товара'));
 
-      let lastPath=[]; const rows=[]; const baseIssues=[]; const sourceRows=[];
-      for(let r=2;r<=ws.rowCount;r++){
-        const row=ws.getRow(r); const catVals=catCols.map(x=>cellText(row.getCell(x.col)));
-        const anyCat=catVals.some(Boolean); let effective; let categoryGap=false;
-        if(!anyCat) effective=[...lastPath];
-        else{
-          const deepest=catVals.reduce((m,v,i)=>v?i:m,-1); effective=[...lastPath];
-          for(let i=0;i<=deepest;i++){
-            if(catVals[i])effective[i]=catVals[i];
-            else if(!effective[i]){effective[i]='';categoryGap=true;}
+      let metadataStartRow=null;let metadataTemplateId='';
+      const metadataSheet=wb.getWorksheet('FITCORE_META');
+      if(metadataSheet){
+        metadataSheet.eachRow(row=>{
+          const key=norm(cellText(row.getCell(1)));
+          if(key==='template_id')metadataTemplateId=cellText(row.getCell(2));
+          if(key==='data_start_row'){
+            const parsed=Number(cellText(row.getCell(2)));
+            if(Number.isInteger(parsed)&&parsed>=2)metadataStartRow=parsed;
           }
-          effective=effective.slice(0,deepest+1).filter(Boolean); lastPath=[...effective];
+        });
+      }
+      const isNewSinglePathTemplate=!!pathCol;
+      const dataStartRow=isNewSinglePathTemplate
+        ? Math.max(5,metadataTemplateId==='FITCORE_EXCEL_IMPORT_V2'&&metadataStartRow?metadataStartRow:5)
+        : 2;
+
+      let lastPath=[]; const rows=[]; const baseIssues=[]; const sourceRows=[];
+      for(let r=dataStartRow;r<=ws.rowCount;r++){
+        const row=ws.getRow(r);let effective;let categoryGap=false;
+        if(pathCol){
+          const parsedPath=parseCategoryPath(cellText(row.getCell(pathCol)));
+          if(parsedPath.length)lastPath=[...parsedPath];
+          effective=parsedPath.length?[...parsedPath]:[...lastPath];
+        }else{
+          const catVals=catCols.map(x=>normalizeCategorySegment(cellText(row.getCell(x.col))));
+          const anyCat=catVals.some(Boolean);
+          if(!anyCat)effective=[...lastPath];
+          else{
+            const deepest=catVals.reduce((m,v,i)=>v?i:m,-1);effective=[...lastPath];
+            for(let i=0;i<=deepest;i++){
+              if(catVals[i])effective[i]=catVals[i];
+              else if(!effective[i]){effective[i]='';categoryGap=true;}
+            }
+            effective=effective.slice(0,deepest+1).filter(Boolean);lastPath=[...effective];
+          }
         }
         const name=cellText(row.getCell(cols.name));
         const priceRaw=cellText(row.getCell(cols.price));
@@ -428,6 +467,7 @@
         });
       }
       if(!rows.length&&!baseIssues.length)throw new Error(xl('Import qilinadigan tovar topilmadi','Товары для импорта не найдены'));
+      state.fileHash=await fingerprintImportRows(rows);
       state.rows=rows;state.sourceRows=sourceRows;state.baseRowIssues=baseIssues;state.decisions={};
       analyzeIssues(rows);analyzeRows();
     }catch(e){console.error(e);alert(xl("❌ Excelni o'qishda xatolik: ",'❌ Ошибка чтения Excel: ')+(e.message||e));state.rows=[];state.issues=[];state.baseRowIssues=[];state.rowIssues=[];state.sourceRows=[];}
@@ -562,7 +602,7 @@
             <label class="bg-blue-600 text-white font-bold py-2.5 rounded-xl text-center cursor-pointer ${state.busy?'opacity-50':''}" >📤 ${xl('Excel tanlash','Выбрать Excel')}<input type="file" accept=".xlsx" class="hidden" onchange="FitcoreExcel.handleFile(event)" ${state.busy?'disabled':''}></label>
           </div>
           ${state.templateStatus?`<div class="${state.templateStatus.type==='error'?'bg-red-50 border-red-200 text-red-800':state.templateStatus.type==='success'?'bg-emerald-50 border-emerald-200 text-emerald-800':'bg-slate-50 border-slate-200 text-slate-700'} border rounded-2xl p-3 font-bold">${state.templateStatus.type==='error'?'❌':state.templateStatus.type==='success'?'✅':'ℹ️'} ${esc(state.templateStatus.message)}</div>`:''}
-          <div class="bg-gray-50 border rounded-2xl p-3 text-[10px] text-gray-600">💡 ${xl("Shablonda mavjud kataloglar <b>Kataloglar</b> varag'ida ko'rinadi va kategoriya ustunlarida dropdown bor. Pastdagi qatorda katalog kataklari bo'sh qolsa, <b>yuqoridagi oxirgi katalog davom etadi</b>.","В шаблоне существующие каталоги видны на листе <b>Kataloglar</b>, а в столбцах категорий есть выпадающие списки. Если в следующей строке каталог пуст, <b>продолжается последний каталог сверху</b>.")}</div>
+          <div class="bg-gray-50 border rounded-2xl p-3 text-[10px] text-gray-600">💡 ${xl("Shablonda mavjud to'liq yo'llar <b>Kataloglar</b> varag'ida ko'rinadi va <b>Katalog yo'li</b> ustunida dropdown bor. 2–4-qatorlar namuna, import 5-qatordan boshlanadi. Katalog yo'li bo'sh qolsa, <b>yuqoridagi oxirgi yo'l davom etadi</b>.","Полные пути видны на листе <b>Kataloglar</b>, а в столбце <b>Katalog yo'li</b> есть список. Строки 2–4 — примеры, импорт начинается со строки 5. Если путь пуст, <b>продолжается последний путь сверху</b>.")}</div>
           ${state.fileName?`<div class="bg-white border border-slate-200 rounded-2xl p-3 space-y-2"><p><b>${xl('Fayl','Файл')}:</b> ${esc(state.fileName)}</p><div class="grid grid-cols-3 gap-1 text-center"><div class="bg-slate-50 rounded-xl p-2"><b class="block text-base">${state.sourceRows.length}</b>${xl('jami qator','всего строк')}</div><div class="bg-emerald-50 rounded-xl p-2"><b class="block text-base text-emerald-700">${readyRows}</b>${xl('tayyor','готово')}</div><div class="bg-red-50 rounded-xl p-2"><b class="block text-base text-red-700">${errors.length}</b>${xl('xato','ошибок')}</div><div class="bg-amber-50 rounded-xl p-2"><b class="block text-base text-amber-700">${warnings.length}</b>${xl('ogohlantirish','предупр.')}</div><div class="bg-blue-50 rounded-xl p-2"><b class="block text-base text-blue-700">${newCategoryCount}</b>${xl('yangi katalog','новых каталогов')}</div><div class="bg-violet-50 rounded-xl p-2"><b class="block text-base text-violet-700">${similarCount}</b>${xl("o'xshash nom",'похожих имён')}</div></div><p class="text-[10px] text-slate-500">${xl("Katalog yo'llari",'Пути каталогов')}: ${uniquePaths} · ${xl('Duplicate belgilar','Признаки дублей')}: ${duplicateCount} · ${xl('Variant qoldiq farqi','Расхождения остатков')}: ${mismatchCount}</p></div>`:''}
           ${rowIssueHtml?`<div class="space-y-2"><div class="flex items-center justify-between"><h4 class="font-black">${xl('Qator tekshiruvi','Проверка строк')}</h4>${errors.length?`<button onclick="FitcoreExcel.downloadErrorRowsCsv()" class="bg-red-600 text-white px-3 py-1.5 rounded-xl font-bold">⬇️ ${xl('Xato CSV','CSV ошибок')}</button>`:''}</div><div class="space-y-1 max-h-56 overflow-y-auto">${rowIssueHtml}</div>${state.rowIssues.length>50?`<p class="text-[10px] text-gray-500">+ ${state.rowIssues.length-50} ${xl('ta boshqa xabar','других сообщений')}</p>`:''}</div>`:''}
           ${issueHtml?`<div class="space-y-2"><h4 class="font-black">${xl('Katalog qarorlari','Решения по каталогам')}</h4>${issueHtml}</div>`:''}

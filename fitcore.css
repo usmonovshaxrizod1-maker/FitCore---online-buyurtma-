@@ -1428,10 +1428,27 @@ input.border:focus, textarea.border:focus, select.border:focus {
   box-shadow: 0 -5px 18px rgba(15, 23, 42, 0.045) !important;
 }
 
-/* Admin/User rejimiga o'tish tugmasi doim aniq ko'rinsin */
-button[onclick="toggleAdminRole()"] {
-  border: 1px solid rgba(255,255,255,.16);
-  box-shadow: 0 6px 18px rgba(15,23,42,.14);
+/* Aynan rejim almashtirish tugmasi: mavjud bo'lmagan gradient utility'lariga bog'liq emas. */
+#admin-role-toggle-btn {
+  color: #0f172a;
+  background: #e2e8f0;
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 6px 18px rgba(15,23,42,.12);
+  transition: background-color .15s ease, color .15s ease, transform .1s ease, box-shadow .15s ease;
+}
+#admin-role-toggle-btn:hover { background: #cbd5e1; color: #020617; }
+#admin-role-toggle-btn:active { background: #bac5d3; color: #020617; transform: translateY(1px); }
+#admin-role-toggle-btn[data-target-mode="user"] {
+  color: #fffbeb;
+  background: #92400e;
+  border-color: rgba(251,191,36,.34);
+}
+#admin-role-toggle-btn[data-target-mode="user"]:hover { background: #78350f; color: #fff; }
+#admin-role-toggle-btn[data-target-mode="user"]:active { background: #71320d; color: #fff; }
+@media (prefers-color-scheme: dark) {
+  #admin-role-toggle-btn[data-target-mode="admin"] { color: #0f172a; background: #cbd5e1; border-color: #94a3b8; }
+  #admin-role-toggle-btn[data-target-mode="admin"]:hover { color: #020617; background: #e2e8f0; }
+  #admin-role-toggle-btn[data-target-mode="admin"]:active { color: #020617; background: #b8c4d2; }
 }
 
 
