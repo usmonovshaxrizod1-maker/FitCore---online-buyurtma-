@@ -10,6 +10,30 @@
       if (el) el.classList.add('hidden');
     }
 
+    // Kichik, ekranni bloklamaydigan holat xabari. Admin amallarida global loader
+    // o'rniga shu ishlatiladi: foydalanuvchi darhol natijani ko'radi, server esa fon rejimida saqlaydi.
+    let actionToastTimer = null;
+    function showActionToast(text, state = 'saving', duration = 0) {
+      const el = document.getElementById('action-toast');
+      if (!el) return;
+      if (actionToastTimer) { clearTimeout(actionToastTimer); actionToastTimer = null; }
+      el.textContent = text || '';
+      el.dataset.state = state;
+      el.classList.remove('hidden');
+      if (duration > 0) {
+        actionToastTimer = setTimeout(() => { el.classList.add('hidden'); actionToastTimer = null; }, duration);
+      }
+    }
+    function hideActionToast() {
+      const el = document.getElementById('action-toast');
+      if (actionToastTimer) { clearTimeout(actionToastTimer); actionToastTimer = null; }
+      if (el) el.classList.add('hidden');
+    }
+    function cloneData(v) {
+      if (typeof structuredClone === 'function') { try { return structuredClone(v); } catch (_) {} }
+      return JSON.parse(JSON.stringify(v));
+    }
+
     // XSS OLDINI OLISH UCHUN: foydalanuvchi kiritgan matnni HTML'ga xavfsiz qo'yish
     function escapeHtml(str) {
       if (str === null || str === undefined) return '';
@@ -215,6 +239,32 @@
     // Rasm yuklash uchun: haqiqiy fayl (Storage'ga yuklanadi) va preview (faqat ko'rsatish uchun)
     let tempImageFile = null;
     let tempImagePreviewUrl = null;
+    let tempImagePreparingPromise = null;
+
+    function clearTempImageSelection() {
+      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
+        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
+      }
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
+      tempImagePreparingPromise = null;
+    }
+    function takeTempImageSnapshot() {
+      const snap = {
+        file: tempImageFile,
+        preview: tempImagePreviewUrl,
+        preparing: tempImagePreparingPromise,
+      };
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
+      tempImagePreparingPromise = null;
+      return snap;
+    }
+    function releaseImageSnapshot(snap) {
+      if (snap?.preview && String(snap.preview).startsWith('blob:')) {
+        try { URL.revokeObjectURL(snap.preview); } catch (_) {}
+      }
+    }
 
     // Joriy ko'rinib turgan mahsulotlar ro'yxati (⬆️⬇️ tugmalari shu ro'yxat ichida ishlashi uchun)
     let currentVisibleProductIds = [];
@@ -591,57 +641,53 @@
         return;
       }
 
-      // MUHIM: kichraytirish bir oz vaqt oladi. Shu payt ekranni qulflab
-      // qo'yamiz — aks holda foydalanuvchi ulgurmay "Saqlash" bossa, dastur
-      // hali ESKI rasmni ishlatib qolishi mumkin edi (bu haqiqiy bug edi).
-      showLoader(tr("Rasm tayyorlanmoqda...", "Изображение подготавливается..."));
-      try {
-        tempImageFile = await compressImage(file, 1000, 0.8);
-        const reader = new FileReader();
-        reader.onload = function (e) {
-          tempImagePreviewUrl = e.target.result;
-          const prev = document.getElementById(previewId);
-          if (prev) {
-            prev.src = tempImagePreviewUrl;
-            prev.classList.remove('hidden');
-          }
-        };
-        reader.readAsDataURL(tempImageFile);
-      } finally {
-        hideLoader();
+      // Preview birinchi: galereyadan tanlangan rasm ESKI rasm o'rnida darhol ko'rinadi.
+      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
+        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
       }
+      tempImageFile = file;
+      tempImagePreviewUrl = URL.createObjectURL(file);
+      const prev = document.getElementById(previewId);
+      if (prev) {
+        prev.src = tempImagePreviewUrl;
+        prev.classList.remove('hidden');
+      }
+
+      // Kichraytirish fon rejimida. Saqlash tez bosilsa ham save funksiyasi shu promise'ni kutadi,
+      // ammo ekran hech qachon global loader bilan qotmaydi.
+      tempImagePreparingPromise = compressImage(file, 1000, 0.8);
+      showActionToast(tr("🖼️ Rasm tanlandi", "🖼️ Фото выбрано"), 'success', 1200);
     }
 
-    // Saqlash bosilganda chaqiriladi: agar yangi fayl tanlangan bo'lsa, avval
-    // serverdan (admin ekanligi tekshirilgandan keyin) bir martalik "signed URL"
-    // so'raymiz, keyin faylni to'g'ridan-to'g'ri shu havola orqali Storage'ga
-    // yuklaymiz. Frontend hech qachon Storage'ga to'g'ridan-to'g'ri yozmaydi.
-    async function uploadImageIfNeeded(existingImg) {
-      if (!tempImageFile) return existingImg || null;
+    async function uploadImageSnapshot(snapshot, existingImg, strict = false) {
+      if (!snapshot || (!snapshot.file && !snapshot.preparing)) return existingImg || null;
+      const prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file;
+      if (!prepared) return existingImg || null;
 
-      showLoader(tr("Rasm yuklanmoqda...", "Изображение загружается..."));
-      const ext = (tempImageFile.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-
+      showActionToast(tr("☁️ Rasm yuklanmoqda...", "☁️ Фото загружается..."), 'saving');
+      const ext = (prepared.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
       let lastErr = null;
-      // Vaqtinchalik internet uzilishi bo'lsa deb, 1 marta avtomatik qayta urinamiz.
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const { path, token } = await callApi('get_upload_url', { ext });
-          const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, tempImageFile);
+          const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
           if (upErr) throw upErr;
-
           const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
-          hideLoader();
           return pub?.publicUrl || existingImg || null;
         } catch (e) {
           lastErr = e;
           console.error(`Rasm yuklash xatosi (${attempt + 1}-urinish):`, e);
         }
       }
-
-      hideLoader();
-      alert(tr("⚠️ Rasmni yuklashda xatolik yuz berdi: ", "⚠️ Ошибка загрузки изображения: ") + (lastErr?.message || lastErr) + tr("\nAvvalgi/standart rasm qoldiriladi.", "\nБудет сохранено прежнее/стандартное изображение."));
+      if (strict) throw lastErr || new Error('image_upload_failed');
       return existingImg || null;
+    }
+
+    // Eski chaqiruvlar uchun wrapper.
+    async function uploadImageIfNeeded(existingImg) {
+      const snap = takeTempImageSnapshot();
+      try { return await uploadImageSnapshot(snap, existingImg, false); }
+      finally { releaseImageSnapshot(snap); }
     }
 
     // RENDER ROUTER
@@ -1532,37 +1578,49 @@
       const reason = document.getElementById('bl-reason').value;
       const note = document.getElementById('bl-note').value.trim();
       if (!confirm(tr("Rostdan ham bu mijozni bloklaysizmi? U buyurtma bera olmaydi.", "Заблокировать этого клиента? Он не сможет оформлять заказы."))) return;
-
-      showLoader(tr("Bajarilmoqda...", "Выполняется..."));
+      const idx = usersSummary.findIndex(u => u.tgId === tgId);
+      const old = idx >= 0 ? cloneData(usersSummary[idx]) : null;
+      if (idx >= 0) {
+        usersSummary[idx].isBlocked = true;
+        usersSummary[idx].blockReason = reason || note || null;
+      }
+      activePopupModal = null;
+      selectedUserModal = idx >= 0 ? usersSummary[idx] : null;
+      render();
+      showActionToast(tr("⏳ Bloklanmoqda...", "⏳ Блокировка..."), 'saving');
       try {
         await callApi('block_user', { tgId, reason, note });
-        await refreshUsersSummary();
-        selectedUserModal = usersSummary.find(u => u.tgId === tgId) || null;
-        activePopupModal = null;
-        alert(tr("🚫 Mijoz bloklandi.", "🚫 Клиент заблокирован."));
-        render();
+        showActionToast(tr("✅ Mijoz bloklandi", "✅ Клиент заблокирован"), 'success', 1200);
+        refreshUsersSummary().then(() => { selectedUserModal = usersSummary.find(u => u.tgId === tgId) || null; render(); });
       } catch (e) {
         console.error(e);
+        if (idx >= 0 && old) usersSummary[idx] = old;
+        selectedUserModal = usersSummary.find(u => u.tgId === tgId) || null;
+        render();
+        showActionToast(tr("❌ Amal bajarilmadi", "❌ Действие не выполнено"), 'error', 1800);
         alert(tr("❌ Xatolik yuz berdi: ", "❌ Произошла ошибка: ") + (e.message || e));
-      } finally {
-        hideLoader();
       }
     }
 
     async function unblockUser(tgId) {
       if (!confirm(tr("Bu mijoz blokdan chiqarilsinmi?", "Разблокировать этого клиента?"))) return;
-      showLoader(tr("Bajarilmoqda...", "Выполняется..."));
+      const idx = usersSummary.findIndex(u => u.tgId === tgId);
+      const old = idx >= 0 ? cloneData(usersSummary[idx]) : null;
+      if (idx >= 0) { usersSummary[idx].isBlocked = false; usersSummary[idx].blockReason = null; }
+      selectedUserModal = idx >= 0 ? usersSummary[idx] : null;
+      render();
+      showActionToast(tr("⏳ Blokdan chiqarilmoqda...", "⏳ Разблокировка..."), 'saving');
       try {
         await callApi('unblock_user', { tgId });
-        await refreshUsersSummary();
-        selectedUserModal = usersSummary.find(u => u.tgId === tgId) || null;
-        alert(tr("✅ Mijoz blokdan chiqarildi.", "✅ Клиент разблокирован."));
-        render();
+        showActionToast(tr("✅ Blokdan chiqarildi", "✅ Разблокирован"), 'success', 1200);
+        refreshUsersSummary().then(() => { selectedUserModal = usersSummary.find(u => u.tgId === tgId) || null; render(); });
       } catch (e) {
         console.error(e);
+        if (idx >= 0 && old) usersSummary[idx] = old;
+        selectedUserModal = usersSummary.find(u => u.tgId === tgId) || null;
+        render();
+        showActionToast(tr("❌ Amal bajarilmadi", "❌ Действие не выполнено"), 'error', 1800);
         alert(tr("❌ Xatolik yuz berdi: ", "❌ Произошла ошибка: ") + (e.message || e));
-      } finally {
-        hideLoader();
       }
     }
 
@@ -1785,17 +1843,20 @@
 
     async function removeAdmin(admId) {
       if (!confirm(tr("Ushbu admin huquqini bekor qilmoqchimisiz?", "Удалить права этого администратора?"))) return;
-      showLoader(tr("Bajarilmoqda...", "Выполняется..."));
+      const idx = adminsList.indexOf(admId);
+      if (idx < 0) return;
+      adminsList.splice(idx, 1);
+      render();
+      showActionToast(tr("⏳ Admin o'chirilmoqda...", "⏳ Администратор удаляется..."), 'saving');
       try {
         await callApi('remove_admin', { tgId: admId });
-        adminsList = adminsList.filter(a => a !== admId);
-        alert(tr("✅ Admin o'chirildi!", "✅ Администратор удалён!"));
-        render();
+        showActionToast(tr("✅ Admin o'chirildi", "✅ Администратор удалён"), 'success', 1200);
       } catch (e) {
         console.error(e);
+        adminsList.splice(Math.min(idx, adminsList.length), 0, admId);
+        render();
+        showActionToast(tr("❌ O'chirilmadi", "❌ Не удалён"), 'error', 1800);
         alert(tr("❌ Xatolik yuz berdi: ", "❌ Произошла ошибка: ") + (e.message || e));
-      } finally {
-        hideLoader();
       }
     }
 
@@ -2524,7 +2585,7 @@
     function openEditFieldModal(prodId, fieldName) {
       selectedProductModal = products.find(p => p.id === prodId);
       editingFieldData = fieldName;
-      tempImageFile = null;
+      clearTempImageSelection();
       tempImagePreviewUrl = (fieldName === 'img' && selectedProductModal) ? selectedProductModal.img : null;
       activePopupModal = 'EDIT_PROD_FIELD';
       render();
@@ -2546,14 +2607,17 @@
       orders[idx] = { ...orders[idx], status: newStatus };
       selectedOrderModal = null;
       render();
+      showActionToast(tr("⏳ Status saqlanmoqda...", "⏳ Статус сохраняется..."), 'saving');
       try {
         const result = await callApi('update_order_status', { orderId: id, newStatus });
         orders[idx] = formatOrderForUi(result.order);
+        showActionToast(tr("✅ Status saqlandi", "✅ Статус сохранён"), 'success', 1000);
         render();
       } catch (e) {
         console.error(e);
         orders[idx] = old;
         render();
+        showActionToast(tr("❌ Status saqlanmadi", "❌ Статус не сохранён"), 'error', 1600);
         alert(tr("❌ Statusni o'zgartirishda xatolik yuz berdi.", "❌ Ошибка изменения статуса."));
       }
     }
@@ -2602,145 +2666,173 @@
       const variants = parseVariantInputs(sizeText, colorText, isNaN(stock) ? 0 : stock);
       const desc = document.getElementById('m-prod-desc').value.trim();
       const descRu = document.getElementById('m-prod-desc-ru').value.trim();
-
       if (!name || isNaN(price) || (variants.length === 0 && isNaN(stock))) {
         return alert(tr("Iltimos, barcha majburiy maydonlarni to'ldiring!", "Заполните все обязательные поля!"));
       }
+      const oldPrice = (!isNaN(oldPriceVal) && oldPriceVal > price) ? oldPriceVal : null;
+      const imageSnap = takeTempImageSnapshot();
+      const categoryId = adminCatParentId;
 
-      let oldPrice = null;
-      if (!isNaN(oldPriceVal) && oldPriceVal > price) {
-        oldPrice = oldPriceVal;
-      }
-
-      showLoader(tr("Tovar saqlanmoqda...", "Товар сохраняется..."));
+      // Modal darhol yopiladi — foydalanuvchi serverni kutmaydi.
+      activePopupModal = null;
+      render();
+      showActionToast(tr("⏳ Tovar saqlanmoqda...", "⏳ Товар сохраняется..."), 'saving');
       try {
-        const imgUrl = await uploadImageIfNeeded(null);
+        const imgUrl = await uploadImageSnapshot(imageSnap, null, false);
         const result = await callApi('add_product', {
           name, nameRu: nameRu || null, price, oldPrice,
           stock: isNaN(stock) ? 0 : stock,
           variants: variants.length > 0 ? variants : null,
           desc, descRu: descRu || null,
-          categoryId: adminCatParentId, img: imgUrl
+          categoryId, img: imgUrl
         });
         upsertLocalProduct(result.product);
-        tempImageFile = null;
-        tempImagePreviewUrl = null;
-        activePopupModal = null;
-        alert(`${tr("✅ Yangi tovar muvaffaqiyatli qo'shildi! ID:",'✅ Новый товар успешно добавлен! ID:')} ${result.product.sku}`);
+        saveCatalogCache();
+        showActionToast(`${tr("✅ Tovar qo'shildi. ID:", "✅ Товар добавлен. ID:")} ${result.product.sku}`, 'success', 1800);
         render();
       } catch (e) {
         console.error(e);
+        showActionToast(tr("❌ Tovar saqlanmadi", "❌ Товар не сохранён"), 'error', 1800);
         if (String(e.message).startsWith('product_limit_reached')) {
           const limit = String(e.message).split(':')[1];
           alert(`${tr('⚠️ Tovar soni chegarasiga yetdingiz','⚠️ Достигнут лимит количества товаров')} (${limit}). ${tr("Ko'proq tovar qo'shish uchun tarifingizni oshiring.",'Чтобы добавить больше товаров, увеличьте тариф.')}`);
         } else {
           alert(tr("❌ Tovarni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения товара: ") + (e.message || e));
         }
-      } finally {
-        hideLoader();
-      }
+      } finally { releaseImageSnapshot(imageSnap); }
     }
 
     async function saveCategoryFromModal() {
       const name = document.getElementById('m-cat-name').value.trim();
       const nameRu = document.getElementById('m-cat-name-ru').value.trim();
       if (!name) return alert(tr("Katalog nomini kiriting!", "Введите название каталога!"));
-
-      showLoader(tr("Katalog saqlanmoqda...", "Каталог сохраняется..."));
+      const imageSnap = takeTempImageSnapshot();
+      const parentId = adminCatParentId;
+      activePopupModal = null;
+      render();
+      showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
       try {
-        const imgUrl = await uploadImageIfNeeded(null);
-        const result = await callApi('add_category', { name, nameRu: nameRu || null, img: imgUrl, parentId: adminCatParentId });
+        const imgUrl = await uploadImageSnapshot(imageSnap, null, false);
+        const result = await callApi('add_category', { name, nameRu: nameRu || null, img: imgUrl, parentId });
         upsertLocalCategory(result.category);
-        tempImageFile = null;
-        tempImagePreviewUrl = null;
-        activePopupModal = null;
-        alert(tr("✅ Katalog yaratildi!", "✅ Каталог создан!"));
+        saveCatalogCache();
+        showActionToast(tr("✅ Katalog yaratildi", "✅ Каталог создан"), 'success', 1200);
         render();
       } catch (e) {
         console.error(e);
+        showActionToast(tr("❌ Katalog saqlanmadi", "❌ Каталог не сохранён"), 'error', 1800);
         alert(tr("❌ Katalogni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения каталога: ") + (e.message || e));
-      } finally {
-        hideLoader();
-      }
+      } finally { releaseImageSnapshot(imageSnap); }
     }
 
     async function saveAdminFromModal() {
       const idVal = document.getElementById('m-admin-id').value.trim();
       if (!idVal || !/^\d+$/.test(idVal)) return alert(tr("To'g'ri Telegram ID kiriting!", "Введите корректный Telegram ID!"));
-
+      const existed = adminsList.includes(idVal);
+      if (!existed) adminsList.push(idVal);
+      activePopupModal = null;
+      render();
+      showActionToast(tr("⏳ Admin saqlanmoqda...", "⏳ Администратор сохраняется..."), 'saving');
       try {
         await callApi('add_admin', { tgId: idVal });
-        if (!adminsList.includes(idVal)) adminsList.push(idVal);
-        activePopupModal = null;
-        alert(tr("✅ Yangi admin biriktirildi!", "✅ Новый администратор добавлен!"));
-        render();
+        showActionToast(tr("✅ Admin qo'shildi", "✅ Администратор добавлен"), 'success', 1200);
       } catch (e) {
         console.error(e);
+        if (!existed) adminsList = adminsList.filter(x => x !== idVal);
+        render();
+        showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 1800);
         alert(tr("❌ Adminni qo'shishda xatolik yuz berdi: ", "❌ Ошибка добавления администратора: ") + (e.message || e));
       }
     }
 
     async function saveFieldEdit(prodId, field) {
-      const p = products.find(prod => prod.id === prodId);
-      if (!p) return;
-
+      const idx = products.findIndex(prod => prod.id === prodId);
+      if (idx < 0) return;
+      const p = products[idx];
+      const old = cloneData(p);
       const payload = { productId: prodId, field };
+      let imageSnap = null;
 
       if (field === 'name') {
         const val = document.getElementById('ef-val').value.trim();
         if (!val) { activePopupModal = null; render(); return; }
         payload.value = val;
         const ruVal = document.getElementById('ef-val-ru').value.trim();
+        p.name = val;
+        p.nameRu = ruVal || null;
         if (ruVal) { payload.field2 = 'nameRu'; payload.value2 = ruVal; }
+        else { payload.field2 = 'nameRu'; payload.value2 = null; }
       } else if (field === 'price') {
         const price = parseFloat(document.getElementById('ef-price').value);
         const oldVal = parseFloat(document.getElementById('ef-oldprice').value);
         if (isNaN(price)) { activePopupModal = null; render(); return; }
-        payload.value = price;
-        payload.oldPrice = (!isNaN(oldVal) && oldVal > price) ? oldVal : null;
+        const oldPrice = (!isNaN(oldVal) && oldVal > price) ? oldVal : null;
+        payload.value = price; payload.oldPrice = oldPrice;
+        p.price = price; p.oldPrice = oldPrice;
       } else if (field === 'stock') {
         const stock = parseInt(document.getElementById('ef-val').value, 10);
         if (isNaN(stock)) { activePopupModal = null; render(); return; }
         payload.value = stock;
+        p.stock = stock; p.status = stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
       } else if (field === 'desc') {
-        payload.value = document.getElementById('ef-val').value.trim();
+        const val = document.getElementById('ef-val').value.trim();
         const ruVal = document.getElementById('ef-val-ru').value.trim();
-        if (ruVal) { payload.field2 = 'descRu'; payload.value2 = ruVal; }
+        payload.value = val;
+        payload.field2 = 'descRu'; payload.value2 = ruVal || null;
+        p.desc = val; p.descRu = ruVal || null;
       } else if (field === 'img') {
-        const newImg = await uploadImageIfNeeded(p.img);
-        if (!newImg) { activePopupModal = null; render(); return; }
-        payload.value = newImg;
+        imageSnap = takeTempImageSnapshot();
+        if (!imageSnap.file && !imageSnap.preparing) { activePopupModal = null; render(); return; }
+        // Tanlangan rasm kartochkada ham darhol ko'rinsin.
+        if (imageSnap.preview) p.img = imageSnap.preview;
       } else if (field === 'sizes' || field === 'variants') {
         const sizeText = document.getElementById('ef-size-val').value;
         const colorText = document.getElementById('ef-color-val').value;
-        payload.field = 'variants';
-        payload.value = parseVariantInputs(sizeText, colorText, p.stock);
+        const vars = parseVariantInputs(sizeText, colorText, p.stock);
+        payload.field = 'variants'; payload.value = vars;
+        p.variants = vars;
+        p.sizes = vars.length && !vars.some(v => v.color) ? vars.map(v => ({ size: v.size, qty: v.qty, sku: v.sku || null })) : null;
+        if (vars.length) {
+          p.stock = vars.reduce((sum, v) => sum + (Number(v.qty) || 0), 0);
+          p.status = p.stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
+        }
       }
 
+      // PIN kabi: Saqlash bosilishi bilan modal yopiladi va yangi qiymat darhol ko'rinadi.
+      activePopupModal = null;
+      selectedProductModal = p;
+      render();
+      showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохраняется..."), 'saving');
+
       try {
+        if (field === 'img') payload.value = await uploadImageSnapshot(imageSnap, old.img, true);
         const result = await callApi('edit_product_field', payload);
-        Object.assign(p, mapProductFromDB(result.product));
-        tempImageFile = null;
-        tempImagePreviewUrl = null;
-        activePopupModal = null;
-        selectedProductModal = p;
+        const current = products.find(prod => prod.id === prodId);
+        if (current) Object.assign(current, mapProductFromDB(result.product));
+        saveCatalogCache();
+        showActionToast(tr("✅ Saqlandi", "✅ Сохранено"), 'success', 1200);
         render();
       } catch (e) {
         console.error(e);
+        const curIdx = products.findIndex(prod => prod.id === prodId);
+        if (curIdx >= 0) products[curIdx] = old;
+        selectedProductModal = products.find(prod => prod.id === prodId) || null;
+        render();
+        showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 1800);
         alert(tr("❌ Saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения: ") + (e.message || e));
+      } finally {
+        releaseImageSnapshot(imageSnap);
       }
     }
 
     function openAddProductModal() {
-      tempImageFile = null;
-      tempImagePreviewUrl = null;
+      clearTempImageSelection();
       activePopupModal = 'ADD_PROD';
       render();
     }
 
     function openAddCatModal() {
-      tempImageFile = null;
-      tempImagePreviewUrl = null;
+      clearTempImageSelection();
       activePopupModal = 'ADD_CAT';
       render();
     }
@@ -2777,33 +2869,45 @@
       const c = categories.find(cat => cat.id === id);
       if (!c) return;
       selectedCategoryModal = c;
-      tempImageFile = null;
-      tempImagePreviewUrl = null;
+      clearTempImageSelection();
       activePopupModal = 'EDIT_CAT';
       render();
     }
 
     async function saveCategoryEdit(id) {
-      const c = categories.find(cat => cat.id === id);
-      if (!c) return;
+      const idx = categories.findIndex(cat => cat.id === id);
+      if (idx < 0) return;
+      const c = categories[idx];
+      const old = cloneData(c);
       const name = document.getElementById('ec-name').value.trim();
       const nameRu = document.getElementById('ec-name-ru').value.trim();
       if (!name) return alert(tr("Katalog nomini kiriting!", "Введите название каталога!"));
+      const imageSnap = takeTempImageSnapshot();
 
-      showLoader(tr("Saqlanmoqda...", "Сохраняется..."));
+      c.name = name;
+      c.nameRu = nameRu || null;
+      if (imageSnap.preview) c.img = imageSnap.preview;
+      activePopupModal = null;
+      render();
+      showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
+
       try {
-        const newImg = await uploadImageIfNeeded(c.img);
+        const newImg = await uploadImageSnapshot(imageSnap, old.img, !!(imageSnap.file || imageSnap.preparing));
         const result = await callApi('edit_category', { categoryId: id, name, nameRu: nameRu || null, img: newImg });
-        Object.assign(c, mapCategoryFromDB(result.category));
-        tempImageFile = null;
-        tempImagePreviewUrl = null;
-        activePopupModal = null;
+        const current = categories.find(cat => cat.id === id);
+        if (current) Object.assign(current, mapCategoryFromDB(result.category));
+        saveCatalogCache();
+        showActionToast(tr("✅ Saqlandi", "✅ Сохранено"), 'success', 1200);
         render();
       } catch (e2) {
         console.error(e2);
+        const curIdx = categories.findIndex(cat => cat.id === id);
+        if (curIdx >= 0) categories[curIdx] = old;
+        render();
+        showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 1800);
         alert(tr("❌ Xatolik yuz berdi: ", "❌ Произошла ошибка: ") + (e2.message || e2));
       } finally {
-        hideLoader();
+        releaseImageSnapshot(imageSnap);
       }
     }
 
@@ -2847,9 +2951,11 @@
       // OPTIMISTIC UI: pin darhol o'zgaradi, server fon rejimida saqlaydi.
       p.isFeatured = newVal;
       render();
+      showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохраняется..."), 'saving');
       try {
         await callApi('toggle_featured', { productId: id, value: newVal });
         saveCatalogCache();
+        showActionToast(tr("✅ Saqlandi", "✅ Сохранено"), 'success', 800);
       } catch (e) {
         p.isFeatured = oldVal;
         render();
@@ -2860,36 +2966,48 @@
 
     async function deleteProduct(id) {
       if (!confirm(tr("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz?", "Вы действительно хотите удалить этот товар?"))) return;
-      showLoader(tr("O'chirilmoqda...", "Удаление..."));
+      const idx = products.findIndex(prod => prod.id === id);
+      if (idx < 0) return;
+      const old = cloneData(products[idx]);
+      products.splice(idx, 1);
+      render();
+      showActionToast(tr("⏳ O'chirilmoqda...", "⏳ Удаление..."), 'saving');
       try {
         await callApi('delete_product', { productId: id });
-        products = products.filter(prod => prod.id !== id);
-        render();
+        saveCatalogCache();
+        showActionToast(tr("✅ O'chirildi", "✅ Удалено"), 'success', 1200);
       } catch (e) {
         console.error(e);
+        products.splice(Math.min(idx, products.length), 0, old);
+        render();
+        showActionToast(tr("❌ O'chirilmadi", "❌ Не удалено"), 'error', 1800);
         alert(tr("❌ O'chirishda xatolik yuz berdi: ", "❌ Ошибка удаления: ") + (e.message || e));
-      } finally {
-        hideLoader();
       }
     }
 
     async function deleteCategory(id, e) {
       if (e) e.stopPropagation();
       if (!confirm(tr("Katalog o'chirilsinmi?", "Удалить каталог?"))) return;
-      showLoader(tr("O'chirilmoqda...", "Удаление..."));
+      const idx = categories.findIndex(c => c.id === id);
+      if (idx < 0) return;
+      const old = cloneData(categories[idx]);
+      categories.splice(idx, 1);
+      render();
+      showActionToast(tr("⏳ O'chirilmoqda...", "⏳ Удаление..."), 'saving');
       try {
         await callApi('delete_category', { categoryId: id });
-        categories = categories.filter(c => c.id !== id);
-        render();
+        saveCatalogCache();
+        showActionToast(tr("✅ O'chirildi", "✅ Удалено"), 'success', 1200);
       } catch (e2) {
         console.error(e2);
+        categories.splice(Math.min(idx, categories.length), 0, old);
+        render();
+        showActionToast(tr("❌ O'chirilmadi", "❌ Не удалено"), 'error', 1800);
         if (String(e2.message).includes('category_not_empty')) {
           alert(tr("❌ Bu katalogda pastki kataloglar yoki tovarlar bog'langan. Avval ularni o'chiring yoki boshqa joyga ko'chiring.", "❌ В каталоге есть подкаталоги или товары. Сначала удалите или переместите их."));
         } else {
           alert(tr("❌ O'chirishda xatolik yuz berdi: ", "❌ Ошибка удаления: ") + (e2.message || e2));
         }
-      } finally {
-        hideLoader();
       }
     }
 

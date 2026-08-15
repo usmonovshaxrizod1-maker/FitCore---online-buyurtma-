@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="preconnect" href="https://mvgbqggrzhswjhmwqcyp.supabase.co">
-  <link rel="stylesheet" href="./fitcore.css?v=3">
+  <link rel="stylesheet" href="./fitcore.css?v=4">
   <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
   <script defer src="https://unpkg.com/lucide@latest"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-  <script defer src="./fitcore-app.js?v=3"></script>
+  <script defer src="./fitcore-app.js?v=4"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
@@ -50,6 +50,9 @@
       <p id="global-loader-text" class="text-xs font-bold text-gray-700">Yuklanmoqda...</p>
     </div>
   </div>
+
+  <!-- NON-BLOCKING ACTION STATUS -->
+  <div id="action-toast" class="hidden" data-state="saving" aria-live="polite"></div>
 
   <!-- BOTTOM NAVIGATION -->
   <nav class="fixed bottom-0 left-0 right-0 bg-white border-t py-2 px-3 flex justify-around items-center z-40 shadow-lg">
