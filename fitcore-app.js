@@ -208,7 +208,7 @@
     let selectedUserModal = null;
     let usersSummary = [];
     let shopLogoUrl = null;
-    let shopContact = { phone: null, instagram: null, contactNote: null };
+    let shopContact = { address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null };
     let activePopupModal = null;
     let editingFieldData = null;
 
@@ -1567,7 +1567,22 @@
     }
 
     // 6. PROFIL TAB (SUPER ADMIN & ADMIN MANAGEMENT)
+    function cleanSocialNick(value) {
+      return String(value || '').trim().replace(/^@/, '').replace(/\/+$/, '');
+    }
+
+    function shopInfoIsEmpty() {
+      return !shopContact.address && !shopContact.coordinates && !shopContact.phone && !shopContact.phone2 &&
+        !shopContact.phone3 && !shopContact.instagram && !shopContact.telegram;
+    }
+
     function renderProfile(container) {
+      const phones = [shopContact.phone, shopContact.phone2, shopContact.phone3].filter(Boolean);
+      const instagramNick = cleanSocialNick(shopContact.instagram);
+      const telegramNick = cleanSocialNick(shopContact.telegram);
+      const coords = String(shopContact.coordinates || '').trim();
+      const mapsUrl = coords ? `https://www.google.com/maps?q=${encodeURIComponent(coords)}` : null;
+
       container.innerHTML = `
         <div class="space-y-4">
           <div class="bg-white p-5 rounded-2xl shadow-sm flex items-center space-x-4 border">
@@ -1578,7 +1593,7 @@
               <h2 class="text-lg font-bold">${escapeHtml(currentUser.firstName)} ${escapeHtml(currentUser.lastName)}</h2>
               <p class="text-xs text-gray-500">${tr("Tel:", "Тел:")} ${escapeHtml(currentUser.phone)}</p>
               <button onclick="activePopupModal='REGISTRATION'; render();" class="mt-1 text-[10px] text-blue-600 font-bold underline">${tr("Ma'lumotlarni tahrirlash", "Изменить данные")}</button>
-          </div>
+            </div>
           </div>
 
           ${myStatus.isBlocked ? `
@@ -1595,82 +1610,78 @@
             </div>
           ` : ''}
 
-          <div class="bg-white p-4 rounded-2xl shadow-sm border space-y-3">
-            <div class="flex items-center justify-between border-b pb-2">
-              <h3 class="font-bold text-sm text-gray-900">${tr("📍 Do'kon haqida", "📍 О магазине")}</h3>
-              ${shopLogoUrl ? `<img src="${escapeHtml(shopLogoUrl)}" class="h-9 max-w-[90px] object-contain rounded-lg">` : ''}
+          <div class="shop-about-card bg-white p-4 rounded-2xl shadow-sm border space-y-3">
+            <div class="flex items-center justify-between gap-3 border-b pb-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <h3 class="font-bold text-sm text-gray-900">${tr("📍 Do'kon haqida", "📍 О магазине")}</h3>
+                ${(isUserAnAdmin && isAdminMode) ? `
+                  <button onclick="activePopupModal='SHOP_INFO'; render();" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">✏️ ${tr("Tahrirlash", "Изменить")}</button>
+                ` : ''}
+              </div>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                ${shopLogoUrl ? `<img id="shop-about-logo" src="${escapeHtml(shopLogoUrl)}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border">` : `<div id="shop-about-logo-empty" class="h-10 min-w-10 px-2 rounded-lg bg-slate-50 border flex items-center justify-center text-[9px] font-bold text-slate-400">FITCORE</div>`}
+                ${(isUserAnAdmin && isAdminMode) ? `
+                  <label class="cursor-pointer text-[10px] font-bold px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200" title="${tr('Logotip qo\'shish/almashtirish','Добавить/заменить логотип')}">
+                    🖼️
+                    <input type="file" accept="image/*" class="hidden" onchange="saveShopLogoFromPicker(event)">
+                  </label>
+                ` : ''}
+              </div>
             </div>
 
-            <a href="https://www.google.com/maps?q=41.217408,69.211225" target="_blank" class="flex items-start space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
-              <i data-lucide="map-pin" class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0"></i>
-              <div>
-                <p class="text-xs font-bold text-gray-800">${tr("Sergeli tumani, Mirzo Tursunzoda ko'chasi", "Сергелийский район, улица Мирзо Турсунзода")}</p>
-                <p class="text-[11px] text-gray-500">${tr("Mo'ljal: 3-bekat · Lokatsiyani ochish uchun bosing →", "Ориентир: 3-я остановка · Нажмите, чтобы открыть локацию →")}</p>
+            ${shopContact.address ? `
+              <div class="flex items-start space-x-3">
+                <i data-lucide="map-pin" class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0"></i>
+                <p class="text-xs font-bold text-gray-800">${escapeHtml(shopContact.address)}</p>
               </div>
-            </a>
+            ` : ''}
+
+            ${mapsUrl ? `
+              <a href="${escapeHtml(mapsUrl)}" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
+                <i data-lucide="navigation" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
+                <div>
+                  <p class="text-xs font-bold text-blue-700">${tr("Xaritada ochish", "Открыть на карте")} →</p>
+                  <p class="text-[10px] text-gray-400 font-mono">${escapeHtml(coords)}</p>
+                </div>
+              </a>
+            ` : ''}
 
             <div class="flex items-center space-x-3">
               <i data-lucide="clock" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
               <p class="text-xs font-bold text-gray-800">${tr("Ish vaqti", "Время работы")}: 10:00 – 22:00</p>
             </div>
 
-            ${shopContact.phone ? `
-              <a href="tel:${escapeHtml(shopContact.phone.replace(/[^\d+]/g, ''))}" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
+            ${phones.map(phone => `
+              <a href="tel:${escapeHtml(String(phone).replace(/[^\d+]/g, ''))}" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
                 <i data-lucide="phone" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
-                <p class="text-xs font-bold text-gray-800">${escapeHtml(shopContact.phone)}</p>
+                <p class="text-xs font-bold text-gray-800">${escapeHtml(phone)}</p>
               </a>
-            ` : ''}
+            `).join('')}
 
-            ${shopContact.instagram ? `
-              <a href="https://instagram.com/${escapeHtml(shopContact.instagram.replace(/^@/, ''))}" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
+            ${instagramNick ? `
+              <a href="https://instagram.com/${encodeURIComponent(instagramNick)}" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
                 <span class="w-4 h-4 flex items-center justify-center text-sm flex-shrink-0">📸</span>
-                <p class="text-xs font-bold text-gray-800">Instagram: @${escapeHtml(shopContact.instagram.replace(/^@/, ''))}</p>
+                <p class="text-xs font-bold text-gray-800">Instagram: @${escapeHtml(instagramNick)}</p>
               </a>
             ` : ''}
 
-            ${shopContact.contactNote ? `
-              <div class="flex items-start space-x-3">
-                <i data-lucide="info" class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0"></i>
-                <p class="text-xs font-bold text-gray-800 whitespace-pre-line">${escapeHtml(shopContact.contactNote)}</p>
-              </div>
+            ${telegramNick ? `
+              <a href="https://t.me/${encodeURIComponent(telegramNick)}" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
+                <span class="w-4 h-4 flex items-center justify-center text-sm flex-shrink-0">✈️</span>
+                <p class="text-xs font-bold text-gray-800">Telegram: @${escapeHtml(telegramNick)}</p>
+              </a>
+            ` : ''}
+
+            ${shopInfoIsEmpty() ? `
+              <p class="text-[11px] text-gray-400 text-center py-2">${(isUserAnAdmin && isAdminMode) ? tr("Do'kon ma'lumotlarini ✏️ Tahrirlash orqali kiriting.", "Заполните данные магазина через ✏️ Изменить.") : ''}</p>
             ` : ''}
           </div>
 
-          ${(isUserAnAdmin && isAdminMode) ? `
-            <div class="bg-white p-4 rounded-2xl border space-y-2 shadow-sm">
-              <h3 class="font-bold text-xs text-gray-900 border-b pb-2">${tr("☎️ Aloqa ma'lumotlari", "☎️ Контактные данные")}</h3>
-              <div>
-                <label class="text-[11px] font-bold text-gray-600">${tr("Telefon raqami", "Номер телефона")}</label>
-                <input type="text" id="sc-phone" value="${escapeHtml(shopContact.phone || '')}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2 border rounded-xl text-xs font-mono">
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-gray-600">${tr("Instagram", "Instagram")}</label>
-                <input type="text" id="sc-instagram" value="${escapeHtml(shopContact.instagram || '')}" placeholder="mening_dokonim" class="w-full mt-1 p-2 border rounded-xl text-xs">
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-gray-600">${tr("Boshqa ma'lumot (ixtiyoriy)", "Дополнительная информация (необязательно)")}</label>
-                <textarea id="sc-note" rows="2" placeholder="${tr('Masalan: Telegram kanal, ish vaqti va h.k.','Например: Telegram-канал, часы работы и т. п.')}" class="w-full mt-1 p-2 border rounded-xl text-xs">${escapeHtml(shopContact.contactNote || '')}</textarea>
-              </div>
-              <button onclick="saveShopContact()" class="w-full bg-slate-800 text-white font-bold py-2 rounded-xl text-xs">${tr("Saqlash", "Сохранить")}</button>
-            </div>
-          ` : ''}
-
           ${isUserAnAdmin ? `
-            <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-800 to-slate-900'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-lg">
+            <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-700 to-slate-800'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-md">
               <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
               <i data-lucide="refresh-cw" class="w-5 h-5"></i>
             </button>
-          ` : ''}
-
-          ${(isUserAnAdmin && isAdminMode) ? `
-            <div class="bg-white p-4 rounded-2xl border space-y-2 shadow-sm">
-              <h3 class="font-bold text-xs text-gray-900 border-b pb-2">${tr("🖼️ Do'kon logotipi", "🖼️ Логотип магазина")}</h3>
-              <div class="flex items-center gap-3">
-                ${shopLogoUrl ? `<img id="logo-upload-prev" src="${escapeHtml(shopLogoUrl)}" class="w-14 h-14 object-contain rounded-xl border bg-gray-50">` : `<img id="logo-upload-prev" src="" class="w-14 h-14 object-contain rounded-xl border bg-gray-50 hidden">`}
-                <input type="file" accept="image/*" onchange="onImagePicked(event, 'logo-upload-prev')" class="flex-1 text-xs">
-              </div>
-              <button onclick="saveShopLogo()" class="w-full bg-slate-800 text-white font-bold py-2 rounded-xl text-xs">${tr("Saqlash", "Сохранить")}</button>
-            </div>
           ` : ''}
 
           <!-- BOSH ADMINGA VA ADMINLARGA KO'RINADIGAN BO'LIM -->
@@ -1700,35 +1711,75 @@
     }
 
     async function saveShopContact() {
-      const phone = document.getElementById('sc-phone').value.trim();
-      const instagram = document.getElementById('sc-instagram').value.trim();
-      const contactNote = document.getElementById('sc-note').value.trim();
-      showLoader(tr("Saqlanmoqda...", "Сохраняется..."));
+      const next = {
+        address: document.getElementById('sc-address').value.trim() || null,
+        coordinates: document.getElementById('sc-coordinates').value.trim() || null,
+        phone: document.getElementById('sc-phone1').value.trim() || null,
+        phone2: document.getElementById('sc-phone2').value.trim() || null,
+        phone3: document.getElementById('sc-phone3').value.trim() || null,
+        instagram: cleanSocialNick(document.getElementById('sc-instagram').value) || null,
+        telegram: cleanSocialNick(document.getElementById('sc-telegram').value) || null,
+      };
+
+      if (next.coordinates && !/^\s*-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?\s*$/.test(next.coordinates)) {
+        return alert(tr("Kordinatani '41.217408,69.211225' ko'rinishida yozing.", "Введите координаты в формате '41.217408,69.211225'."));
+      }
+
+      const old = { ...shopContact };
+      shopContact = next;
+      activePopupModal = null;
+      render(); // optimistic UI — darhol ko'rinadi
       try {
-        await callApi('set_shop_contact', { phone, instagram, contactNote });
-        shopContact = { phone: phone || null, instagram: instagram || null, contactNote: contactNote || null };
-        render();
+        await callApi('set_shop_contact', next);
       } catch (e) {
         console.error(e);
-        alert(tr("❌ Xatolik yuz berdi: ", "❌ Произошла ошибка: ") + (e.message || e));
-      } finally {
-        hideLoader();
+        shopContact = old;
+        render();
+        alert(tr("❌ Do'kon ma'lumotlarini saqlab bo'lmadi: ", "❌ Не удалось сохранить данные магазина: ") + (e.message || e));
       }
     }
 
-    async function saveShopLogo() {
-      if (!tempImageFile) return alert(tr("Iltimos, avval rasm tanlang!", "Сначала выберите изображение!"));
+    async function uploadImageFileQuiet(file, existingUrl) {
+      const prepared = await compressImage(file, 1000, 0.8);
+      const ext = (prepared.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      let lastErr = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const { path, token } = await callApi('get_upload_url', { ext });
+          const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
+          if (upErr) throw upErr;
+          const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
+          return pub?.publicUrl || existingUrl || null;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      throw lastErr || new Error('image_upload_failed');
+    }
+
+    async function saveShopLogoFromPicker(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')) return alert(tr("⚠️ Faqat rasm faylini tanlang!", "⚠️ Выберите файл изображения!"));
+      if (file.size > 15 * 1024 * 1024) return alert(tr("⚠️ Rasm hajmi 15MB dan oshmasligi kerak!", "⚠️ Размер изображения не должен превышать 15 МБ!"));
+
+      const old = shopLogoUrl;
+      const localPreview = URL.createObjectURL(file);
+      shopLogoUrl = localPreview;
+      render(); // darhol preview
       try {
-        const url = await uploadImageIfNeeded(shopLogoUrl);
+        const url = await uploadImageFileQuiet(file, old);
         await callApi('set_shop_logo', { logoUrl: url });
         shopLogoUrl = url;
-        tempImageFile = null;
-        tempImagePreviewUrl = null;
-        alert(tr("✅ Logotip saqlandi!", "✅ Логотип сохранён!"));
         render();
       } catch (e) {
         console.error(e);
-        alert(tr("❌ Xatolik yuz berdi: ", "❌ Произошла ошибка: ") + (e.message || e));
+        shopLogoUrl = old;
+        render();
+        alert(tr("❌ Logotipni saqlab bo'lmadi: ", "❌ Не удалось сохранить логотип: ") + (e.message || e));
+      } finally {
+        URL.revokeObjectURL(localPreview);
+        event.target.value = '';
       }
     }
 
@@ -1773,6 +1824,44 @@
               </div>
               <div class="pt-2">
                 <button onclick="saveRegistrationFromModal()" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("✅ Saqlash", "✅ Сохранить")}</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (activePopupModal === 'SHOP_INFO') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("✏️ Do'kon haqida", "✏️ О магазине")}</h3>
+              <div>
+                <label class="font-bold text-gray-600">${tr("Manzil", "Адрес")}</label>
+                <input type="text" id="sc-address" value="${escapeHtml(shopContact.address || '')}" placeholder="Sergeli tumani, ..." class="w-full mt-1 p-2 border rounded-xl">
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">${tr("Kordinata", "Координаты")}</label>
+                <input type="text" id="sc-coordinates" value="${escapeHtml(shopContact.coordinates || '')}" placeholder="41.217408,69.211225" class="w-full mt-1 p-2 border rounded-xl font-mono">
+                <p class="text-[9px] text-gray-400 mt-1">${tr("Google Maps'dan koordinatani nusxa qilib qo'ying.", "Вставьте координаты из Google Maps.")}</p>
+              </div>
+              <div class="grid grid-cols-1 gap-2">
+                <div><label class="font-bold text-gray-600">${tr("Telefon 1", "Телефон 1")}</label><input type="text" id="sc-phone1" value="${escapeHtml(shopContact.phone || '')}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2 border rounded-xl font-mono"></div>
+                <div><label class="font-bold text-gray-600">${tr("Telefon 2 (ixtiyoriy)", "Телефон 2 (необязательно)")}</label><input type="text" id="sc-phone2" value="${escapeHtml(shopContact.phone2 || '')}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2 border rounded-xl font-mono"></div>
+                <div><label class="font-bold text-gray-600">${tr("Telefon 3 (ixtiyoriy)", "Телефон 3 (необязательно)")}</label><input type="text" id="sc-phone3" value="${escapeHtml(shopContact.phone3 || '')}" placeholder="+998 90 123 45 67" class="w-full mt-1 p-2 border rounded-xl font-mono"></div>
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">Instagram ${tr("nickname", "никнейм")}</label>
+                <div class="flex items-center mt-1"><span class="px-2 py-2 bg-slate-50 border border-r-0 rounded-l-xl text-gray-500">@</span><input type="text" id="sc-instagram" value="${escapeHtml(cleanSocialNick(shopContact.instagram))}" placeholder="fitcore.uz.sergeli" class="flex-1 p-2 border rounded-r-xl"></div>
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">Telegram ${tr("nickname", "никнейм")}</label>
+                <div class="flex items-center mt-1"><span class="px-2 py-2 bg-slate-50 border border-r-0 rounded-l-xl text-gray-500">@</span><input type="text" id="sc-telegram" value="${escapeHtml(cleanSocialNick(shopContact.telegram))}" placeholder="fitcore_uz" class="flex-1 p-2 border rounded-r-xl"></div>
+              </div>
+              <p class="text-[10px] text-gray-400">${tr("Bo'sh qoldirilgan maydonlar foydalanuvchiga umuman ko'rinmaydi.", "Пустые поля вообще не показываются пользователю.")}</p>
+              <div class="flex gap-2 pt-2">
+                <button onclick="saveShopContact()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr("Saqlash", "Сохранить")}</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Yopish", "Закрыть")}</button>
               </div>
             </div>
           </div>
@@ -2318,12 +2407,12 @@
                 </div>
               ` : ''}
 
-              ${(isAdminMode && isUserAnAdmin) ? `
+              ${(isAdminMode && isUserAnAdmin && !['DELIVERED','CANCELLED'].includes(o.status)) ? `
                 <div class="border-t pt-2 space-y-2">
                   <label class="font-bold text-gray-700">${tr("Tezkor status o'zgartirish:", "Быстро изменить статус:")}</label>
                   <div class="grid grid-cols-2 gap-2">
-                    <button onclick="updateOrderStatus(${o.id}, 'DELIVERED')" class="bg-green-600 text-white font-bold py-2 rounded-xl text-[11px]">${tr("✅ Yetkazib berilgan", "✅ Доставлен")}</button>
-                    <button onclick="updateOrderStatus(${o.id}, 'PROCESSING')" class="bg-blue-600 text-white font-bold py-2 rounded-xl text-[11px]">${tr("⏳ Jarayonda", "⏳ В обработке")}</button>
+                    ${o.status === 'NEW' ? `<button onclick="updateOrderStatus(${o.id}, 'PROCESSING')" class="bg-blue-600 text-white font-bold py-2 rounded-xl text-[11px]">${tr("⏳ Jarayonda", "⏳ В обработке")}</button>` : ''}
+                    <button onclick="updateOrderStatus(${o.id}, 'DELIVERED')" class="bg-green-600 text-white font-bold py-2 rounded-xl text-[11px] ${o.status === 'PROCESSING' ? 'col-span-2' : ''}">${tr("✅ Yetkazib berilgan", "✅ Доставлен")}</button>
                     <button onclick="updateOrderStatus(${o.id}, 'CANCELLED')" class="bg-red-600 text-white font-bold py-2 rounded-xl text-[11px] col-span-2">❌ ${tr("Bekor qilish", "Отмена")}</button>
                   </div>
                 </div>
@@ -2447,15 +2536,24 @@
     }
 
     async function updateOrderStatus(id, newStatus) {
+      const idx = orders.findIndex(o => o.id === id);
+      if (idx < 0) return;
+      const old = { ...orders[idx] };
+      if (['DELIVERED','CANCELLED'].includes(old.status)) return;
+      if (newStatus === 'CANCELLED' && !confirm(tr("Buyurtmani bekor qilasizmi?", "Отменить заказ?"))) return;
+
+      // Optimistic UI: status bosilishi bilan darhol o'zgaradi.
+      orders[idx] = { ...orders[idx], status: newStatus };
+      selectedOrderModal = null;
+      render();
       try {
         const result = await callApi('update_order_status', { orderId: id, newStatus });
-        const updated = formatOrderForUi(result.order);
-        const idx = orders.findIndex(o => o.id === updated.id);
-        if (idx >= 0) orders[idx] = updated;
-        selectedOrderModal = null;
+        orders[idx] = formatOrderForUi(result.order);
         render();
       } catch (e) {
         console.error(e);
+        orders[idx] = old;
+        render();
         alert(tr("❌ Statusni o'zgartirishda xatolik yuz berdi.", "❌ Ошибка изменения статуса."));
       }
     }
@@ -2984,7 +3082,7 @@
           isWarned: !!bootData.isWarned, warnReason: bootData.warnReason || null,
         };
         shopLogoUrl = bootData.logoUrl || null;
-        shopContact = bootData.shopContact || { phone: null, instagram: null, contactNote: null };
+        shopContact = bootData.shopContact || { address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null };
         if (bootData.profile?.phone) {
           registeredUser = { firstName: bootData.profile.firstName || '', lastName: bootData.profile.lastName || '', phone: bootData.profile.phone };
           currentUser.firstName = registeredUser.firstName; currentUser.lastName = registeredUser.lastName; currentUser.phone = registeredUser.phone;
