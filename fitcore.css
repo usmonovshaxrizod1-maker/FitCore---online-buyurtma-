@@ -1433,3 +1433,14 @@ button[onclick="toggleAdminRole()"] {
   border: 1px solid rgba(255,255,255,.16);
   box-shadow: 0 6px 18px rgba(15,23,42,.14);
 }
+
+
+/* FITCORE v2.4 — yuqori/pastki ajratgichlar qora emas */
+.fitcore-topbar {
+  border-bottom: 0 !important;
+  box-shadow: 0 3px 14px rgba(15, 23, 42, 0.055) !important;
+}
+.fitcore-bottom-nav {
+  border-top-color: #eef2f6 !important;
+  box-shadow: 0 -4px 14px rgba(15, 23, 42, 0.04) !important;
+}

@@ -9,19 +9,19 @@
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="preconnect" href="https://mvgbqggrzhswjhmwqcyp.supabase.co">
-  <link rel="stylesheet" href="./fitcore.css?v=4">
+  <link rel="stylesheet" href="./fitcore.css?v=5">
   <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
   <script defer src="https://unpkg.com/lucide@latest"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-  <script defer src="./fitcore-app.js?v=4"></script>
+  <script defer src="./fitcore-app.js?v=5"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
   <!-- HEADER -->
-  <header class="bg-white sticky top-0 z-40 border-b px-4 py-3 flex items-center justify-between shadow-sm">
+  <header class="fitcore-topbar bg-white sticky top-0 z-40 px-4 py-3 flex items-center justify-between">
     <div class="flex items-center space-x-2">
       <img id="shop-logo-img" src="" class="h-8 max-w-[110px] object-contain hidden">
-      <span id="role-tag" class="bg-slate-900 text-white font-black px-2.5 py-1 rounded-xl text-[10px] tracking-widest border border-amber-400 text-amber-400">STORE</span>
+      <span id="role-tag" class="hidden bg-slate-900 text-white font-black px-2.5 py-1 rounded-xl text-[10px] tracking-widest border border-amber-400 text-amber-400"></span>
     </div>
     <div class="flex items-center space-x-2">
       <button onclick="toggleUiLang()" class="p-2 bg-gray-100 rounded-full text-base leading-none" id="lang-flag-btn" title="Til / Язык">🇺🇿</button>

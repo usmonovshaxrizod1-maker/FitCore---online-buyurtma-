@@ -335,7 +335,11 @@
     function productName(p) { return (uiLang === 'ru' && p.nameRu) ? p.nameRu : p.name; }
     function productDesc(p) { return (uiLang === 'ru' && p.descRu) ? p.descRu : (p.desc || ''); }
     function categoryName(c) { return (uiLang === 'ru' && c?.nameRu) ? c.nameRu : (c?.name || ''); }
-    function money(v) { return `${Number(v || 0).toLocaleString()} ${tr("so'm", 'сум')}`; }
+    function formatNumber(v) {
+      const n = Math.round(Number(v || 0));
+      return String(Number.isFinite(n) ? n : 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    }
+    function money(v) { return `${formatNumber(v)} ${tr("so'm", 'сум')}`; }
     function regionLabel(v) { return v === 'TASHKENT' ? tr('Toshkent shahri','Город Ташкент') : (v === 'PROVINCE' ? tr('Viloyatlar','Области') : (v || '')); }
     function payMethodLabel(v) { return v === 'CASH' ? tr('Naqd pul','Наличные') : (v === 'CARD' ? tr('Karta','Карта') : (v || '')); }
 
@@ -726,6 +730,7 @@
       }
 
       const roleTag = document.getElementById('role-tag');
+      if (roleTag && authReady) roleTag.classList.remove('hidden');
       const whBtn = document.getElementById('nav-warehouse-btn');
       const usersBtn = document.getElementById('nav-users-btn');
       const cartNavBtn = document.getElementById('nav-cart');
@@ -834,7 +839,7 @@
             <div class="mt-1">
               ${hasDiscount ? `
                 <div class="flex items-center space-x-1">
-                  <span class="text-[10px] text-gray-400 line-through font-bold">${Number(p.oldPrice).toLocaleString()}</span>
+                  <span class="text-[10px] text-gray-400 line-through font-bold">${formatNumber(p.oldPrice)}</span>
                   <span class="text-xs text-red-600 font-black">${money(p.price)}</span>
                 </div>
               ` : `
@@ -1624,6 +1629,21 @@
       }
     }
 
+    async function setupBotWebhook() {
+      if (!isSuperAdmin) return;
+      if (!confirm(tr("Telegram /start xabarlarini Supabase orqali ulaysizmi?", "Подключить сообщения /start через Supabase?"))) return;
+      showActionToast(tr("Ulanmoqda...", "Подключение..."), 'saving');
+      try {
+        const data = await callApi('setup_bot_webhook', {});
+        if (!data.ok) throw new Error(data.description || 'webhook_setup_failed');
+        showActionToast(tr("✅ /start xabari ulandi", "✅ /start подключён"), 'success', 2200);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr("❌ /start ulanmagan", "❌ /start не подключён"), 'error', 2400);
+        alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      }
+    }
+
     // 6. PROFIL TAB (SUPER ADMIN & ADMIN MANAGEMENT)
     function cleanSocialNick(value) {
       return String(value || '').trim().replace(/^@/, '').replace(/\/+$/, '');
@@ -1738,6 +1758,13 @@
             <button onclick="toggleAdminRole()" class="w-full bg-gradient-to-r ${isAdminMode ? 'from-amber-600 to-amber-700' : 'from-slate-700 to-slate-800'} text-white p-4 rounded-2xl flex items-center justify-between font-bold shadow-md">
               <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
               <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+            </button>
+          ` : ''}
+
+          ${(isSuperAdmin && isAdminMode) ? `
+            <button onclick="setupBotWebhook()" class="w-full bg-white text-slate-700 p-3 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
+              <span>🤖 ${tr("Bot /start xabarini ulash", "Подключить сообщение /start")}</span>
+              <i data-lucide="link" class="w-4 h-4"></i>
             </button>
           ` : ''}
 
@@ -2514,7 +2541,7 @@
                   <p class="text-[10px] text-gray-500">${tr("Jami buyurtma", "Всего заказов")}</p>
                 </div>
                 <div class="bg-gray-50 p-2.5 rounded-xl text-center">
-                  <p class="text-lg font-black text-green-600">${u.totalSpent.toLocaleString()}</p>
+                  <p class="text-lg font-black text-green-600">${formatNumber(u.totalSpent)}</p>
                   <p class="text-[10px] text-gray-500">${tr("Jami xarid (so'm)", "Всего покупок (сум)")}</p>
                 </div>
                 <div class="bg-gray-50 p-2.5 rounded-xl text-center">
@@ -3180,11 +3207,11 @@
       }
 
       const hadCache = hydrateCatalogCache();
-      if (hadCache) {
-        // Avvalgi katalogni darhol ko'rsatamiz; yangi ma'lumot fonda keladi.
-        render();
-      }
-      const catalogPromise = loadCatalog().then(() => { if (currentTab === 'home' || currentTab === 'categories' || currentTab === 'warehouse') render(); });
+      // Katalog cache darhol xotiraga olinadi, lekin ADMIN/USER roli aniqlanmaguncha
+      // hech narsa render qilinmaydi. Shu bilan USER -> ADMIN sakrashi yo'qoladi.
+      const catalogPromise = loadCatalog().then(() => {
+        if (authReady && (currentTab === 'home' || currentTab === 'categories' || currentTab === 'warehouse')) render();
+      });
 
       try {
         // boot endi faqat auth + foydalanuvchi holati + shop settings. Orders/users/admins bu yerda yuklanmaydi.
