@@ -305,9 +305,19 @@
     // 1.14: BTS/EMU filial tanlash — mijoz qo'lda manzil yozmaydi.
     let checkoutBranches = [];
     let checkoutBranchesLoading = false;
-    let checkoutBranchesLoadedFor = null; // `${regionKey}::${providerId}` — qayta yuklashni oldini olish uchun
+    let checkoutBranchesLoadedFor = null; // `${regionKey}::${district}::${providerId}` — qayta yuklashni oldini olish uchun
     let checkoutSelectedBranch = null;
     let checkoutBranchSearch = '';
+    // 5.7: har loadCheckoutBranches chaqiruvi o'zining raqamini oladi — eski
+    // (sekin) so'rov keyinroq qaytsa ham, agar bu orada yangi so'rov
+    // boshlangan bo'lsa, eski javob UI holatini bosib yubormaydi.
+    let branchRequestSeq = 0;
+    // 5.6: POST (BTS/EMU) oqimi uchun tuman/shahar bosqichi — provider bu
+    // tanlanmaguncha tanlanmaydi (avtomatik tanlanmaydi).
+    let checkoutPostDistrict = null;
+    let checkoutPostDistricts = [];
+    let checkoutPostDistrictsLoading = false;
+    let checkoutPostDistrictsLoadedFor = null; // regionKey
     let activePopupModal = null;
     let editingFieldData = null;
     let missingImageQueueIndex = 0;
@@ -984,6 +994,7 @@
         return compressImage(detached, 1000, 0.8);
       }).catch(error => {
         const wrapped = new Error(tr("Rasm faylini lokal o'qishda xato.", "Ошибка локального чтения изображения."));
+        wrapped.code = 'READ_ORIGINAL_FAILED';
         wrapped.cause = error;
         throw wrapped;
       });
@@ -995,24 +1006,21 @@
       return imageIO.blobToBase64(file);
     }
 
+    // 5.1/5.5: mahsulot rasmi endi kategoriya/logotip bilan bir xil pipeline
+    // orqali (uploadImageSnapshot — to'g'ridan-to'g'ri Storage'ga signed URL
+    // orqali binary yuklash) yuboriladi, base64-JSON orqali emas — bu ~33%
+    // katta payload va ikki tomonlama encode/decode'ni olib tashlaydi (5.5
+    // ning sekinlik sababi shu edi). uploadImageSnapshot o'zi ham baytlarni
+    // o'qish/tayyorlash bosqichidagi xatoni ushlaydi (strict=false bo'lsa hech
+    // qachon throw qilmaydi) — shuning uchun rasm xatosi requireImage=false
+    // holatlarda (yangi mahsulot) matn ma'lumotlarini yo'qotmaydi.
     async function productImagePayloadFromSnapshot(snapshot, requireImage = false) {
       if (snapshot?.file || snapshot?.preparing) {
-        const prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file;
-        if (!prepared) throw new Error(tr("Tanlangan rasm tayyor bo'lmadi.", "Выбранное изображение не подготовлено."));
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) {
-          throw new Error(tr("Rasm formati qo'llab-quvvatlanmaydi. JPG, PNG yoki WebP tanlang.", "Формат изображения не поддерживается. Выберите JPG, PNG или WebP."));
+        const uploadedUrl = await uploadImageSnapshot(snapshot, null, requireImage);
+        if (!uploadedUrl && requireImage) {
+          throw new Error(tr("Rasm yuklanmadi.", "Изображение не загружено."));
         }
-        if (prepared.size > 6 * 1024 * 1024) {
-          throw new Error(tr("Siqilgandan keyin ham rasm 6MB dan katta. Kichikroq rasm tanlang.", "После сжатия изображение всё ещё больше 6 МБ. Выберите файл меньшего размера."));
-        }
-        return {
-          imageUpload: {
-            base64: await fileToBase64(prepared),
-            mimeType: prepared.type,
-            fileName: prepared.name || 'product.jpg',
-          },
-          img: null,
-        };
+        return { imageUpload: null, img: uploadedUrl };
       }
       if (snapshot?.url) return { imageUpload: null, img: validateExternalImageUrl(snapshot.url) };
       if (requireImage) throw new Error(tr("Rasm faylini tanlang yoki HTTPS rasm URL kiriting.", "Выберите файл изображения или укажите HTTPS URL."));
@@ -1036,7 +1044,14 @@
 
     async function uploadImageSnapshot(snapshot, existingImg, strict = false) {
       if (!snapshot || (!snapshot.file && !snapshot.preparing)) return existingImg || null;
-      const prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file;
+      let prepared;
+      try {
+        prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file;
+      } catch (e) {
+        console.error(`[image:${e?.code || 'DECODE_FAILED'}]`, e);
+        if (strict) throw e;
+        return existingImg || null;
+      }
       if (!prepared) return existingImg || null;
 
       showActionToast(tr("☁️ Rasm yuklanmoqda...", "☁️ Фото загружается..."), 'saving');
@@ -1051,7 +1066,7 @@
           return pub?.publicUrl || existingImg || null;
         } catch (e) {
           lastErr = e;
-          console.error(`Rasm yuklash xatosi (${attempt + 1}-urinish):`, e);
+          console.error(`[image:UPLOAD_FAILED] Rasm yuklash xatosi (${attempt + 1}-urinish):`, e);
         }
       }
       if (strict) throw lastErr || new Error('image_upload_failed');
@@ -1618,39 +1633,115 @@
       checkoutSelectedBranch = null;
       checkoutBranches = [];
       checkoutBranchesLoadedFor = null;
+      checkoutBranchesLoading = false;
+      branchRequestSeq++; // 5.7: har qanday kutilayotgan eski so'rovni bekor qiladi
+      // 5.6: viloyat almashsa — tanlangan tuman/shahar va u orqali yuklangan
+      // filiallar ro'yxati ham to'liq reset qilinadi.
+      checkoutPostDistrict = null;
+      checkoutPostDistricts = [];
+      checkoutPostDistrictsLoadedFor = null;
+      loadCheckoutPostDistricts(regionKey);
       renderCheckoutOptions();
       if (shouldSave) saveCheckoutDraft();
     }
 
     function handleViloyatChange() { handleRegionChange(); }
 
+    // 5.6: POST (BTS/EMU) oqimi uchun tuman/shahar ro'yxati — hardcoded
+    // UZ_REGIONS_BY_CODE'dan EMAS (u haqiqiy filial ma'lumotlaridagi
+    // district_or_city qiymatlari bilan mos kelmaydi — masalan "Izboskan" vs
+    // "Izboskan tuman"), balki delivery_branches jadvalidagi haqiqiy distinct
+    // tumanlardan olinadi.
+    async function loadCheckoutPostDistricts(regionKey) {
+      if (checkoutPostDistrictsLoadedFor === regionKey) return;
+      checkoutPostDistrictsLoading = true;
+      renderPostDistrictField();
+      try {
+        const result = await callApi('get_delivery_districts', { regionKey });
+        checkoutPostDistricts = result.districts || [];
+        checkoutPostDistrictsLoadedFor = regionKey;
+      } catch (e) {
+        console.error('Tumanlar ro\'yxatini yuklashda xato:', e);
+        checkoutPostDistricts = [];
+        checkoutPostDistrictsLoadedFor = null;
+      } finally {
+        checkoutPostDistrictsLoading = false;
+        renderPostDistrictField();
+      }
+    }
+
+    function renderPostDistrictField() {
+      const wrap = document.getElementById('chk-post-district-field');
+      const select = document.getElementById('chk-post-district');
+      if (!wrap || !select) return;
+      const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
+      const deliveryOptions = commerce.deliveryOptions(fulfillmentConfig, regionKey);
+      const hasPost = deliveryOptions.some(o => o.kind === 'POST');
+      wrap.classList.toggle('hidden', !hasPost);
+      if (!hasPost) return;
+      if (checkoutPostDistrictsLoading) {
+        select.innerHTML = `<option value="">${tr('Yuklanmoqda...', 'Загрузка...')}</option>`;
+        select.disabled = true;
+        return;
+      }
+      select.disabled = false;
+      select.innerHTML = `<option value="">${tr('— Avval tumanni tanlang —', '— Сначала выберите район —')}</option>` +
+        checkoutPostDistricts.map(d => `<option value="${escapeHtml(d)}" ${d === checkoutPostDistrict ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('');
+    }
+
+    function handlePostDistrictChange() {
+      const value = document.getElementById('chk-post-district')?.value || '';
+      checkoutPostDistrict = value || null;
+      // Tuman almashsa, eski provider tanlovi va filiallar ro'yxati endi
+      // mos kelmaydi — tozalanadi, provider qayta qo'lda tanlanishi kerak.
+      if (String(selectedDeliveryMethodId || '').startsWith('POST:')) selectedDeliveryMethodId = null;
+      checkoutSelectedBranch = null;
+      checkoutBranches = [];
+      checkoutBranchesLoadedFor = null;
+      renderCheckoutOptions();
+      saveCheckoutDraft();
+    }
+
     function selectDelivery(methodId) {
+      // 5.6: provider (BTS/EMU) avtomatik yoki tuman tanlanmasdan bosilishi
+      // mumkin emas — admin/mijoz avval tumanni tanlashi shart.
+      if (methodId?.startsWith('POST:') && !checkoutPostDistrict) {
+        showActionToast(tr("Avval tuman/shaharni tanlang", "Сначала выберите район/город"), 'error', 1600);
+        return;
+      }
       if (methodId !== selectedDeliveryMethodId) checkoutSelectedBranch = null;
       selectedDeliveryMethodId = methodId;
       renderCheckoutOptions();
       saveCheckoutDraft();
       if (methodId?.startsWith('POST:')) {
         const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
-        loadCheckoutBranches(regionKey, methodId.slice(5));
+        loadCheckoutBranches(regionKey, methodId.slice(5), checkoutPostDistrict);
       }
     }
 
-    async function loadCheckoutBranches(regionKey, providerId) {
-      const cacheKey = `${regionKey}::${providerId}`;
+    async function loadCheckoutBranches(regionKey, providerId, districtValue) {
+      const cacheKey = `${regionKey}::${districtValue || ''}::${providerId}`;
       if (checkoutBranchesLoadedFor === cacheKey) return;
+      // 5.7: bu so'rovning shaxsiy raqami — javob qaytganda joriy
+      // hisoblagich bilan solishtiriladi; agar shu orada region/tuman/provider
+      // qayta o'zgargan (va yangi so'rov boshlangan) bo'lsa, bu (eski) javob
+      // e'tiborsiz qoldiriladi va UI holatini bosib yubormaydi.
+      const requestId = ++branchRequestSeq;
       checkoutBranchesLoading = true;
       checkoutBranchSearch = '';
       renderBranchPicker();
       try {
-        const result = await callApi('get_delivery_branches', { regionKey, provider: providerId });
+        const result = await callApi('get_delivery_branches', { regionKey, provider: providerId, district: districtValue || undefined });
+        if (requestId !== branchRequestSeq) return; // stale javob — e'tiborsiz
         checkoutBranches = result.branches || [];
         checkoutBranchesLoadedFor = cacheKey;
       } catch (e) {
+        if (requestId !== branchRequestSeq) return;
         console.error('Filiallarni yuklashda xato:', e);
         checkoutBranches = [];
         checkoutBranchesLoadedFor = null;
       } finally {
-        checkoutBranchesLoading = false;
+        if (requestId === branchRequestSeq) checkoutBranchesLoading = false;
         renderBranchPicker();
       }
     }
@@ -1717,17 +1808,31 @@
       const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
       const deliveryOptions = commerce.deliveryOptions(fulfillmentConfig, regionKey);
       const paymentOptions = commerce.paymentOptions(fulfillmentConfig, regionKey);
-      if (!deliveryOptions.some(option => option.id === selectedDeliveryMethodId)) selectedDeliveryMethodId = deliveryOptions[0]?.id || null;
+      if (!deliveryOptions.some(option => option.id === selectedDeliveryMethodId)) {
+        // 5.6: yetkazib berish provideri (POST:BTS/POST:EMU) hech qachon
+        // avtomatik tanlanmaydi — mijoz buni o'zi bosishi shart. Boshqa
+        // turlar (FREE/FIXED/TAXI) uchun avvalgi qulay xulq — birinchisi
+        // avtomatik tanlanadi — saqlanadi.
+        const fallback = deliveryOptions.find(option => option.kind !== 'POST');
+        selectedDeliveryMethodId = fallback ? fallback.id : null;
+      }
       if (!paymentOptions.some(option => option.id === selectedPayMethod)) selectedPayMethod = paymentOptions[0]?.id || null;
       const selectedDelivery = deliveryOptions.find(option => option.id === selectedDeliveryMethodId) || null;
       const selectedPayment = paymentOptions.find(option => option.id === selectedPayMethod) || null;
       const totals = commerce.calculateTotals(checkoutSubtotal(), selectedDelivery);
 
+      renderPostDistrictField();
       const deliveryWrap = document.getElementById('delivery-method-wrap');
-      if (deliveryWrap) deliveryWrap.innerHTML = deliveryOptions.length ? deliveryOptions.map(option => `
-        <button type="button" onclick="selectDelivery('${escapeHtml(option.id)}')" class="w-full text-left p-2.5 border rounded-xl font-bold text-xs ${option.id === selectedDeliveryMethodId ? 'border-blue-600 bg-blue-50 text-blue-700' : 'bg-white text-gray-700'}">
+      if (deliveryWrap) deliveryWrap.innerHTML = deliveryOptions.length ? deliveryOptions.map(option => {
+        // 5.6: provider tugmalari tuman tanlanmaguncha bosilmaydigan
+        // ko'rinishda ko'rsatiladi — lekin onclick faol qoladi, shunda
+        // bosilsa selectDelivery o'zi aniq ogohlantirish ko'rsatadi.
+        const disabledLook = option.kind === 'POST' && !checkoutPostDistrict;
+        return `
+        <button type="button" onclick="selectDelivery('${escapeHtml(option.id)}')" class="w-full text-left p-2.5 border rounded-xl font-bold text-xs ${option.id === selectedDeliveryMethodId ? 'border-blue-600 bg-blue-50 text-blue-700' : 'bg-white text-gray-700'} ${disabledLook ? 'opacity-40' : ''}">
           ${deliveryOptionLabel(option)}
-        </button>`).join('') : `<div class="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl font-bold">${tr('Bu hudud uchun yetkazib berish usuli yoqilmagan.', 'Для этого региона способы доставки не настроены.')}</div>`;
+        </button>`;
+      }).join('') : `<div class="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl font-bold">${tr('Bu hudud uchun yetkazib berish usuli yoqilmagan.', 'Для этого региона способы доставки не настроены.')}</div>`;
 
       const notice = document.getElementById('delivery-notice');
       if (notice) {
@@ -1800,7 +1905,18 @@
     // app-api orqali yuboriladi.
     async function prepareReceiptImageUpload() {
       if (!checkoutReceiptFile && !checkoutReceiptPreparing) return null;
-      const prepared = checkoutReceiptPreparing ? await checkoutReceiptPreparing : checkoutReceiptFile;
+      let prepared;
+      try {
+        prepared = checkoutReceiptPreparing ? await checkoutReceiptPreparing : checkoutReceiptFile;
+      } catch (e) {
+        console.error('[receipt:READ_ORIGINAL_FAILED]', e);
+        // 5.2: eski (allaqachon rad etilgan) promise qayta-qayta kutilib,
+        // "Yuborish" cheksiz bir xil xato bilan qaytmasligi uchun — chek
+        // holatini tozalaymiz, foydalanuvchi ochiq ko'rinishda qayta tanlaydi.
+        clearCheckoutReceipt();
+        rerenderReceiptPicker();
+        throw new Error('receipt_read_failed');
+      }
       if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
       return {
@@ -1889,6 +2005,9 @@
         let receiptImageUpload = null;
         try { receiptImageUpload = await prepareReceiptImageUpload(); }
         catch (prepError) {
+          if (String(prepError?.message) === 'receipt_read_failed') {
+            return alert(tr("Chek rasmini o'qib bo'lmadi. Iltimos, chek rasmini qaytadan tanlang.", "Не удалось прочитать фото чека. Пожалуйста, выберите фото чека заново."));
+          }
           return alert(tr("Chek rasmi yaroqsiz yoki juda katta (JPG/PNG/WebP, 6MB gacha).", 'Файл чека повреждён или слишком большой (JPG/PNG/WebP, до 6 МБ).'));
         }
 
@@ -1908,6 +2027,10 @@
         clearCheckoutReceipt();
         checkoutSelectedBranch = null;
         checkoutBranches = [];
+        checkoutBranchesLoadedFor = null;
+        checkoutPostDistrict = null;
+        checkoutPostDistricts = [];
+        checkoutPostDistrictsLoadedFor = null;
         openOrderSuccessCelebration(newOrder.id);
       } catch (e) {
         console.error(e);
@@ -2109,7 +2232,7 @@
         <div class="space-y-4">
           <div class="flex items-center justify-between gap-2">
             <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
-            <div class="flex gap-1"><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${products.filter(p=>p.status!=='DELETED'&&!hasProductImage(p)).length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly?'bg-blue-600 text-white':'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz','Импорт без фото')} (${products.filter(p=>p.status!=='DELETED'&&!hasProductImage(p)&&p.importBatchId).length})</button></div>
+            <div class="flex gap-1"><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${getMissingImageProducts().length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly?'bg-blue-600 text-white':'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz','Импорт без фото')} (${products.filter(p=>p.status!=='DELETED'&&!hasProductImage(p)&&p.importBatchId).length})</button></div>
           </div>
 
           <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
@@ -2919,12 +3042,27 @@
       if (!file.type.startsWith('image/')) return alert(tr("⚠️ Faqat rasm faylini tanlang!", "⚠️ Выберите файл изображения!"));
       if (file.size > 15 * 1024 * 1024) return alert(tr("⚠️ Rasm hajmi 15MB dan oshmasligi kerak!", "⚠️ Размер изображения не должен превышать 15 МБ!"));
 
+      // 5.3 root cause: bu picker boshqa barcha rasm oqimlaridan farqli
+      // o'laroq, avval og'ir render()ni chaqirib, faqat keyin fayl baytlarini
+      // o'qirdi — render() <input type=file>ni DOM'dan qayta yaratishi mumkin,
+      // shu orada Telegram WebView native File handle'ni yaroqsiz qiladi.
+      // Endi boshqa oqimlar kabi: baytlar render()dan OLDIN mustaqil nusxalanadi.
       const old = shopLogoUrl;
-      const localPreview = URL.createObjectURL(file);
+      let detachedFile;
+      try {
+        const bytes = await readBlobAsArrayBuffer(file);
+        detachedFile = makeDetachedImageFile(bytes, file);
+      } catch (e) {
+        console.error('[logo:READ_ORIGINAL_FAILED]', e);
+        event.target.value = '';
+        return alert(tr("Logotip faylini o'qib bo'lmadi. Qaytadan tanlab ko'ring.", "Не удалось прочитать файл логотипа. Попробуйте выбрать заново."));
+      }
+
+      const localPreview = URL.createObjectURL(detachedFile);
       shopLogoUrl = localPreview;
       render(); // darhol preview
       try {
-        const url = await uploadImageFileQuiet(file, old);
+        const url = await uploadImageFileQuiet(detachedFile, old);
         await callApi('set_shop_logo', { logoUrl: url });
         shopLogoUrl = url;
         render();
@@ -3555,6 +3693,13 @@
                 <label class="text-xs font-bold text-gray-600">${tr("Hududni tanlang *", "Выберите регион *")}</label>
                 <select id="chk-region-key" onchange="handleRegionChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
                   ${TOP_LEVEL_REGIONS.map(region => `<option value="${escapeHtml(region.id)}">${escapeHtml(uiLang === 'ru' ? region.nameRu : region.nameUz)}</option>`).join('')}
+                </select>
+              </div>
+
+              <div id="chk-post-district-field" class="hidden">
+                <label class="text-xs font-bold text-gray-600">${tr("Tuman/shaharni tanlang (pochta uchun) *", "Выберите район/город (для почты) *")}</label>
+                <select id="chk-post-district" onchange="handlePostDistrictChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                  <option value="">${tr("— Avval tumanni tanlang —", "— Сначала выберите район —")}</option>
                 </select>
               </div>
 
