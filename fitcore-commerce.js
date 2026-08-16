@@ -24,9 +24,9 @@
     const ids = cleanRegionIds(regionIds);
     const freeRegions = {};
     const cashRegions = {};
-    if (ids.includes('TASHKENT_CITY')) {
-      freeRegions.TASHKENT_CITY = { enabled: true };
-      cashRegions.TASHKENT_CITY = { enabled: true };
+    if (ids.includes('tashkent_city')) {
+      freeRegions.tashkent_city = { enabled: true };
+      cashRegions.tashkent_city = { enabled: true };
     }
     return {
       version: VERSION,

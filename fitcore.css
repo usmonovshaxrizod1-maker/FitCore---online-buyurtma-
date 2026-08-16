@@ -1469,3 +1469,30 @@ input.border:focus, textarea.border:focus, select.border:focus {
   border-color: rgba(251, 191, 36, 0.38) !important;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
+
+/* ============================================================
+   4-BLOK: DO'KON DIZAYNI — mavzu o'zgaruvchilari
+   Admin tanlagan ranglar shu CSS custom property'larga JS orqali
+   yoziladi (document.documentElement.style.setProperty). Default
+   qiymatlar joriy (mavzu tanlanmagan) ko'rinishni aynan saqlaydi —
+   hech qanday sozlama qilinmasa vizual o'zgarish YO'Q.
+   ============================================================ */
+:root {
+  --fitcore-primary: var(--color-blue-600);
+  --fitcore-accent: var(--color-blue-600);
+  --fitcore-button: var(--color-blue-600);
+  --fitcore-button-text: #ffffff;
+  --fitcore-page-bg: #f6f8fb;
+  --fitcore-card-bg: var(--color-white);
+  --fitcore-header-bg: var(--color-white);
+  --fitcore-bottomnav-bg: var(--color-white);
+  --fitcore-text: var(--color-gray-800);
+}
+body { background: var(--fitcore-page-bg) !important; color: var(--fitcore-text) !important; }
+.bg-white { background-color: var(--fitcore-card-bg) !important; }
+.bg-blue-600 { background-color: var(--fitcore-button) !important; }
+.bg-blue-600.text-white { color: var(--fitcore-button-text) !important; }
+.text-blue-600, .text-blue-700 { color: var(--fitcore-primary) !important; }
+/* Header/bottom nav ranglari card-bg'dan mustaqil — o'zining rolига ega. */
+.fitcore-topbar.bg-white { background-color: var(--fitcore-header-bg) !important; }
+.fitcore-bottom-nav.bg-white { background-color: var(--fitcore-bottomnav-bg) !important; }

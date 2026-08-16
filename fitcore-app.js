@@ -61,28 +61,63 @@
     const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
     const TASHKENT_CITY_DISTRICTS = ["Bektemir","Chilonzor","Mirobod","Mirzo Ulug'bek","Olmazor","Sergeli","Shayxontohur","Uchtepa","Yakkasaroy","Yashnobod","Yunusobod"];
 
-    const UZ_REGIONS = {
-      "Andijon viloyati": ["Andijon shahri","Andijon tumani","Asaka","Baliqchi","Bo'z","Buloqboshi","Izboskan","Jalaquduq","Marhamat","Oltinko'l","Paxtaobod","Qo'rg'ontepa","Shahrixon","Ulug'nor","Xo'jaobod","Xonobod shahri"],
-      "Buxoro viloyati": ["Buxoro shahri","Buxoro tumani","G'ijduvon","Jondor","Kogon shahri","Kogon tumani","Olot","Peshku","Qorako'l","Qorovulbozor","Romitan","Shofirkon","Vobkent"],
-      "Farg'ona viloyati": ["Farg'ona shahri","Marg'ilon shahri","Qo'qon shahri","Farg'ona tumani","Bag'dod","Beshariq","Buvayda","Dang'ara","Furqat","Oltiariq","O'zbekiston","Quva","Qo'shtepa","Rishton","So'x","Toshloq","Uchko'prik","Yozyovon"],
-      "Jizzax viloyati": ["Jizzax shahri","Jizzax tumani","Arnasoy","Baxmal","Do'stlik","Forish","G'allaorol","Mirzacho'l","Paxtakor","Sh.Rashidov tumani","Yangiobod","Zafarobod","Zarbdor","Zomin"],
-      "Xorazm viloyati": ["Urganch shahri","Urganch tumani","Bog'ot","Gurlan","Hazorasp","Xiva","Xonqa","Qo'shko'pir","Shovot","Yangiariq","Yangibozor"],
-      "Namangan viloyati": ["Namangan shahri","Namangan tumani","Chortoq","Chust","Kosonsoy","Mingbuloq","Norin","Pop","To'raqo'rg'on","Uchqo'rg'on","Uychi","Yangiqo'rg'on"],
-      "Navoiy viloyati": ["Navoiy shahri","Zarafshon shahri","Karmana","Konimex","Navbahor","Nurota","Qiziltepa","Tomdi","Uchquduq","Xatirchi"],
-      "Qashqadaryo viloyati": ["Qarshi shahri","Shahrisabz shahri","Qarshi tumani","Shahrisabz tumani","Chiroqchi","Dehqonobod","G'uzor","Kasbi","Kitob","Koson","Mirishkor","Muborak","Nishon","Qamashi","Yakkabog'"],
-      "Qoraqalpog'iston Respublikasi": ["Nukus shahri","Nukus tumani","Amudaryo","Beruniy","Chimboy","Ellikqal'a","Kegeyli","Mo'ynoq","Qanliko'l","Qorao'zak","Qo'ng'irot","Shumanay","Taxtako'pir","To'rtko'l","Xo'jayli"],
-      "Samarqand viloyati": ["Samarqand shahri","Samarqand tumani","Bulung'ur","Ishtixon","Jomboy","Kattaqo'rg'on","Narpay","Nurobod","Oqdaryo","Pastdarg'om","Paxtachi","Payariq","Qo'shrabot","Toyloq","Urgut"],
-      "Sirdaryo viloyati": ["Guliston shahri","Guliston tumani","Yangiyer shahri","Boyovut","Mirzaobod","Oqoltin","Sardoba","Sayxunobod","Sirdaryo tumani","Xovos"],
-      "Surxondaryo viloyati": ["Termiz shahri","Termiz tumani","Angor","Bandixon","Boysun","Denov","Jarqo'rg'on","Muzrabot","Oltinsoy","Qiziriq","Qumqo'rg'on","Sariosiyo","Sherobod","Sho'rchi","Uzun"],
-      "Toshkent viloyati": ["Angren shahri","Bekobod shahri","Bekobod tumani","Bo'ka","Bo'stonliq","Chinoz","Chirchiq shahri","Ohangaron shahri","Ohangaron tumani","Olmaliq shahri","Oqqo'rg'on","Parkent","Piskent","Qibray","Quyichirchiq","Toshkent tumani","O'rtachirchiq","Yangiyo'l shahri","Yangiyo'l tumani","Yuqorichirchiq","Zangiota"]
+    // Kanonik snake_case hudud kodlari. Bular DB/API/HTML atributlarida ID
+    // sifatida ishlatiladi va HECH QACHON o'zbekcha ko'rsatiladigan nom
+    // bo'lmasligi kerak — oldingi versiyada hudud ID'lari to'g'ridan-to'g'ri
+    // "Farg'ona viloyati" kabi nomlar edi va admin sozlamalar UI'si bu nomni
+    // encodeURIComponent (apostrofni escape qilmaydi) orqali bitta-tirnoqli
+    // inline JS onchange ichiga qo'yardi — natijada apostrofli nomlar (Farg'ona,
+    // Qoraqalpog'iston) uchun checkbox handler jim buzilib qolardi. Tafsilot:
+    // supabase/migrations/013_region_canonical_codes.sql.
+    const REGION_DEFS = [
+      { code: 'tashkent_city', nameUz: 'Toshkent shahri', nameRu: 'Город Ташкент' },
+      { code: 'tashkent_region', nameUz: 'Toshkent viloyati', nameRu: 'Ташкентская область' },
+      { code: 'andijan', nameUz: 'Andijon viloyati', nameRu: 'Андижанская область' },
+      { code: 'bukhara', nameUz: 'Buxoro viloyati', nameRu: 'Бухарская область' },
+      { code: 'fergana', nameUz: "Farg'ona viloyati", nameRu: 'Ферганская область' },
+      { code: 'jizzakh', nameUz: 'Jizzax viloyati', nameRu: 'Джизакская область' },
+      { code: 'namangan', nameUz: 'Namangan viloyati', nameRu: 'Наманганская область' },
+      { code: 'navoi', nameUz: 'Navoiy viloyati', nameRu: 'Навоийская область' },
+      { code: 'qashqadaryo', nameUz: 'Qashqadaryo viloyati', nameRu: 'Кашкадарьинская область' },
+      { code: 'karakalpakstan', nameUz: "Qoraqalpog'iston Respublikasi", nameRu: 'Республика Каракалпакстан' },
+      { code: 'samarkand', nameUz: 'Samarqand viloyati', nameRu: 'Самаркандская область' },
+      { code: 'sirdaryo', nameUz: 'Sirdaryo viloyati', nameRu: 'Сырдарьинская область' },
+      { code: 'surxondaryo', nameUz: 'Surxondaryo viloyati', nameRu: 'Сурхандарьинская область' },
+      { code: 'khorezm', nameUz: 'Xorazm viloyati', nameRu: 'Хорезмская область' },
+    ];
+    // Eski (pre-013) mijoz holatlarida (masalan localStorage'dagi checkoutDraft)
+    // qolib ketgan bo'lishi mumkin bo'lgan eski ID'larni yangi kodga o'giradi.
+    const LEGACY_REGION_CODE_MAP = {
+      TASHKENT_CITY: 'tashkent_city', 'Toshkent viloyati': 'tashkent_region',
+      'Andijon viloyati': 'andijan', 'Buxoro viloyati': 'bukhara', "Farg'ona viloyati": 'fergana',
+      'Jizzax viloyati': 'jizzakh', 'Namangan viloyati': 'namangan', 'Navoiy viloyati': 'navoi',
+      'Qashqadaryo viloyati': 'qashqadaryo', "Qoraqalpog'iston Respublikasi": 'karakalpakstan',
+      'Samarqand viloyati': 'samarkand', 'Sirdaryo viloyati': 'sirdaryo',
+      'Surxondaryo viloyati': 'surxondaryo', 'Xorazm viloyati': 'khorezm',
+    };
+    function canonicalRegionCode(value) {
+      if (!value) return null;
+      if (REGION_DEFS.some(r => r.code === value)) return value;
+      return LEGACY_REGION_CODE_MAP[value] || null;
+    }
+
+    const UZ_REGIONS_BY_CODE = {
+      andijan: ["Andijon shahri","Andijon tumani","Asaka","Baliqchi","Bo'z","Buloqboshi","Izboskan","Jalaquduq","Marhamat","Oltinko'l","Paxtaobod","Qo'rg'ontepa","Shahrixon","Ulug'nor","Xo'jaobod","Xonobod shahri"],
+      bukhara: ["Buxoro shahri","Buxoro tumani","G'ijduvon","Jondor","Kogon shahri","Kogon tumani","Olot","Peshku","Qorako'l","Qorovulbozor","Romitan","Shofirkon","Vobkent"],
+      fergana: ["Farg'ona shahri","Marg'ilon shahri","Qo'qon shahri","Farg'ona tumani","Bag'dod","Beshariq","Buvayda","Dang'ara","Furqat","Oltiariq","O'zbekiston","Quva","Qo'shtepa","Rishton","So'x","Toshloq","Uchko'prik","Yozyovon"],
+      jizzakh: ["Jizzax shahri","Jizzax tumani","Arnasoy","Baxmal","Do'stlik","Forish","G'allaorol","Mirzacho'l","Paxtakor","Sh.Rashidov tumani","Yangiobod","Zafarobod","Zarbdor","Zomin"],
+      khorezm: ["Urganch shahri","Urganch tumani","Bog'ot","Gurlan","Hazorasp","Xiva","Xonqa","Qo'shko'pir","Shovot","Yangiariq","Yangibozor"],
+      namangan: ["Namangan shahri","Namangan tumani","Chortoq","Chust","Kosonsoy","Mingbuloq","Norin","Pop","To'raqo'rg'on","Uchqo'rg'on","Uychi","Yangiqo'rg'on"],
+      navoi: ["Navoiy shahri","Zarafshon shahri","Karmana","Konimex","Navbahor","Nurota","Qiziltepa","Tomdi","Uchquduq","Xatirchi"],
+      qashqadaryo: ["Qarshi shahri","Shahrisabz shahri","Qarshi tumani","Shahrisabz tumani","Chiroqchi","Dehqonobod","G'uzor","Kasbi","Kitob","Koson","Mirishkor","Muborak","Nishon","Qamashi","Yakkabog'"],
+      karakalpakstan: ["Nukus shahri","Nukus tumani","Amudaryo","Beruniy","Chimboy","Ellikqal'a","Kegeyli","Mo'ynoq","Qanliko'l","Qorao'zak","Qo'ng'irot","Shumanay","Taxtako'pir","To'rtko'l","Xo'jayli"],
+      samarkand: ["Samarqand shahri","Samarqand tumani","Bulung'ur","Ishtixon","Jomboy","Kattaqo'rg'on","Narpay","Nurobod","Oqdaryo","Pastdarg'om","Paxtachi","Payariq","Qo'shrabot","Toyloq","Urgut"],
+      sirdaryo: ["Guliston shahri","Guliston tumani","Yangiyer shahri","Boyovut","Mirzaobod","Oqoltin","Sardoba","Sayxunobod","Sirdaryo tumani","Xovos"],
+      surxondaryo: ["Termiz shahri","Termiz tumani","Angor","Bandixon","Boysun","Denov","Jarqo'rg'on","Muzrabot","Oltinsoy","Qiziriq","Qumqo'rg'on","Sariosiyo","Sherobod","Sho'rchi","Uzun"],
+      tashkent_region: ["Angren shahri","Bekobod shahri","Bekobod tumani","Bo'ka","Bo'stonliq","Chinoz","Chirchiq shahri","Ohangaron shahri","Ohangaron tumani","Olmaliq shahri","Oqqo'rg'on","Parkent","Piskent","Qibray","Quyichirchiq","Toshkent tumani","O'rtachirchiq","Yangiyo'l shahri","Yangiyo'l tumani","Yuqorichirchiq","Zangiota"],
     };
 
-    // Mavjud rasmiy ro'yxatdan olinadi: Toshkent shahri + UZ_REGIONS'dagi
-    // Qoraqalpog'iston va viloyatlar. Son alohida hardcode qilinmaydi.
-    const TOP_LEVEL_REGIONS = [
-      { id: 'TASHKENT_CITY', nameUz: 'Toshkent shahri', nameRu: 'Город Ташкент' },
-      ...Object.keys(UZ_REGIONS).map(name => ({ id: name, nameUz: name, nameRu: name }))
-    ];
+    const TOP_LEVEL_REGIONS = REGION_DEFS.map(r => ({ id: r.code, nameUz: r.nameUz, nameRu: r.nameRu }));
     const TOP_LEVEL_REGION_IDS = TOP_LEVEL_REGIONS.map(region => region.id);
     const imageIO = window.FitcoreImageIO;
     const commerce = window.FitcoreCommerce;
@@ -195,7 +230,7 @@
       return (sizes || []).reduce((sum, s) => sum + (Number(s.qty) || 0), 0);
     }
     function mapCategoryFromDB(r) {
-      return { id: r.id, name: r.name, nameRu: r.name_ru || null, parentId: r.parent_id, img: r.img };
+      return { id: r.id, name: r.name, nameRu: r.name_ru || null, parentId: r.parent_id, img: r.img, sortOrder: r.sort_order || 0 };
     }
     // Buyurtma va savat tarixi endi to'g'ridan-to'g'ri bazadan emas, balki
     // serverda tasdiqlangan Edge Function javobidan keladi (pastdagi callApi).
@@ -213,8 +248,12 @@
     let adminsLoaded = false, adminsLoading = false;
     let cart = JSON.parse(localStorage.getItem('cart') || "{}");
     let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
-    let checkoutDraft = JSON.parse(localStorage.getItem('checkoutDraft') || "null") || { fullname: '', phone: '', regionKey: 'TASHKENT_CITY', district: '', address: '' };
-    if (!checkoutDraft.regionKey) checkoutDraft.regionKey = checkoutDraft.region === 'PROVINCE' && checkoutDraft.viloyat ? checkoutDraft.viloyat : 'TASHKENT_CITY';
+    let checkoutDraft = JSON.parse(localStorage.getItem('checkoutDraft') || "null") || { fullname: '', phone: '', regionKey: 'tashkent_city', district: '', address: '' };
+    // Eski (pre-013) localStorage'da qolgan bo'lishi mumkin bo'lgan hudud
+    // ID'larini (o'zbekcha nom yoki eski 'TASHKENT_CITY') kanonik kodga o'giradi.
+    checkoutDraft.regionKey = canonicalRegionCode(checkoutDraft.regionKey)
+      || canonicalRegionCode(checkoutDraft.region === 'PROVINCE' ? checkoutDraft.viloyat : null)
+      || 'tashkent_city';
 
     // MUHIM: bular endi HECH QACHON "standart admin"ga tushmaydi. Haqiqiy
     // qiymatlar faqat boot() ichida, serverdagi Edge Function Telegram
@@ -245,18 +284,43 @@
     let selectedUserModal = null;
     let usersSummary = [];
     let shopLogoUrl = null;
+    let botUsername = null; // 1.10: "Telegramda ko'rish" uchun — hardcode emas, boot() javobidan
     let shopContact = { address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null };
     let fulfillmentConfig = commerce.defaultConfig(TOP_LEVEL_REGION_IDS);
     let fulfillmentDraft = null;
-    let fulfillmentSettingsSection = 'FREE';
+
+    // ---- Block 4: store design/theme ----
+    let designSettings = { themeId: 'minimal', colors: {} };
+    let designDraft = null;
+    // 'MENU' (A/B tanlash) | 'DELIVERY' | 'PAYMENTS' — 1.1 talabiga ko'ra
+    // "Yetkazib berish va to'lov" endi ikkita alohida bo'limga bo'lingan.
+    let fulfillmentSettingsSection = 'MENU';
+    let fulfillmentDeliveryKind = 'FREE'; // FREE | FIXED | TAXI | POST (faqat DELIVERY bo'limida)
+    let fulfillmentExpandedPayment = null; // CASH | CARD | null (faqat PAYMENTS bo'limida, 1.2: yonma-yon + inline ochilish)
     let selectedDeliveryMethodId = checkoutDraft.deliveryMethodId || null;
     let selectedPayMethod = checkoutDraft.paymentMethodId || null;
     let checkoutReceiptFile = null;
     let checkoutReceiptPreparing = null;
+    let checkoutReceiptPreviewUrl = null; // 1.8: local preview uchun object URL
+    // 1.14: BTS/EMU filial tanlash — mijoz qo'lda manzil yozmaydi.
+    let checkoutBranches = [];
+    let checkoutBranchesLoading = false;
+    let checkoutBranchesLoadedFor = null; // `${regionKey}::${providerId}` — qayta yuklashni oldini olish uchun
+    let checkoutSelectedBranch = null;
+    let checkoutBranchSearch = '';
     let activePopupModal = null;
     let editingFieldData = null;
     let missingImageQueueIndex = 0;
     let missingImageQueueSaving = false;
+
+    // ---- Block 2: catalog management (reorder/move/trash/duplicate/history) ----
+    let priceHistoryProductId = null;
+    let priceHistoryList = null;
+    let moveProductId = null;
+    let moveTargetCategoryId = '';
+    let moveCategoryId = null;
+    let moveCategoryTargetId = '';
+    let trashBatches = null;
 
     // Rasm yuklash uchun: haqiqiy fayl (Storage'ga yuklanadi) va preview (faqat ko'rsatish uchun)
     let tempImageFile = null;
@@ -540,13 +604,17 @@
       const results = activeProducts.filter(p => {
         const pNorm = normalizeText(p.name);
         const skuMatch = String(p.sku || '').toLowerCase().includes(latin);
-        // Admin alohida kiritgan ruscha nomni ham (o'zining haqiqiy krill
-        // shaklida, transliteratsiyasiz) qidiradi.
+        // 3.5: name_uz, description_uz, name_ru, description_ru bo'yicha qidiradi.
+        // RU maydonlari (avtomatik tarjima qilingan) o'zining haqiqiy kirill
+        // shaklida, transliteratsiyasiz solishtiriladi.
         const nameRuMatch = p.nameRu && p.nameRu.toLowerCase().includes(q);
+        const descNorm = normalizeText(p.desc || '');
+        const descMatch = descNorm.latin.includes(latin) || descNorm.cyrillic.includes(cyrillic);
+        const descRuMatch = p.descRu && p.descRu.toLowerCase().includes(q);
         // Har bir o'lchamning O'ZINING ID'sini ham qidiradi.
         const variantSkuMatch = productVariants(p).some(v => v.sku && String(v.sku).toLowerCase().includes(latin));
         const variantTextMatch = productVariants(p).some(v => [v.size,v.color].filter(Boolean).some(x => String(x).toLowerCase().includes(q)));
-        return pNorm.latin.includes(latin) || pNorm.cyrillic.includes(cyrillic) || skuMatch || nameRuMatch || variantSkuMatch || variantTextMatch;
+        return pNorm.latin.includes(latin) || pNorm.cyrillic.includes(cyrillic) || skuMatch || nameRuMatch || descMatch || descRuMatch || variantSkuMatch || variantTextMatch;
       });
 
       results.sort((a, b) => {
@@ -754,34 +822,50 @@
       return new Promise(resolve => canvas.toBlob(resolve, mimeType, quality));
     }
 
-    // Rasmni serverga yuborishdan oldin kichraytirish: uzun tomoni 1000px.
+    // Rasmni serverga yuborishdan oldin kichraytirish: uzun tomoni maxDim px.
     // PNG/WebP MIME turi saqlanadi; JPEG JPEG bo'lib qoladi.
+    //
+    // 1.11 pipeline talabi: compression urinishi HECH QACHON xato tashlamasin —
+    // decode/canvas/toBlob bosqichlarining birortasi kutilmagan tarzda
+    // yiqilsa ham (masalan WebView'ning noodatiy Canvas xatosi), funksiya
+    // shunchaki original (allaqachon mustaqil nusxalangan) faylni qaytaradi.
+    // Xato faqat "compression VA original ikkalasi ham ishlamasa" chiqishi
+    // kerak — bu yerda emas, chaqiruvchi tomonda (upload muvaffaqiyatsiz
+    // bo'lganda) yuz beradi. Bundan oldin bu funksiya faqat AYRIM bosqichlar
+    // uchun try/catch qilingandi (masalan canvas.toBlob xatosi tashqariga
+    // chiqib ketardi) — shu tirqish "Rasm faylini lokal o'qishda xato"
+    // xabarining haqiqiy sababi edi, garchi baytlar aslida muvaffaqiyatli
+    // o'qilgan bo'lsa ham.
     async function compressImage(file, maxDim, quality) {
-      let decoded;
-      try { decoded = await decodeImageSource(file); }
-      catch (_) { return file; }
       try {
-        let width = decoded.width;
-        let height = decoded.height;
-        if (!width || !height) return file;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
-          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        let decoded;
+        try { decoded = await decodeImageSource(file); }
+        catch (_) { return file; }
+        try {
+          let width = decoded.width;
+          let height = decoded.height;
+          if (!width || !height) return file;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+            else { width = Math.round(width * maxDim / height); height = maxDim; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return file;
+          ctx.drawImage(decoded.source, 0, 0, width, height);
+          const outputType = file.type === 'image/png' ? 'image/png' : (file.type === 'image/webp' ? 'image/webp' : 'image/jpeg');
+          const blob = await canvasToBlob(canvas, outputType, outputType === 'image/png' ? undefined : quality);
+          if (!blob) return file;
+          const extension = outputType === 'image/png' ? 'png' : (outputType === 'image/webp' ? 'webp' : 'jpg');
+          const name = String(file.name || 'product-image').replace(/\.[^.]+$/, '') + '.' + extension;
+          return makeDetachedImageFile(await readBlobAsArrayBuffer(blob), { name, type: outputType });
+        } finally {
+          decoded.close?.();
         }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return file;
-        ctx.drawImage(decoded.source, 0, 0, width, height);
-        const outputType = file.type === 'image/png' ? 'image/png' : (file.type === 'image/webp' ? 'image/webp' : 'image/jpeg');
-        const blob = await canvasToBlob(canvas, outputType, outputType === 'image/png' ? undefined : quality);
-        if (!blob) return file;
-        const extension = outputType === 'image/png' ? 'png' : (outputType === 'image/webp' ? 'webp' : 'jpg');
-        const name = String(file.name || 'product-image').replace(/\.[^.]+$/, '') + '.' + extension;
-        return makeDetachedImageFile(await readBlobAsArrayBuffer(blob), { name, type: outputType });
-      } finally {
-        decoded.close?.();
+      } catch (_) {
+        return file;
       }
     }
 
@@ -1181,7 +1265,7 @@
     // 2. CATEGORIES TAB
     function renderCategories(container) {
       const currentCat = categories.find(c => c.id === adminCatParentId);
-      const subCats = categories.filter(c => c.parentId === adminCatParentId);
+      const subCats = categories.filter(c => c.parentId === adminCatParentId).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
       const recursiveProductCounts = buildRecursiveProductCountMap();
       const catProdsRaw = products.filter(p => p.categoryId === adminCatParentId && p.status !== 'DELETED');
       const catProds = applyCategoryFilter(catProdsRaw);
@@ -1213,12 +1297,14 @@
               </div>
               <button onclick="openMissingImageQueue()" class="w-full bg-amber-50 text-amber-900 border border-amber-200 font-bold py-1.5 rounded-xl text-xs shadow-sm">🖼 ${tr('Rasmsiz','Без фото')} · ${globalMissingImageCount}</button>
               <button onclick="openExcelImportModal()" class="w-full bg-slate-800 text-white font-bold py-1.5 rounded-xl text-xs">${tr("📊 Excel orqali ko'p tovar qo'shish", "📊 Массовый импорт из Excel")}</button>
+              <button onclick="openTrashModal()" class="w-full bg-white border text-gray-600 font-bold py-1.5 rounded-xl text-xs">🗑️ ${tr("Chiqindi (24 soat)", "Корзина (24 часа)")}</button>
+              <button onclick="openDuplicateProductsModal()" class="w-full bg-white border text-gray-600 font-bold py-1.5 rounded-xl text-xs">🧭 ${tr("Duplicate tovarlarni tekshirish", "Проверить дубликаты товаров")}</button>
             ` : ''}
           </div>
 
           <!-- SUBCATEGORIES LIST -->
           <div class="space-y-2">
-            ${subCats.map(sub => `
+            ${subCats.map((sub, subIdx) => `
               <div onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="bg-white p-3.5 rounded-2xl border flex items-center justify-between shadow-sm cursor-pointer hover:bg-gray-50">
                 <div class="flex items-center space-x-3">
                   ${sub.img && (sub.img.startsWith('http') || sub.img.startsWith('data:')) ?
@@ -1230,8 +1316,13 @@
                     <p class="text-[10px] text-gray-400">${categories.filter(c => c.parentId === sub.id).length} ${tr('katalog','кат.')} | ${recursiveProductCounts.get(String(sub.id)) || 0} ${tr('tovar','тов.')}</p>
                   </div>
                 </div>
-                <div class="flex items-center space-x-2">
+                <div class="flex items-center space-x-1">
                   ${(isAdminMode && isUserAnAdmin) ? `
+                    <div class="flex flex-col">
+                      <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} class="px-1 text-[10px] ${subIdx === 0 ? 'text-gray-200' : 'text-gray-500'}">▲</button>
+                      <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} class="px-1 text-[10px] ${subIdx === subCats.length - 1 ? 'text-gray-200' : 'text-gray-500'}">▼</button>
+                    </div>
+                    <button onclick="openMoveCategoryModal('${sub.id}', event)" title="${tr("Boshqa katalogga ko'chirish", "Переместить в другой каталог")}" class="p-1 bg-slate-100 text-slate-600 rounded text-xs font-bold">📁⇢</button>
                     <button onclick="openEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
                     <button onclick="deleteCategory('${sub.id}', event)" class="p-1 bg-red-100 text-red-600 rounded text-xs font-bold">🗑️</button>
                   ` : ''}
@@ -1435,8 +1526,36 @@
     }
 
     function clearCheckoutReceipt() {
+      if (checkoutReceiptPreviewUrl) URL.revokeObjectURL(checkoutReceiptPreviewUrl);
       checkoutReceiptFile = null;
       checkoutReceiptPreparing = null;
+      checkoutReceiptPreviewUrl = null;
+    }
+
+    // 1.8: native "Choose file / No file chosen" matni hech qachon ko'rinmasin —
+    // faqat custom tugma + tanlangach preview + "Almashtirish".
+    function renderReceiptPicker(receiptRequired) {
+      const label = `${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')} ${receiptRequired ? '*' : `(${tr('ixtiyoriy', 'необязательно')})`}`;
+      const pickerInput = `<input id="chk-receipt" type="file" accept="image/jpeg,image/png,image/webp" onchange="onCheckoutReceiptPicked(event)" class="hidden">`;
+      if (checkoutReceiptPreviewUrl) {
+        return `
+          <label class="block font-bold">${label}</label>
+          <div class="flex items-center gap-3">
+            <img src="${checkoutReceiptPreviewUrl}" class="h-16 w-16 object-cover rounded-xl border" alt="">
+            <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}${pickerInput}</label>
+          </div>`;
+      }
+      return `
+        <label class="block font-bold">${label}</label>
+        <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">📎 ${tr('Chekni tanlash', 'Выбрать чек')}${pickerInput}</label>`;
+    }
+
+    function rerenderReceiptPicker() {
+      const wrap = document.getElementById('chk-receipt-wrap');
+      if (!wrap) return;
+      const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
+      const selectedPayment = commerce.paymentOptions(fulfillmentConfig, regionKey).find(m => m.id === selectedPayMethod);
+      wrap.innerHTML = renderReceiptPicker(!!selectedPayment?.receiptRequired);
     }
 
     function openCheckoutForm() {
@@ -1458,7 +1577,7 @@
       checkoutDraft = {
         fullname: document.getElementById('chk-fullname')?.value || '',
         phone: document.getElementById('chk-phone')?.value || '',
-        regionKey: document.getElementById('chk-region-key')?.value || 'TASHKENT_CITY',
+        regionKey: document.getElementById('chk-region-key')?.value || 'tashkent_city',
         district: document.getElementById('chk-district')?.value || '',
         address: document.getElementById('chk-address')?.value || '',
         deliveryMethodId: selectedDeliveryMethodId,
@@ -1473,7 +1592,7 @@
       if (fullnameEl) fullnameEl.value = checkoutDraft.fullname || (currentUser.firstName + ' ' + currentUser.lastName).trim();
       if (phoneEl) phoneEl.value = checkoutDraft.phone || currentUser.phone || '';
       const regionEl = document.getElementById('chk-region-key');
-      if (regionEl) regionEl.value = TOP_LEVEL_REGION_IDS.includes(checkoutDraft.regionKey) ? checkoutDraft.regionKey : 'TASHKENT_CITY';
+      if (regionEl) regionEl.value = TOP_LEVEL_REGION_IDS.includes(checkoutDraft.regionKey) ? checkoutDraft.regionKey : 'tashkent_city';
       selectedDeliveryMethodId = checkoutDraft.deliveryMethodId || selectedDeliveryMethodId;
       selectedPayMethod = checkoutDraft.paymentMethodId || selectedPayMethod;
       handleRegionChange(false);
@@ -1485,10 +1604,10 @@
     }
 
     function handleRegionChange(shouldSave = true) {
-      const regionKey = document.getElementById('chk-region-key')?.value || 'TASHKENT_CITY';
+      const regionKey = document.getElementById('chk-region-key')?.value || 'tashkent_city';
       const districtSelect = document.getElementById('chk-district');
       const previousDistrict = districtSelect?.value || '';
-      const districts = regionKey === 'TASHKENT_CITY' ? TASHKENT_CITY_DISTRICTS : (UZ_REGIONS[regionKey] || []);
+      const districts = regionKey === 'tashkent_city' ? TASHKENT_CITY_DISTRICTS : (UZ_REGIONS_BY_CODE[regionKey] || []);
       if (districtSelect) {
         districtSelect.innerHTML = `<option value="">${tr('— Tanlang —', '— Выберите —')}</option>` + districts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
         if (districts.includes(previousDistrict)) districtSelect.value = previousDistrict;
@@ -1496,6 +1615,9 @@
       selectedDeliveryMethodId = null;
       selectedPayMethod = null;
       clearCheckoutReceipt();
+      checkoutSelectedBranch = null;
+      checkoutBranches = [];
+      checkoutBranchesLoadedFor = null;
       renderCheckoutOptions();
       if (shouldSave) saveCheckoutDraft();
     }
@@ -1503,9 +1625,85 @@
     function handleViloyatChange() { handleRegionChange(); }
 
     function selectDelivery(methodId) {
+      if (methodId !== selectedDeliveryMethodId) checkoutSelectedBranch = null;
       selectedDeliveryMethodId = methodId;
       renderCheckoutOptions();
       saveCheckoutDraft();
+      if (methodId?.startsWith('POST:')) {
+        const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
+        loadCheckoutBranches(regionKey, methodId.slice(5));
+      }
+    }
+
+    async function loadCheckoutBranches(regionKey, providerId) {
+      const cacheKey = `${regionKey}::${providerId}`;
+      if (checkoutBranchesLoadedFor === cacheKey) return;
+      checkoutBranchesLoading = true;
+      checkoutBranchSearch = '';
+      renderBranchPicker();
+      try {
+        const result = await callApi('get_delivery_branches', { regionKey, provider: providerId });
+        checkoutBranches = result.branches || [];
+        checkoutBranchesLoadedFor = cacheKey;
+      } catch (e) {
+        console.error('Filiallarni yuklashda xato:', e);
+        checkoutBranches = [];
+        checkoutBranchesLoadedFor = null;
+      } finally {
+        checkoutBranchesLoading = false;
+        renderBranchPicker();
+      }
+    }
+
+    function branchMatchesSearch(branch, query) {
+      if (!query || !query.trim()) return true;
+      const { latin, cyrillic } = normalizeText(query);
+      const fields = [branch.branch_name, branch.district_or_city, branch.full_address];
+      return fields.some(f => {
+        if (!f) return false;
+        const fNorm = normalizeText(f);
+        return fNorm.latin.includes(latin) || fNorm.cyrillic.includes(cyrillic);
+      });
+    }
+
+    function filterBranchList(query) {
+      checkoutBranchSearch = query;
+      const listEl = document.getElementById('chk-branch-list');
+      if (listEl) listEl.innerHTML = renderBranchListHTML();
+    }
+
+    function renderBranchListHTML() {
+      if (checkoutBranchesLoading) return `<p class="p-3 text-center text-gray-400">${tr('Yuklanmoqda...', 'Загрузка...')}</p>`;
+      const filtered = checkoutBranches.filter(b => branchMatchesSearch(b, checkoutBranchSearch));
+      if (!filtered.length) return `<p class="p-3 text-center text-gray-400">${tr("Filial topilmadi.", 'Филиалы не найдены.')}</p>`;
+      return filtered.map(b => `
+        <button type="button" onclick="selectCheckoutBranch(${b.id})" class="w-full text-left p-2.5 ${checkoutSelectedBranch?.id === b.id ? 'bg-blue-50' : 'bg-white'}">
+          <p class="font-bold">${escapeHtml(b.branch_name)}</p>
+          <p class="text-[10px] text-gray-500">${escapeHtml(b.district_or_city || '')} — ${escapeHtml(b.full_address)}</p>
+        </button>`).join('');
+    }
+
+    function renderBranchPicker() {
+      const wrap = document.getElementById('chk-branch-wrap');
+      if (wrap) wrap.classList.remove('hidden');
+      const listEl = document.getElementById('chk-branch-list');
+      if (listEl) listEl.innerHTML = renderBranchListHTML();
+      renderSelectedBranchSummary();
+    }
+
+    function renderSelectedBranchSummary() {
+      const el = document.getElementById('chk-branch-selected');
+      if (!el) return;
+      if (!checkoutSelectedBranch) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+      el.classList.remove('hidden');
+      el.innerHTML = `<b>✅ ${escapeHtml(checkoutSelectedBranch.branch_name)}</b><br>${escapeHtml(checkoutSelectedBranch.district_or_city || '')} — ${escapeHtml(checkoutSelectedBranch.full_address)}`;
+    }
+
+    function selectCheckoutBranch(branchId) {
+      checkoutSelectedBranch = checkoutBranches.find(b => b.id === branchId) || null;
+      const listEl = document.getElementById('chk-branch-list');
+      if (listEl) listEl.innerHTML = renderBranchListHTML();
+      renderSelectedBranchSummary();
     }
 
     function selectPayment(type) {
@@ -1516,7 +1714,7 @@
     }
 
     function renderCheckoutOptions() {
-      const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'TASHKENT_CITY';
+      const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
       const deliveryOptions = commerce.deliveryOptions(fulfillmentConfig, regionKey);
       const paymentOptions = commerce.paymentOptions(fulfillmentConfig, regionKey);
       if (!deliveryOptions.some(option => option.id === selectedDeliveryMethodId)) selectedDeliveryMethodId = deliveryOptions[0]?.id || null;
@@ -1536,10 +1734,16 @@
         notice.textContent = deliveryOptionNotice(selectedDelivery);
         notice.classList.toggle('hidden', !selectedDelivery);
       }
-      const addressLabel = document.getElementById('chk-address-label');
-      const addressInput = document.getElementById('chk-address');
-      if (addressLabel) addressLabel.textContent = selectedDelivery?.kind === 'POST' ? tr('Pochta filiali/manzili *', 'Филиал/адрес почты *') : tr('Uy manzili *', 'Домашний адрес *');
-      if (addressInput) addressInput.placeholder = selectedDelivery?.kind === 'POST' ? tr("Filial dataset berilmagan: kerakli filial/manzilni yozing", 'Датасет филиалов не загружен: укажите филиал/адрес') : tr("Ko'cha, mahalla va uy raqami", 'Улица, махалля и номер дома');
+      // 1.13/1.14: POST (BTS/EMU) uchun tuman/manzil maydonlari yashiriladi —
+      // ularning o'rniga filial tanlash ro'yxati ko'rsatiladi.
+      const isPost = selectedDelivery?.kind === 'POST';
+      const districtField = document.getElementById('chk-district-field');
+      const addressField = document.getElementById('chk-address-field');
+      if (districtField) districtField.classList.toggle('hidden', isPost);
+      if (addressField) addressField.classList.toggle('hidden', isPost);
+      const branchWrap = document.getElementById('chk-branch-wrap');
+      if (branchWrap) branchWrap.classList.toggle('hidden', !isPost);
+      if (isPost) renderBranchPicker();
 
       const payWrap = document.getElementById('pay-method-wrap');
       if (payWrap) payWrap.innerHTML = paymentOptions.length ? paymentOptions.map(method => `
@@ -1558,9 +1762,7 @@
               <p>${escapeHtml(selectedPayment.cardHolder || '')}</p>
               <p class="text-[10px] text-blue-700">${tr("CVV, PIN, SMS kod yoki amal qilish muddatini hech kimga bermang — FITCORE ularni so'ramaydi.", 'Никому не сообщайте CVV, PIN, SMS-код или срок действия — FITCORE их не запрашивает.')}</p>
             </div>
-            <label class="block font-bold">${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')} ${selectedPayment.receiptRequired ? '*' : `(${tr('ixtiyoriy', 'необязательно')})`}</label>
-            <input id="chk-receipt" type="file" accept="image/jpeg,image/png,image/webp" onchange="onCheckoutReceiptPicked(event)" class="w-full text-xs">
-            <p id="chk-receipt-name" class="text-[10px] text-gray-500">${checkoutReceiptFile ? escapeHtml(checkoutReceiptFile.name || tr('Chek tayyor', 'Чек готов')) : ''}</p>`;
+            <div id="chk-receipt-wrap">${renderReceiptPicker(selectedPayment.receiptRequired)}</div>`;
         } else {
           cardDetails.classList.add('hidden');
           cardDetails.innerHTML = '';
@@ -1581,30 +1783,31 @@
         event.target.value = '';
         return alert(tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
       }
+      // 1.11: baytlar tanlangan zahoti mustaqil nusxalanadi — vaqtinchalik File
+      // obyektiga (event.target orqali) keyin ishonilmaydi.
       checkoutReceiptFile = file;
       checkoutReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => makeDetachedImageFile(bytes, file)).then(detached => compressImage(detached, 1600, 0.85));
-      const nameEl = document.getElementById('chk-receipt-name');
-      if (nameEl) nameEl.textContent = file.name;
+      if (checkoutReceiptPreviewUrl) URL.revokeObjectURL(checkoutReceiptPreviewUrl);
+      checkoutReceiptPreviewUrl = URL.createObjectURL(file);
+      rerenderReceiptPicker();
     }
 
-    async function uploadPaymentReceipt(orderId) {
-      if (!checkoutReceiptFile && !checkoutReceiptPreparing) return false;
+    // 1.7: chek order bilan BIR VAQTDA, bitta create_order so'rovida yuboriladi
+    // (order avval yaratilib, chek keyin "ixtiyoriy qo'shimcha" sifatida
+    // yuborilmaydi) — shunday qilib order chekssiz "muvaffaqiyatli" holatda
+    // qolib ketmaydi. Product rasmlaridagi kabi Telegram WebView -> Storage
+    // cross-origin signed upload'ga tayanmaymiz; baytlar autentifikatsiyalangan
+    // app-api orqali yuboriladi.
+    async function prepareReceiptImageUpload() {
+      if (!checkoutReceiptFile && !checkoutReceiptPreparing) return null;
       const prepared = checkoutReceiptPreparing ? await checkoutReceiptPreparing : checkoutReceiptFile;
       if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
-
-      // Product rasmlaridagi kabi Telegram WebView -> Storage cross-origin signed
-      // upload'ga tayanmaymiz. Siqilgan chek byte'lari autentifikatsiyalangan
-      // app-api orqali yuboriladi; Storage yozuvi server tomonda bajariladi.
-      const result = await callApi('upload_payment_receipt', {
-        orderId,
-        imageUpload: {
-          base64: await fileToBase64(prepared),
-          mimeType: prepared.type,
-          fileName: prepared.name || 'payment-receipt.jpg',
-        },
-      });
-      return result?.hasReceipt === true;
+      return {
+        base64: await fileToBase64(prepared),
+        mimeType: prepared.type,
+        fileName: prepared.name || 'payment-receipt.jpg',
+      };
     }
 
     let submittingOrder = false;
@@ -1616,17 +1819,23 @@
       const fullname = document.getElementById('chk-fullname').value.trim();
       const phone = document.getElementById('chk-phone').value.trim();
       const regionKey = document.getElementById('chk-region-key').value;
-      const tuman = document.getElementById('chk-district').value.trim();
-      const district = regionKey === 'TASHKENT_CITY' ? tuman : `${topLevelRegionLabel(regionKey)}, ${tuman}`;
-      const address = document.getElementById('chk-address').value.trim();
       const deliveryOptions = commerce.deliveryOptions(fulfillmentConfig, regionKey);
       const paymentOptions = commerce.paymentOptions(fulfillmentConfig, regionKey);
       const selectedDelivery = deliveryOptions.find(option => option.id === selectedDeliveryMethodId);
       const selectedPayment = paymentOptions.find(method => method.id === selectedPayMethod);
+      const isPostDelivery = selectedDelivery?.kind === 'POST';
+
+      // 1.13/1.14: BTS/EMU uchun mijoz qo'lda tuman/manzil yozmaydi — ro'yxatdan
+      // tanlangan filial manzili ishlatiladi.
+      const tuman = isPostDelivery ? (checkoutSelectedBranch?.district_or_city || '') : document.getElementById('chk-district').value.trim();
+      const district = isPostDelivery ? tuman : (regionKey === 'tashkent_city' ? tuman : `${topLevelRegionLabel(regionKey)}, ${tuman}`);
+      const address = isPostDelivery ? (checkoutSelectedBranch?.full_address || '') : document.getElementById('chk-address').value.trim();
 
       let hasError = false;
 
-      const requiredFields = [['chk-fullname', fullname], ['chk-phone', phone], ['chk-district', tuman], ['chk-address', address]];
+      const requiredFields = isPostDelivery
+        ? [['chk-fullname', fullname], ['chk-phone', phone]]
+        : [['chk-fullname', fullname], ['chk-phone', phone], ['chk-district', tuman], ['chk-address', address]];
 
       requiredFields.forEach(([id, val]) => {
         const el = document.getElementById(id);
@@ -1646,9 +1855,10 @@
       }
 
       if (!selectedDelivery) return alert(tr('Bu hudud uchun yetkazib berish usulini tanlang.', 'Выберите доступный способ доставки.'));
+      if (isPostDelivery && !checkoutSelectedBranch) return alert(tr('Iltimos, pochta filialini tanlang.', 'Пожалуйста, выберите отделение почты.'));
       if (!selectedPayment) return alert(tr("Bu hudud uchun to'lov usuli mavjud emas.", 'Для этого региона нет доступного способа оплаты.'));
       if (selectedPayment.id === 'CARD' && selectedPayment.receiptRequired && !checkoutReceiptFile && !checkoutReceiptPreparing) {
-        return alert(tr("Karta to'lovi uchun chek/skrinshotni yuklang.", 'Загрузите чек/скриншот оплаты картой.'));
+        return alert(tr("Buyurtmani yuborish uchun to'lov chekini yuklang.", 'Чтобы отправить заказ, загрузите чек оплаты.'));
       }
 
       // Savatdagi har bir variant bo'yicha tezkor tekshiruv. Yakuniy atomik tekshiruv serverda.
@@ -1674,26 +1884,31 @@
       }));
 
       try {
+        // 1.7: chek order bilan BIR so'rovda, atomik tarzda yuboriladi — order
+        // avval yaratilib, chek "keyinroq, ixtiyoriy" tarzda ulanmaydi.
+        let receiptImageUpload = null;
+        try { receiptImageUpload = await prepareReceiptImageUpload(); }
+        catch (prepError) {
+          return alert(tr("Chek rasmi yaroqsiz yoki juda katta (JPG/PNG/WebP, 6MB gacha).", 'Файл чека повреждён или слишком большой (JPG/PNG/WebP, до 6 МБ).'));
+        }
+
         const result = await callApi('create_order', {
           items: itemsPayload, fullname, phone, regionKey, district, address,
-          deliveryMethodId: selectedDeliveryMethodId, paymentMethodId: selectedPayMethod
+          deliveryMethodId: selectedDeliveryMethodId, paymentMethodId: selectedPayMethod,
+          receiptImageUpload, branchId: isPostDelivery ? checkoutSelectedBranch?.id : undefined,
         });
         const newOrder = formatOrderForUi(result.order);
-        let receiptUploadError = null;
-        if (selectedPayMethod === 'CARD' && (checkoutReceiptFile || checkoutReceiptPreparing)) {
-          try { newOrder.hasReceipt = await uploadPaymentReceipt(newOrder.id); }
-          catch (receiptError) { console.error('Chek yuklash xatosi:', receiptError); receiptUploadError = receiptError; }
-        }
         orders.unshift(newOrder);
         ordersLoaded = true;
         cart = {};
         localStorage.setItem('cart', JSON.stringify(cart));
         activePopupModal = null;
-        checkoutDraft = { fullname: '', phone: '', regionKey: 'TASHKENT_CITY', district: '', address: '', deliveryMethodId: null, paymentMethodId: null };
+        checkoutDraft = { fullname: '', phone: '', regionKey: 'tashkent_city', district: '', address: '', deliveryMethodId: null, paymentMethodId: null };
         localStorage.removeItem('checkoutDraft');
         clearCheckoutReceipt();
+        checkoutSelectedBranch = null;
+        checkoutBranches = [];
         openOrderSuccessCelebration(newOrder.id);
-        if (receiptUploadError) setTimeout(() => alert(tr("Buyurtma yaratildi, lekin chek yuklanmadi. Sotuvchi bilan bog'laning.", 'Заказ создан, но чек не загрузился. Свяжитесь с продавцом.')), 100);
       } catch (e) {
         console.error(e);
         if (String(e.message).includes('insufficient_stock')) {
@@ -1702,6 +1917,13 @@
           myStatus.isBlocked = true;
           myStatus.blockReason = e.message.slice('blocked:'.length);
           alert(`${tr("🚫 Siz botdan foydalanish huquqidan mahrum qilingansiz", "🚫 Доступ к оформлению заказов заблокирован")}.\n${tr('Sabab','Причина')}: ${myStatus.blockReason}`);
+        } else if (String(e.message).includes('receipt_required')) {
+          alert(tr("Buyurtmani yuborish uchun to'lov chekini yuklang.", 'Чтобы отправить заказ, загрузите чек оплаты.'));
+        } else if (String(e.message).includes('receipt_upload_failed')) {
+          alert(tr("❌ To'lov cheki yuklanmadi, shuning uchun buyurtma yaratilmadi. Qayta urinib ko'ring.", "❌ Чек оплаты не загрузился, поэтому заказ не был создан. Попробуйте ещё раз."));
+        } else if (String(e.message).includes('branch_required') || String(e.message).includes('invalid_branch')) {
+          checkoutSelectedBranch = null;
+          alert(tr("Iltimos, pochta filialini qaytadan tanlang.", 'Пожалуйста, выберите отделение почты заново.'));
         } else {
           alert(tr("❌ Buyurtmani yuborishda xatolik yuz berdi. Qayta urinib ko'ring.", "❌ Не удалось отправить заказ. Попробуйте ещё раз."));
         }
@@ -1842,7 +2064,7 @@
                 `).join('')}
               </div>
               ${o.status === 'CANCELLED' && o.cancelReason ? `
-                <p class="text-[10px] text-red-500">${tr('Bekor qilindi','Отменён')} (${o.cancelledBy === 'ADMIN' ? tr('do\'kon','магазин') : tr('siz','вы')}): ${escapeHtml(o.cancelReason)}</p>
+                <p class="text-[10px] text-red-500">${tr('Bekor qilindi','Отменён')} (${o.cancelledBy === 'ADMIN' ? tr("do'kon","магазин") : tr('siz','вы')}): ${escapeHtml(o.cancelReason)}</p>
               ` : ''}
               <div class="border-t pt-2 flex justify-between items-center font-bold text-sm">
                 <span class="text-green-600">${money(o.payableTotal ?? o.totalPrice)}</span>
@@ -2062,24 +2284,211 @@
     function encodedRegionId(regionId) { return encodeURIComponent(regionId); }
     function decodedRegionId(regionId) { return decodeURIComponent(regionId); }
 
+    function openShopParams() {
+      if (!isUserAnAdmin || !isAdminMode) return;
+      activePopupModal = 'SHOP_PARAMS';
+      render();
+    }
+
+    // ==================== 4-BLOK: DO'KON DIZAYNI ====================
+    const DESIGN_COLOR_KEYS = ['primary', 'accent', 'button', 'pageBg', 'cardBg', 'headerBg', 'bottomNavBg', 'text'];
+    const DESIGN_COLOR_LABELS = {
+      primary: tr('Asosiy rang', 'Основной цвет'), accent: tr('Urg\'u rangi', 'Акцентный цвет'),
+      button: tr('Tugma rangi', 'Цвет кнопок'), pageBg: tr('Sahifa foni', 'Фон страницы'),
+      cardBg: tr('Karta foni', 'Фон карточек'), headerBg: tr('Header foni', 'Фон шапки'),
+      bottomNavBg: tr("Pastki panel foni", 'Фон нижней панели'), text: tr('Matn rangi', 'Цвет текста'),
+    };
+    // 4.1: kamida 5 ta tayyor mavzu. Har biri barcha 8 rolni belgilaydi.
+    const DESIGN_THEMES = {
+      minimal: { label: tr('Minimal', 'Минимал'), colors: { primary: '#2563eb', accent: '#2563eb', button: '#2563eb', pageBg: '#f6f8fb', cardBg: '#ffffff', headerBg: '#ffffff', bottomNavBg: '#ffffff', text: '#1f2937' } },
+      dark: { label: tr('Dark', 'Тёмная'), colors: { primary: '#60a5fa', accent: '#818cf8', button: '#2563eb', pageBg: '#0f172a', cardBg: '#1e293b', headerBg: '#111827', bottomNavBg: '#111827', text: '#f1f5f9' } },
+      sport: { label: tr('Sport', 'Спорт'), colors: { primary: '#ea580c', accent: '#f59e0b', button: '#ea580c', pageBg: '#f1f5f9', cardBg: '#ffffff', headerBg: '#111827', bottomNavBg: '#111827', text: '#111827' } },
+      elegant: { label: tr('Elegant', 'Элегант'), colors: { primary: '#6d28d9', accent: '#7c3aed', button: '#6d28d9', pageBg: '#faf5ff', cardBg: '#ffffff', headerBg: '#1e1b4b', bottomNavBg: '#1e1b4b', text: '#2e1065' } },
+      bright: { label: tr('Bright', 'Яркая'), colors: { primary: '#db2777', accent: '#0891b2', button: '#db2777', pageBg: '#fff7ed', cardBg: '#ffffff', headerBg: '#ffffff', bottomNavBg: '#ffffff', text: '#7c2d12' } },
+    };
+
+    // ---- 4.3: WCAG kontrast hisoblash ----
+    function hexToRgb(hex) {
+      const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+      if (!m) return null;
+      const n = parseInt(m[1], 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+    function relLuminance(hex) {
+      const rgb = hexToRgb(hex);
+      if (!rgb) return null;
+      const [r, g, b] = [rgb.r, rgb.g, rgb.b].map(c => {
+        const s = c / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+    function contrastRatio(hex1, hex2) {
+      const l1 = relLuminance(hex1), l2 = relLuminance(hex2);
+      if (l1 === null || l2 === null) return 0;
+      const lighter = Math.max(l1, l2), darker = Math.min(l1, l2);
+      return (lighter + 0.05) / (darker + 0.05);
+    }
+    // 4.3: tugma/header/pastki panel uchun avtomatik o'qiladigan matn rangi.
+    function readableTextColor(bgHex) {
+      const white = contrastRatio(bgHex, '#ffffff');
+      const black = contrastRatio(bgHex, '#000000');
+      return white >= black ? '#ffffff' : '#000000';
+    }
+    const WCAG_AA_RATIO = 4.5;
+
+    function designColorsWithDefaults(colors) {
+      const base = DESIGN_THEMES.minimal.colors;
+      const merged = {};
+      for (const key of DESIGN_COLOR_KEYS) merged[key] = (colors && colors[key]) || base[key];
+      return merged;
+    }
+
+    // 4.3: saqlashdan oldin o'qilmaydigan kombinatsiyalarni topadi (masalan
+    // oq tugma + oq matn). Matn/fon juftlari WCAG AA (4.5:1) bo'yicha tekshiriladi.
+    function findContrastIssues(colors) {
+      const c = designColorsWithDefaults(colors);
+      const issues = [];
+      if (contrastRatio(c.text, c.pageBg) < WCAG_AA_RATIO) issues.push({ pair: tr("Matn / Sahifa foni", 'Текст / Фон страницы'), ratio: contrastRatio(c.text, c.pageBg) });
+      if (contrastRatio(c.text, c.cardBg) < WCAG_AA_RATIO) issues.push({ pair: tr('Matn / Karta foni', 'Текст / Фон карточек'), ratio: contrastRatio(c.text, c.cardBg) });
+      return issues;
+    }
+
+    // 4.6: bitta joyda qo'llanadi — Telegram Mini App va oddiy web'da bir xil
+    // ishlaydi, chunki bu faqat CSS custom property'larni yangilaydi.
+    function applyDesignColors(colors) {
+      const c = designColorsWithDefaults(colors);
+      const root = document.documentElement.style;
+      root.setProperty('--fitcore-primary', c.primary);
+      root.setProperty('--fitcore-accent', c.accent);
+      root.setProperty('--fitcore-button', c.button);
+      root.setProperty('--fitcore-button-text', readableTextColor(c.button));
+      root.setProperty('--fitcore-page-bg', c.pageBg);
+      root.setProperty('--fitcore-card-bg', c.cardBg);
+      root.setProperty('--fitcore-header-bg', c.headerBg);
+      root.setProperty('--fitcore-bottomnav-bg', c.bottomNavBg);
+      root.setProperty('--fitcore-text', c.text);
+    }
+
+    function openDesignSettings() {
+      if (!isUserAnAdmin || !isAdminMode) return;
+      designDraft = { themeId: designSettings.themeId, colors: { ...designSettings.colors } };
+      activePopupModal = 'DESIGN_SETTINGS';
+      render();
+    }
+    function closeDesignSettings() {
+      applyDesignColors(designSettings.colors); // bekor qilinsa — saqlangan holatga qaytariladi
+      designDraft = null;
+      activePopupModal = null;
+      render();
+    }
+    function pickDesignTheme(themeId) {
+      const theme = DESIGN_THEMES[themeId];
+      if (!theme) return;
+      designDraft.themeId = themeId;
+      designDraft.colors = { ...theme.colors };
+      applyDesignColors(designDraft.colors); // 4.1: tugmani bosganda darhol preview
+      renderModalContainer();
+    }
+    function setDesignColor(key, value) {
+      if (!DESIGN_COLOR_KEYS.includes(key)) return;
+      designDraft.themeId = 'custom';
+      designDraft.colors = { ...designDraft.colors, [key]: value };
+      applyDesignColors(designDraft.colors);
+      renderModalContainer();
+    }
+    async function saveDesignSettings() {
+      const issues = findContrastIssues(designDraft.colors);
+      if (issues.length) {
+        const msg = issues.map(i => `${i.pair}: ${i.ratio.toFixed(1)}:1 (kerak ${WCAG_AA_RATIO}:1)`).join('\n');
+        if (!confirm(tr(`⚠️ Ba'zi rang juftlari o'qilishi qiyin bo'lishi mumkin:\n${msg}\n\nBaribir saqlaysizmi?`, `⚠️ Некоторые сочетания цветов трудно читать:\n${msg}\n\nВсё равно сохранить?`))) return;
+      }
+      showActionToast(tr('⏳ Dizayn saqlanmoqda...', '⏳ Дизайн сохраняется...'), 'saving');
+      try {
+        const result = await callApi('set_design_settings', { themeId: designDraft.themeId, colors: designDraft.colors });
+        designSettings = result.designSettings;
+        applyDesignColors(designSettings.colors);
+        designDraft = null;
+        activePopupModal = null;
+        render();
+        showActionToast(tr('✅ Dizayn saqlandi', '✅ Дизайн сохранён'), 'success', 1500);
+      } catch (e) {
+        console.error(e);
+        applyDesignColors(designSettings.colors);
+        showActionToast(tr('❌ Dizayn saqlanmadi', '❌ Дизайн не сохранён'), 'error', 1800);
+        alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+      }
+    }
+
+    function openOrderInfoSettings() {
+      if (!isUserAnAdmin || !isAdminMode) return;
+      activePopupModal = 'ORDER_INFO';
+      render();
+    }
+
     function openFulfillmentSettings() {
       if (!isUserAnAdmin || !isAdminMode) return;
       fulfillmentDraft = commerce.normalizeConfig(cloneData(fulfillmentConfig), TOP_LEVEL_REGION_IDS);
-      fulfillmentSettingsSection = 'FREE';
+      fulfillmentSettingsSection = 'MENU';
+      fulfillmentDeliveryKind = 'FREE';
+      fulfillmentExpandedPayment = null;
       activePopupModal = 'FULFILLMENT_SETTINGS';
       render();
     }
 
+    function closeFulfillmentSettings() {
+      fulfillmentDraft = null;
+      activePopupModal = null;
+      render();
+    }
+
+    // Faqat #fulfillment-panel (sarlavha/Saqlash tugmalaridan tashqari ichki
+    // navigatsiya: MENU/DELIVERY/PAYMENTS) qayta chiziladi — tashqi scroll
+    // konteyner hech qachon almashtirilmaydi.
+    function rerenderFulfillmentPanel() {
+      const el = document.getElementById('fulfillment-panel');
+      if (el) el.innerHTML = renderFulfillmentPanel();
+    }
+
+    // 1.3: checkbox/toggle bosilganda FAQAT ro'yxat qismi (#fulfillment-body)
+    // yangilanadi — sarlavha, bo'lim tugmalari va tashqi scroll konteyner
+    // qayta yaratilmaydi, shuning uchun scroll pozitsiyasi buzilmaydi.
+    function rerenderFulfillmentBody() {
+      const el = document.getElementById('fulfillment-body');
+      if (!el) return;
+      if (fulfillmentSettingsSection === 'PAYMENTS') {
+        const method = fulfillmentExpandedPayment ? paymentMethodConfig(fulfillmentExpandedPayment) : null;
+        el.innerHTML = method ? renderPaymentMethodSettings(method) : '';
+      } else {
+        el.innerHTML = renderFulfillmentDeliveryBody();
+      }
+    }
+
     function setFulfillmentSettingsSection(section) {
       fulfillmentSettingsSection = section;
-      renderModalContainer();
+      if (section === 'DELIVERY' && !fulfillmentDeliveryKind) fulfillmentDeliveryKind = 'FREE';
+      if (section === 'PAYMENTS' && !fulfillmentExpandedPayment) fulfillmentExpandedPayment = 'CASH';
+      rerenderFulfillmentPanel();
+    }
+
+    function setFulfillmentDeliveryKind(kind) {
+      fulfillmentDeliveryKind = kind;
+      rerenderFulfillmentPanel();
+    }
+
+    // 1.2: Naqd/Karta yonma-yon; birini bosganda sozlamasi pastda ochiladi
+    // (accordion) — ikkinchisini bossa birinchisi yopiladi, sahifa uzun
+    // ro'yxatga aylanmaydi.
+    function setFulfillmentExpandedPayment(methodId) {
+      fulfillmentExpandedPayment = fulfillmentExpandedPayment === methodId ? null : methodId;
+      rerenderFulfillmentPanel();
     }
 
     function setDeliveryMethodEnabled(kind, enabled) {
       const key = DELIVERY_CONFIG_KEYS[kind];
       if (!key || !fulfillmentDraft) return;
       fulfillmentDraft.delivery[key].enabled = !!enabled;
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function defaultRegionSetting(kind) {
@@ -2094,7 +2503,7 @@
       if (!key || !TOP_LEVEL_REGION_IDS.includes(regionId)) return;
       if (enabled) fulfillmentDraft.delivery[key].regions[regionId] = { ...(fulfillmentDraft.delivery[key].regions[regionId] || defaultRegionSetting(kind)), enabled: true };
       else delete fulfillmentDraft.delivery[key].regions[regionId];
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function setDeliveryRegionNumber(kind, encodedId, field, value) {
@@ -2108,12 +2517,12 @@
       const key = DELIVERY_CONFIG_KEYS[kind];
       if (!key) return;
       fulfillmentDraft.delivery[key].regions = enabled ? Object.fromEntries(TOP_LEVEL_REGION_IDS.map(regionId => [regionId, defaultRegionSetting(kind)])) : {};
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function setPostEnabled(enabled) {
       fulfillmentDraft.delivery.post.enabled = !!enabled;
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function postProvider(providerId) {
@@ -2123,7 +2532,7 @@
     function setPostProviderEnabled(providerId, enabled) {
       const provider = postProvider(providerId); if (!provider) return;
       provider.enabled = !!enabled;
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function setPostProviderName(providerId, name) {
@@ -2135,7 +2544,7 @@
       if (!provider || !TOP_LEVEL_REGION_IDS.includes(regionId)) return;
       if (enabled) provider.regions[regionId] = { ...(provider.regions[regionId] || { payer: 'CUSTOMER' }), enabled: true };
       else delete provider.regions[regionId];
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function setPostRegionPayer(providerId, encodedId, payer) {
@@ -2146,7 +2555,7 @@
     function bulkPostRegions(providerId, enabled) {
       const provider = postProvider(providerId); if (!provider) return;
       provider.regions = enabled ? Object.fromEntries(TOP_LEVEL_REGION_IDS.map(regionId => [regionId, { enabled: true, payer: 'CUSTOMER' }])) : {};
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function paymentMethodConfig(methodId) {
@@ -2156,7 +2565,7 @@
     function setPaymentMethodEnabled(methodId, enabled) {
       const method = paymentMethodConfig(methodId); if (!method) return;
       method.enabled = !!enabled;
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function setPaymentRegionEnabled(methodId, encodedId, enabled) {
@@ -2164,13 +2573,13 @@
       if (!method || !TOP_LEVEL_REGION_IDS.includes(regionId)) return;
       if (enabled) method.regions[regionId] = { enabled: true };
       else delete method.regions[regionId];
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function bulkPaymentRegions(methodId, enabled) {
       const method = paymentMethodConfig(methodId); if (!method) return;
       method.regions = enabled ? Object.fromEntries(TOP_LEVEL_REGION_IDS.map(regionId => [regionId, { enabled: true }])) : {};
-      renderModalContainer();
+      rerenderFulfillmentBody();
     }
 
     function setCardSetting(field, value) {
@@ -2212,17 +2621,71 @@
       </div>`;
     }
 
-    function renderFulfillmentSettingsBody() {
-      const section = fulfillmentSettingsSection;
-      if (section === 'POST') return `<div class="space-y-3"><label class="flex items-center justify-between font-black"><span>${tr('Pochta orqali yetkazib berishni yoqish','Включить доставку почтой')}</span><input type="checkbox" ${fulfillmentDraft.delivery.post.enabled ? 'checked' : ''} onchange="setPostEnabled(this.checked)"></label><p class="text-[10px] text-gray-500">${tr('Filial datasetlari kiritilmagan; real filiallar uydirilmaydi. Provider/branch snapshot tayyor.','Датасеты филиалов не загружены; вымышленных филиалов нет. Структура provider/branch готова.')}</p>${fulfillmentDraft.delivery.post.enabled ? fulfillmentDraft.delivery.post.providers.map(renderPostProviderSettings).join('') : ''}</div>`;
-      if (section === 'PAYMENTS') return `<div class="space-y-3">${fulfillmentDraft.payments.methods.map(renderPaymentMethodSettings).join('')}</div>`;
-      const key = DELIVERY_CONFIG_KEYS[section], method = fulfillmentDraft.delivery[key];
+    function renderFulfillmentDeliveryBody() {
+      const kind = fulfillmentDeliveryKind;
+      if (kind === 'POST') return `<div class="space-y-3"><label class="flex items-center justify-between font-black"><span>${tr('Pochta orqali yetkazib berishni yoqish','Включить доставку почтой')}</span><input type="checkbox" ${fulfillmentDraft.delivery.post.enabled ? 'checked' : ''} onchange="setPostEnabled(this.checked)"></label><p class="text-[10px] text-gray-500">${tr('Filial datasetlari kiritilmagan; real filiallar uydirilmaydi. Provider/branch snapshot tayyor.','Датасеты филиалов не загружены; вымышленных филиалов нет. Структура provider/branch готова.')}</p>${fulfillmentDraft.delivery.post.enabled ? fulfillmentDraft.delivery.post.providers.map(renderPostProviderSettings).join('') : ''}</div>`;
+      const key = DELIVERY_CONFIG_KEYS[kind], method = fulfillmentDraft.delivery[key];
       const descriptions = {
         FREE: tr('Tanlangan hududlarda checkoutda faqat bepul variant chiqadi.', 'В выбранных регионах появится бесплатный вариант.'),
         FIXED: tr('Har tanlangan hudud uchun uyigacha aniq narx kiriting.', 'Укажите точную стоимость доставки до дома для каждого региона.'),
         TAXI: tr('Taxminiy min/max diapazon informatsion; buyurtma summasiga qo‘shilmaydi.', 'Диапазон min/max информационный и не включается в сумму заказа.'),
       };
-      return `<div class="space-y-3"><label class="flex items-center justify-between font-black"><span>${tr('Usulni yoqish','Включить способ')}</span><input type="checkbox" ${method.enabled ? 'checked' : ''} onchange="setDeliveryMethodEnabled('${section}',this.checked)"></label><p class="text-[10px] text-gray-500">${descriptions[section]}</p>${method.enabled ? `${settingsBulkButtons(`bulkDeliveryRegions('${section}',true)`, `bulkDeliveryRegions('${section}',false)`)}<div class="space-y-2">${renderDeliveryRegionRows(section)}</div>` : ''}</div>`;
+      return `<div class="space-y-3"><label class="flex items-center justify-between font-black"><span>${tr('Usulni yoqish','Включить способ')}</span><input type="checkbox" ${method.enabled ? 'checked' : ''} onchange="setDeliveryMethodEnabled('${kind}',this.checked)"></label><p class="text-[10px] text-gray-500">${descriptions[kind]}</p>${method.enabled ? `${settingsBulkButtons(`bulkDeliveryRegions('${kind}',true)`, `bulkDeliveryRegions('${kind}',false)`)}<div class="space-y-2">${renderDeliveryRegionRows(kind)}</div>` : ''}</div>`;
+    }
+
+    function fulfillmentBackButton() {
+      return `<button type="button" onclick="setFulfillmentSettingsSection('MENU')" class="text-[11px] font-bold text-blue-600 flex items-center gap-1">‹ ${tr('Orqaga','Назад')}</button>`;
+    }
+
+    // 1.1: "Yetkazib berish va to'lov" ikkita mustaqil bo'limga bo'lingan:
+    // A) Yetkazib berish usullari  B) To'lov turlari. Telegram katalogi kabi
+    // — avval bo'lim ro'yxati, bosilganda ichiga kirasiz.
+    function renderFulfillmentMenuPanel() {
+      const deliveryOnCount = ['FREE', 'FIXED', 'TAXI'].filter(k => fulfillmentDraft.delivery[DELIVERY_CONFIG_KEYS[k]].enabled).length + (fulfillmentDraft.delivery.post.enabled ? 1 : 0);
+      const paymentOnCount = fulfillmentDraft.payments.methods.filter(m => m.enabled).length;
+      return `<div class="space-y-2">
+        <button type="button" onclick="setFulfillmentSettingsSection('DELIVERY')" class="w-full flex items-center justify-between bg-gray-50 border rounded-2xl p-3.5 font-bold text-left">
+          <span>🚚 ${tr('Yetkazib berish usullari','Способы доставки')}<br><span class="text-[10px] font-normal text-gray-500">${deliveryOnCount} ${tr('usul yoqilgan','способов включено')}</span></span><span>›</span>
+        </button>
+        <button type="button" onclick="setFulfillmentSettingsSection('PAYMENTS')" class="w-full flex items-center justify-between bg-gray-50 border rounded-2xl p-3.5 font-bold text-left">
+          <span>💳 ${tr("To'lov turlari",'Способы оплаты')}<br><span class="text-[10px] font-normal text-gray-500">${paymentOnCount} ${tr('usul yoqilgan','способов включено')}</span></span><span>›</span>
+        </button>
+      </div>`;
+    }
+
+    function renderFulfillmentDeliveryPanel() {
+      const kinds = [
+        ['FREE', tr('🆓 Bepul', '🆓 Бесплатно')],
+        ['FIXED', tr('🚚 Aniq narx', '🚚 Фикс. цена')],
+        ['TAXI', tr('🚕 Taksi', '🚕 Такси')],
+        ['POST', tr('📦 Pochta', '📦 Почта')],
+      ];
+      return `<div class="space-y-3">
+        ${fulfillmentBackButton()}
+        <div class="flex gap-1 flex-wrap">${kinds.map(([id, label]) => `<button type="button" onclick="setFulfillmentDeliveryKind('${id}')" class="px-2.5 py-1.5 rounded-xl font-bold ${fulfillmentDeliveryKind === id ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-600'}">${label}</button>`).join('')}</div>
+        <div id="fulfillment-body" class="bg-gray-50 border rounded-2xl p-3">${renderFulfillmentDeliveryBody()}</div>
+      </div>`;
+    }
+
+    // 1.2: Naqd va Karta yonma-yon tugma; bosilgan usul pastda ochiladi.
+    function renderFulfillmentPaymentsPanel() {
+      const methods = fulfillmentDraft.payments.methods;
+      return `<div class="space-y-3">
+        ${fulfillmentBackButton()}
+        <div class="grid grid-cols-2 gap-2">${methods.map(m => `
+          <button type="button" onclick="setFulfillmentExpandedPayment('${m.id}')" class="p-3 rounded-2xl border font-black flex flex-col items-center gap-1 ${fulfillmentExpandedPayment === m.id ? 'bg-slate-900 text-white border-slate-900' : 'bg-gray-50 text-gray-700 border-gray-200'}">
+            <span class="text-lg">${m.id === 'CASH' ? '💵' : '💳'}</span>
+            <span>${escapeHtml(m.name)}</span>
+            <span class="text-[9px] font-bold ${m.enabled ? (fulfillmentExpandedPayment === m.id ? 'text-emerald-300' : 'text-emerald-600') : 'text-gray-400'}">${m.enabled ? tr('Yoqilgan','Включено') : tr("O'chirilgan",'Выключено')}</span>
+          </button>`).join('')}</div>
+        <div id="fulfillment-body">${fulfillmentExpandedPayment ? renderPaymentMethodSettings(paymentMethodConfig(fulfillmentExpandedPayment)) : ''}</div>
+      </div>`;
+    }
+
+    function renderFulfillmentPanel() {
+      if (fulfillmentSettingsSection === 'DELIVERY') return renderFulfillmentDeliveryPanel();
+      if (fulfillmentSettingsSection === 'PAYMENTS') return renderFulfillmentPaymentsPanel();
+      return renderFulfillmentMenuPanel();
     }
 
     async function saveFulfillmentSettings() {
@@ -2296,7 +2759,7 @@
               <div class="flex items-center gap-2 flex-shrink-0">
                 ${shopLogoUrl ? `<img id="shop-about-logo" src="${escapeHtml(shopLogoUrl)}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border">` : `<div id="shop-about-logo-empty" class="h-10 min-w-10 px-2 rounded-lg bg-slate-50 border flex items-center justify-center text-[9px] font-bold text-slate-400">FITCORE</div>`}
                 ${(isUserAnAdmin && isAdminMode) ? `
-                  <label class="cursor-pointer text-[10px] font-bold px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200" title="${tr('Logotip qo\'shish/almashtirish','Добавить/заменить логотип')}">
+                  <label class="cursor-pointer text-[10px] font-bold px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200" title="${tr("Logotip qo'shish/almashtirish","Добавить/заменить логотип")}">
                     🖼️
                     <input type="file" accept="image/*" class="hidden" onchange="saveShopLogoFromPicker(event)">
                   </label>
@@ -2352,8 +2815,8 @@
           </div>
 
           ${(isUserAnAdmin && isAdminMode) ? `
-            <button onclick="openFulfillmentSettings()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-              <span>🚚 ${tr("Do'kon sozlamalari → Buyurtma yetkazib berish", 'Настройки магазина → Доставка заказов')}</span>
+            <button onclick="openShopParams()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
+              <span>⚙️ ${tr("Do'kon sozlamalari → Do'kon parametrlari", 'Настройки магазина → Параметры магазина')}</span>
               <span>›</span>
             </button>
           ` : ''}
@@ -2427,8 +2890,13 @@
       }
     }
 
+    // 1.11: boshqa rasm oqimlaridagi (yangi tovar/tahrirlash/Rasmsiz queue)
+    // kabi bir xil barqaror pipeline: baytlar avval mustaqil nusxalanadi,
+    // vaqtinchalik File obyektiga (upload tugagunicha) keyin ishonilmaydi.
     async function uploadImageFileQuiet(file, existingUrl) {
-      const prepared = await compressImage(file, 1000, 0.8);
+      const bytes = await readBlobAsArrayBuffer(file);
+      const detached = makeDetachedImageFile(bytes, file);
+      const prepared = await compressImage(detached, 1000, 0.8);
       const ext = (prepared.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
       let lastErr = null;
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -2560,29 +3028,51 @@
         return;
       }
 
+      if (activePopupModal === 'SHOP_PARAMS') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-4 max-w-md w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <div class="flex items-center justify-between border-b pb-2">
+                <h3 class="font-black text-sm">⚙️ ${tr("Do'kon parametrlari", "Параметры магазина")}</h3>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+              </div>
+              <div class="space-y-2">
+                <button type="button" onclick="openOrderInfoSettings()" class="w-full flex items-center justify-between bg-gray-50 border rounded-2xl p-3.5 font-bold text-left"><span>🧾 ${tr("Buyurtma ma'lumotlari", "Информация о заказе")}</span><span>›</span></button>
+                <button type="button" onclick="openFulfillmentSettings()" class="w-full flex items-center justify-between bg-gray-50 border rounded-2xl p-3.5 font-bold text-left"><span>🚚 ${tr("Yetkazib berish va to'lov", "Доставка и оплата")}</span><span>›</span></button>
+                <button type="button" onclick="openDesignSettings()" class="w-full flex items-center justify-between bg-gray-50 border rounded-2xl p-3.5 font-bold text-left"><span>🎨 ${tr("Dizayn", "Дизайн")}</span><span>›</span></button>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      if (activePopupModal === 'ORDER_INFO') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal='SHOP_PARAMS'; render();">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-4 max-w-md w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <div class="flex items-center justify-between border-b pb-2">
+                <h3 class="font-black text-sm">🧾 ${tr("Buyurtma ma'lumotlari", "Информация о заказе")}</h3>
+                <button onclick="activePopupModal='SHOP_PARAMS'; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+              </div>
+              <p class="text-gray-400 text-center py-8">${tr("Bu bo'lim tez orada qo'shiladi.", "Этот раздел скоро будет добавлен.")}</p>
+            </div>
+          </div>`;
+        return;
+      }
+
       if (activePopupModal === 'FULFILLMENT_SETTINGS') {
         if (!fulfillmentDraft) fulfillmentDraft = commerce.normalizeConfig(cloneData(fulfillmentConfig), TOP_LEVEL_REGION_IDS);
-        const sections = [
-          ['FREE', tr('🆓 Bepul', '🆓 Бесплатно')],
-          ['FIXED', tr('🚚 Aniq narx', '🚚 Фикс. цена')],
-          ['TAXI', tr('🚕 Taksi', '🚕 Такси')],
-          ['POST', tr('📦 Pochta', '📦 Почта')],
-          ['PAYMENTS', tr("💳 To'lov", '💳 Оплата')],
-        ];
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div class="bg-white rounded-t-3xl sm:rounded-3xl p-4 max-w-md w-full max-h-[94vh] overflow-y-auto space-y-3 shadow-2xl text-xs">
               <div class="flex items-center justify-between border-b pb-2 gap-2">
-                <div><h3 class="font-black text-sm">🚚 ${tr('Buyurtma yetkazib berish', 'Доставка заказов')}</h3><p class="text-[10px] text-gray-500">${TOP_LEVEL_REGIONS.length} ${tr('ta top-level hudud mavjud ro‘yxatdan olindi', 'регионов взято из текущего списка')}</p></div>
-                <button onclick="fulfillmentDraft=null;activePopupModal=null;render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+                <div><h3 class="font-black text-sm">🚚 ${tr("Yetkazib berish va to'lov", 'Доставка и оплата')}</h3><p class="text-[10px] text-gray-500">${TOP_LEVEL_REGIONS.length} ${tr('ta top-level hudud mavjud ro‘yxatdan olindi', 'регионов взято из текущего списка')}</p></div>
+                <button onclick="closeFulfillmentSettings()" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
               </div>
-              <div class="flex gap-1 flex-wrap">
-                ${sections.map(([id, label]) => `<button onclick="setFulfillmentSettingsSection('${id}')" class="px-2.5 py-1.5 rounded-xl font-bold ${fulfillmentSettingsSection === id ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-600'}">${label}</button>`).join('')}
-              </div>
-              <div class="bg-gray-50 border rounded-2xl p-3">${renderFulfillmentSettingsBody()}</div>
+              <div id="fulfillment-panel">${renderFulfillmentPanel()}</div>
               <div class="grid grid-cols-2 gap-2 sticky bottom-0 bg-white pt-2">
                 <button onclick="saveFulfillmentSettings()" class="bg-blue-600 text-white font-black py-3 rounded-xl">✅ ${tr('Saqlash','Сохранить')}</button>
-                <button onclick="fulfillmentDraft=null;activePopupModal=null;render();" class="bg-gray-100 text-gray-700 font-bold py-3 rounded-xl">${tr('Bekor qilish','Отмена')}</button>
+                <button onclick="closeFulfillmentSettings()" class="bg-gray-100 text-gray-700 font-bold py-3 rounded-xl">${tr('Bekor qilish','Отмена')}</button>
               </div>
             </div>
           </div>`;
@@ -2661,10 +3151,6 @@
                 <input type="text" id="m-cat-name" placeholder="${tr('Masalan: Proteinlar','Например: Протеины')}" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
-                <label class="font-bold text-gray-600">${tr("Katalog nomi — ruscha (ixtiyoriy)", "Название каталога на русском (необязательно)")}</label>
-                <input type="text" id="m-cat-name-ru" placeholder="Например: Протеины" class="w-full mt-1 p-2 border rounded-xl">
-              </div>
-              <div>
                 <label class="font-bold text-gray-600">${tr("Katalog rasmi (Xotiradan yuklash):", "Изображение каталога (загрузить с устройства):")}</label>
                 <input type="file" accept="image/*" onchange="onImagePicked(event, 'm-cat-prev')" class="w-full mt-1 text-xs">
                 <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl mt-2 hidden border">
@@ -2688,10 +3174,6 @@
               <div>
                 <label class="font-bold text-gray-600">${tr("Katalog nomi *", "Название каталога *")}</label>
                 <input type="text" id="ec-name" value="${escapeHtml(c.name)}" class="w-full mt-1 p-2 border rounded-xl">
-              </div>
-              <div>
-                <label class="font-bold text-gray-600">${tr("Katalog nomi — ruscha (ixtiyoriy)", "Название каталога на русском (необязательно)")}</label>
-                <input type="text" id="ec-name-ru" value="${escapeHtml(c.nameRu || '')}" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
                 <label class="font-bold text-gray-600">${tr("Katalog rasmi (Xotiradan yuklash):", "Изображение каталога (загрузить с устройства):")}</label>
@@ -2756,6 +3238,179 @@
         } else {
           container.innerHTML = `<div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"><div class="bg-white rounded-3xl p-6 text-center text-sm">${tr("⏳ Excel moduli yuklanmoqda...", "⏳ Модуль Excel загружается...")}</div></div>`;
         }
+        return;
+      }
+
+      // 2.3: tovarni boshqa katalogga ko'chirish.
+      if (activePopupModal === 'MOVE_PRODUCT_CATEGORY') {
+        const flatCats = categories.slice().sort((a, b) => categoryName(a).localeCompare(categoryName(b)));
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("Katalogni o'zgartirish", "Изменить каталог")}</h3>
+              <select id="move-product-target" onchange="moveTargetCategoryId=this.value" class="w-full p-2.5 border rounded-xl bg-gray-50">
+                <option value="">${tr("— Katalogsiz —", "— Без каталога —")}</option>
+                ${flatCats.map(c => `<option value="${c.id}">${escapeHtml(categoryName(c))}</option>`).join('')}
+              </select>
+              <div class="flex gap-2 pt-2">
+                <button onclick="saveMoveProduct()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr("Saqlash", "Сохранить")}</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Bekor qilish", "Отмена")}</button>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      // 2.2: katalogni boshqa katalog ichiga ko'chirish (o'ziga/o'z ichki
+      // kataloglariga ko'chirish variantlari ro'yxatdan chiqarib tashlanadi;
+      // server baribir mustaqil tekshiradi).
+      if (activePopupModal === 'MOVE_CATEGORY') {
+        const forbidden = categoryDescendantIds(moveCategoryId);
+        const validTargets = categories.filter(c => !forbidden.has(String(c.id))).sort((a, b) => categoryName(a).localeCompare(categoryName(b)));
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("Katalogni ko'chirish", "Переместить каталог")}</h3>
+              <select id="move-category-target" onchange="moveCategoryTargetId=this.value" class="w-full p-2.5 border rounded-xl bg-gray-50">
+                <option value="">${tr("— Bosh katalog (root) —", "— Корневой каталог —")}</option>
+                ${validTargets.map(c => `<option value="${c.id}">${escapeHtml(categoryName(c))}</option>`).join('')}
+              </select>
+              <div class="flex gap-2 pt-2">
+                <button onclick="saveMoveCategory()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr("Saqlash", "Сохранить")}</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Bekor qilish", "Отмена")}</button>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      // 2.8: narx tarixi.
+      if (activePopupModal === 'PRICE_HISTORY') {
+        const rows = priceHistoryList || [];
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[80vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("🕘 Narx tarixi", "🕘 История цен")}</h3>
+              ${priceHistoryList === null ? `<p class="text-center text-gray-400 py-6">${tr('Yuklanmoqda...', 'Загрузка...')}</p>`
+                : rows.length === 0 ? `<p class="text-center text-gray-400 py-6">${tr("O'zgarishlar topilmadi.", 'Изменений не найдено.')}</p>`
+                : `<div class="divide-y">${rows.map(h => `
+                    <div class="py-2 flex justify-between items-center">
+                      <div>
+                        <p class="font-bold">${h.oldPrice !== null ? money(h.oldPrice) + ' → ' : ''}${money(h.newPrice)}</p>
+                        <p class="text-[10px] text-gray-400">${new Date(h.changedAt).toLocaleString()}</p>
+                      </div>
+                    </div>
+                  `).join('')}</div>`}
+              <button onclick="activePopupModal=null; render();" class="w-full bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl">${tr("Yopish", "Закрыть")}</button>
+            </div>
+          </div>`;
+        return;
+      }
+
+      // 2.5: Chiqindi (24 soatlik trash) ko'rinishi.
+      if (activePopupModal === 'TRASH') {
+        const batches = trashBatches || [];
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-sm w-full max-h-[85vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <div class="flex items-center justify-between border-b pb-2">
+                <h3 class="font-bold text-sm text-gray-900">${tr("🗑️ Chiqindi", "🗑️ Корзина")}</h3>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+              </div>
+              <p class="text-[10px] text-gray-400">${tr("O'chirilgan kataloglar/tovarlar shu yerda 24 soat turadi, keyin butunlay o'chadi.", "Удалённые каталоги/товары хранятся здесь 24 часа, затем удаляются навсегда.")}</p>
+              ${trashBatches === null ? `<p class="text-center text-gray-400 py-6">${tr('Yuklanmoqda...', 'Загрузка...')}</p>`
+                : batches.length === 0 ? `<p class="text-center text-gray-400 py-6">${tr("Chiqindi bo'sh.", 'Корзина пуста.')}</p>`
+                : `<div class="space-y-2">${batches.map(b => `
+                    <div class="border rounded-xl p-2.5 space-y-1">
+                      <p class="font-bold">${b.kind === 'CATEGORY' ? `📁 ${escapeHtml(b.rootCategoryName || ('#' + b.id))}` : `📦 ${escapeHtml((b.productNames || [])[0] || ('#' + b.id))}`}</p>
+                      <p class="text-[10px] text-gray-500">${b.categoryCount ? `${b.categoryCount} ${tr('katalog','кат.')} · ` : ''}${b.productCount} ${tr('tovar','тов.')}</p>
+                      <p class="text-[10px] text-gray-400">${tr("Muddati", "Истекает")}: ${new Date(b.expiresAt).toLocaleString()}</p>
+                      <button onclick="restoreTrashBatch(${b.id})" class="w-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded-lg">${tr("♻️ Tiklash", "♻️ Восстановить")}</button>
+                    </div>
+                  `).join('')}</div>`}
+            </div>
+          </div>`;
+        return;
+      }
+
+      // 2.7: duplicate tovar NOMZODLARI — faqat aniqlash, avtomatik birlashtirish yo'q.
+      if (activePopupModal === 'DUPLICATE_PRODUCTS') {
+        const pairs = findDuplicateProductCandidates();
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-sm w-full max-h-[85vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <div class="flex items-center justify-between border-b pb-2">
+                <h3 class="font-bold text-sm text-gray-900">${tr("🧭 Duplicate tovar nomzodlari", "🧭 Возможные дубликаты")}</h3>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+              </div>
+              <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2">${tr("Bu faqat aniqlash: bir xil katalogdagi juda yaqin nomli tovarlar ko'rsatiladi. Avtomatik birlashtirish (merge) hali yo'q — kerak bo'lsa qo'lda tekshirib, keragini o'chiring yoki tahrirlang.", "Это только обнаружение: показаны товары с очень похожими названиями в одном каталоге. Автоматическое объединение пока не реализовано — проверьте вручную.")}</p>
+              ${pairs.length === 0 ? `<p class="text-center text-gray-400 py-6">${tr("Duplicate topilmadi.", "Дубликаты не найдены.")}</p>`
+                : `<div class="space-y-2">${pairs.map(({ a, b, score }) => `
+                    <div class="border rounded-xl p-2.5 space-y-1">
+                      <p class="text-[10px] text-gray-400">${Math.round(score * 100)}% ${tr("o'xshash", "совпадение")}</p>
+                      <button onclick="activePopupModal=null; openProductDetailModal('${a.id}');" class="w-full text-left font-bold text-blue-700">${escapeHtml(a.name)} <span class="text-gray-400 font-normal">(${escapeHtml(a.sku)})</span></button>
+                      <button onclick="activePopupModal=null; openProductDetailModal('${b.id}');" class="w-full text-left font-bold text-blue-700">${escapeHtml(b.name)} <span class="text-gray-400 font-normal">(${escapeHtml(b.sku)})</span></button>
+                    </div>
+                  `).join('')}</div>`}
+            </div>
+          </div>`;
+        return;
+      }
+
+      // 4-blok: do'kon dizayni — tayyor mavzular + qo'lda ranglar + kontrast ogohlantirish.
+      if (activePopupModal === 'DESIGN_SETTINGS') {
+        const draft = designDraft || { themeId: 'minimal', colors: {} };
+        const activeColors = designColorsWithDefaults(draft.colors);
+        const issues = findContrastIssues(draft.colors);
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="closeDesignSettings()">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-4 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <div class="flex items-center justify-between border-b pb-2">
+                <h3 class="font-black text-sm">🎨 ${tr("Do'kon dizayni", "Дизайн магазина")}</h3>
+                <button onclick="closeDesignSettings()" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+              </div>
+
+              <div>
+                <p class="font-bold text-gray-600 mb-1.5">${tr("Tayyor mavzular", "Готовые темы")}</p>
+                <div class="grid grid-cols-3 gap-2">
+                  ${Object.entries(DESIGN_THEMES).map(([id, theme]) => `
+                    <button type="button" onclick="pickDesignTheme('${id}')" class="rounded-xl border-2 p-2 text-center ${draft.themeId === id ? 'border-blue-600' : 'border-transparent'}" style="background:${theme.colors.pageBg}">
+                      <div class="flex justify-center gap-1 mb-1">
+                        <span class="w-3.5 h-3.5 rounded-full inline-block" style="background:${theme.colors.button}"></span>
+                        <span class="w-3.5 h-3.5 rounded-full inline-block border" style="background:${theme.colors.cardBg}"></span>
+                      </div>
+                      <span class="font-bold text-[10px]" style="color:${theme.colors.text}">${theme.label}</span>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+
+              <div class="space-y-2 pt-2 border-t">
+                <p class="font-bold text-gray-600 pt-2">${tr("Qo'lda rang tanlash", "Ручной выбор цвета")}</p>
+                ${DESIGN_COLOR_KEYS.map(key => `
+                  <div class="flex items-center justify-between gap-2">
+                    <label class="font-bold text-gray-600">${DESIGN_COLOR_LABELS[key]}</label>
+                    <div class="flex items-center gap-2">
+                      <input type="color" value="${activeColors[key]}" onchange="setDesignColor('${key}', this.value)" class="w-9 h-9 border rounded-lg cursor-pointer">
+                      <span class="font-mono text-[10px] text-gray-400 w-14">${activeColors[key]}</span>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+
+              ${issues.length ? `
+                <div class="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-[10px] text-amber-900 space-y-1">
+                  <p class="font-bold">⚠️ ${tr("O'qilishi qiyin bo'lishi mumkin:", 'Может быть трудно читать:')}</p>
+                  ${issues.map(i => `<p>${i.pair}: ${i.ratio.toFixed(1)}:1 (${tr('kerak','нужно')} ${WCAG_AA_RATIO}:1)</p>`).join('')}
+                </div>
+              ` : ''}
+
+              <div class="flex gap-2 pt-2 sticky bottom-0 bg-white">
+                <button onclick="saveDesignSettings()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr("Saqlash", "Сохранить")}</button>
+                <button onclick="closeDesignSettings()" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Bekor qilish", "Отмена")}</button>
+              </div>
+            </div>
+          </div>`;
         return;
       }
 
@@ -2910,16 +3565,23 @@
 
               <div id="delivery-notice" class="hidden bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[11px] text-amber-900"></div>
 
-              <div>
+              <div id="chk-district-field">
                 <label class="text-xs font-bold text-gray-600">${tr("Tumanni tanlang *", "Выберите район *")}</label>
                 <select id="chk-district" onchange="saveCheckoutDraft()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
                   <option value="">${tr("— Tanlang —", "— Выберите —")}</option>
                 </select>
               </div>
 
-              <div>
+              <div id="chk-address-field">
                 <label id="chk-address-label" class="text-xs font-bold text-gray-600">${tr("Manzil *", "Адрес *")}</label>
                 <input type="text" id="chk-address" oninput="saveCheckoutDraft()" placeholder="${tr("Ko'cha, mahalla va uy raqami",'Улица, махалля и номер дома')}" class="w-full mt-1 p-2.5 border rounded-xl text-xs">
+              </div>
+
+              <div id="chk-branch-wrap" class="hidden space-y-2">
+                <label class="text-xs font-bold text-gray-600">${tr("Filialni tanlang *", "Выберите филиал *")}</label>
+                <input type="text" id="chk-branch-search" oninput="filterBranchList(this.value)" placeholder="${tr('Filial yoki tuman nomi bilan qidirish', 'Поиск по названию филиала или района')}" class="w-full p-2.5 border rounded-xl text-xs">
+                <div id="chk-branch-list" class="max-h-56 overflow-y-auto border rounded-xl divide-y text-xs"></div>
+                <div id="chk-branch-selected" class="hidden bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-xs"></div>
               </div>
 
               <div>
@@ -3021,9 +3683,14 @@
               </div>
 
               <div class="space-y-1">
-                <div class="flex justify-between items-center">
+                <div class="flex justify-between items-center gap-1">
                   ${(isAdminMode && isUserAnAdmin) ? `<span class="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: ${escapeHtml(p.sku)}</span>` : '<span></span>'}
-                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">${tr("🗑️ O'chirish", "🗑️ Удалить")}</button>` : ''}
+                  ${(isAdminMode && isUserAnAdmin) ? `
+                    <div class="flex gap-1">
+                      <button onclick="duplicateProduct('${p.id}')" class="text-xs bg-slate-50 text-slate-600 font-bold px-2 py-1 rounded-lg">${tr("📄 Nusxalash", "📄 Копировать")}</button>
+                      <button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">${tr("🗑️ O'chirish", "🗑️ Удалить")}</button>
+                    </div>
+                  ` : ''}
                 </div>
 
                 <!-- NAME WITH EDIT -->
@@ -3046,6 +3713,7 @@
                   </div>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'price')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
+                ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openPriceHistoryModal('${p.id}')" class="text-[10px] text-gray-400 underline">${tr("🕘 Narx tarixi", "🕘 История цен")}</button>` : ''}
 
                 <!-- STOCK WITH EDIT -->
                 ${(isAdminMode && isUserAnAdmin) ? `
@@ -3056,6 +3724,10 @@
                   <div class="flex justify-between items-start gap-2 pt-1 text-xs">
                     <span class="font-bold text-gray-600 flex-1">${tr("Variantlar:", "Варианты:")} <b>${productVariants(p).length ? escapeHtml(productVariants(p).map(v => `${variantLabel(v)} (${v.qty} ta, ID:${v.sku})`).join(', ')) : tr('kiritilmagan','не указано')}</b></span>
                     <button onclick="openEditFieldModal('${p.id}', 'variants')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
+                  </div>
+                  <div class="flex justify-between items-center pt-1 text-xs">
+                    <span class="font-bold text-gray-600">${tr("Katalog:", "Каталог:")} <b>${escapeHtml(categoryName(categories.find(c => c.id === p.categoryId)) || tr('belgilanmagan','не указан'))}</b></span>
+                    <button onclick="openMoveProductModal('${p.id}')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">${tr('Ko\'chirish','Переместить')}</button>
                   </div>
                 ` : ''}
               </div>
@@ -3165,6 +3837,7 @@
               </div>
 
               ${(isAdminMode && isUserAnAdmin && o.hasReceipt) ? `<button onclick="openOrderReceipt(${o.id})" class="w-full bg-blue-50 text-blue-700 border border-blue-200 py-2 rounded-xl font-bold">🧾 ${tr("To'lov chekini ochish", 'Открыть чек оплаты')}</button>` : ''}
+              ${(isAdminMode && isUserAnAdmin && o.receiptSentToTelegram && botUsername) ? `<button onclick="openReceiptInTelegram()" class="w-full bg-sky-50 text-sky-700 border border-sky-200 py-2 rounded-xl font-bold">✈️ ${tr("Telegramda ko'rish", 'Смотреть в Telegram')}</button>` : ''}
 
               ${(isAdminMode && isUserAnAdmin && o.delivery?.kind === 'TAXI' && o.status !== 'CANCELLED') ? `
                 <div class="border-t pt-2 space-y-2">
@@ -3179,9 +3852,9 @@
               ${(isAdminMode && isUserAnAdmin && o.delivery?.kind === 'POST' && o.status !== 'CANCELLED') ? `
                 <div class="border-t pt-2 space-y-2">
                   <p class="font-black">📦 ${escapeHtml(o.delivery.providerName || tr('Pochta','Почта'))}</p>
+                  ${o.delivery.branchName ? `<p class="text-[11px] text-gray-600">${tr('Mijoz tanlagan filial','Филиал, выбранный клиентом')}: <b>${escapeHtml(o.delivery.branchName)}</b></p>` : ''}
                   <input id="shipment-tracking" value="${escapeHtml(o.shipment?.trackingNumber || '')}" placeholder="${tr("Tracking/jo'natma raqami",'Трек-номер')}" class="w-full p-2 border rounded-xl font-mono">
-                  <input id="shipment-branch" value="${escapeHtml(o.shipment?.originBranch || '')}" placeholder="${tr('Yuborilgan filial (ixtiyoriy)','Филиал отправки (необязательно)')}" class="w-full p-2 border rounded-xl">
-                  <select id="shipment-status" class="w-full p-2 border rounded-xl bg-gray-50"><option value="READY" ${o.shipment?.status === 'READY' ? 'selected' : ''}>${tr('Tayyor','Готовится')}</option><option value="HANDED_TO_CARRIER" ${o.shipment?.status === 'HANDED_TO_CARRIER' ? 'selected' : ''}>${tr('Pochtaga topshirildi','Передано почте')}</option><option value="IN_TRANSIT" ${o.shipment?.status === 'IN_TRANSIT' ? 'selected' : ''}>${tr("Yo'lda",'В пути')}</option><option value="DELIVERED" ${o.shipment?.status === 'DELIVERED' ? 'selected' : ''}>${tr('Yetkazildi','Доставлено')}</option></select>
+                  <select id="shipment-status" class="w-full p-2 border rounded-xl bg-gray-50"><option value="READY" ${o.shipment?.status === 'READY' ? 'selected' : ''}>${tr('Tayyor','Готовится')}</option><option value="HANDED_TO_CARRIER" ${o.shipment?.status === 'HANDED_TO_CARRIER' ? 'selected' : ''}>${tr('Pochtaga topshirildi','Передано почте')}</option></select>
                   <button onclick="saveShipmentForOrder(${o.id})" class="w-full bg-slate-800 text-white py-2.5 rounded-xl font-bold">💾 ${tr('Jo‘natmani saqlash','Сохранить отправление')}</button>
                 </div>` : ''}
 
@@ -3345,6 +4018,17 @@
       }
     }
 
+    // 1.10: chek Telegramga yuborilgandan keyin admin FITCORE bot chatini
+    // ochadi (aniq xabarga soxta deep-link yasalmaydi). Bot username hardcode
+    // emas — boot() javobidan (server konfiguratsiyasidan) olinadi.
+    function openReceiptInTelegram() {
+      if (!botUsername) return;
+      const url = `https://t.me/${encodeURIComponent(botUsername)}`;
+      if (tg?.openTelegramLink) tg.openTelegramLink(url);
+      else if (tg?.openLink) tg.openLink(url);
+      else window.open(url, '_blank', 'noopener');
+    }
+
     async function saveShipmentForOrder(orderId) {
       const order = orders.find(item => item.id === orderId);
       if (!order) return;
@@ -3354,8 +4038,9 @@
         payload.driverPhone = document.getElementById('shipment-phone')?.value.trim() || '';
         payload.driverName = document.getElementById('shipment-driver')?.value.trim() || '';
       } else if (order.delivery?.kind === 'POST') {
+        // 1.13: filial mijoz tomonidan checkout'da tanlanadi (order snapshot'da
+        // saqlanadi) — admin uni qayta kiritmaydi, faqat tracking + status.
         payload.trackingNumber = document.getElementById('shipment-tracking')?.value.trim() || '';
-        payload.originBranch = document.getElementById('shipment-branch')?.value.trim() || '';
       }
       showActionToast(tr('⏳ Yetkazish ma’lumoti saqlanmoqda...', '⏳ Данные доставки сохраняются...'), 'saving');
       try {
@@ -3423,13 +4108,6 @@
       }
     }
 
-    function toggleRuFields(checked, prefix) {
-      const nameRu = document.getElementById(prefix + '-name-ru');
-      const descRu = document.getElementById(prefix + '-desc-ru');
-      if (nameRu) nameRu.classList.toggle('hidden', !checked);
-      if (descRu) descRu.classList.toggle('hidden', !checked);
-    }
-
     async function saveProductFromModal() {
       const name = document.getElementById('m-prod-name').value.trim();
       const price = parseFloat(document.getElementById('m-prod-price').value);
@@ -3475,9 +4153,9 @@
       } finally { releaseImageSnapshot(imageSnap); }
     }
 
+    // 3.1/3.7: admin faqat UZ kiritadi — RU serverda avtomatik tarjima qilinadi.
     async function saveCategoryFromModal() {
       const name = document.getElementById('m-cat-name').value.trim();
-      const nameRu = document.getElementById('m-cat-name-ru').value.trim();
       if (!name) return alert(tr("Katalog nomini kiriting!", "Введите название каталога!"));
       const imageSnap = takeTempImageSnapshot();
       const parentId = adminCatParentId;
@@ -3486,7 +4164,7 @@
       showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
       try {
         const imgUrl = await uploadImageSnapshot(imageSnap, null, false);
-        const result = await callApi('add_category', { name, nameRu: nameRu || null, img: imgUrl, parentId });
+        const result = await callApi('add_category', { name, img: imgUrl, parentId });
         upsertLocalCategory(result.category);
         saveCatalogCache();
         showActionToast(tr("✅ Katalog yaratildi", "✅ Каталог создан"), 'success', 1200);
@@ -3688,12 +4366,10 @@
       const c = categories[idx];
       const old = cloneData(c);
       const name = document.getElementById('ec-name').value.trim();
-      const nameRu = document.getElementById('ec-name-ru').value.trim();
       if (!name) return alert(tr("Katalog nomini kiriting!", "Введите название каталога!"));
       const imageSnap = takeTempImageSnapshot();
 
       c.name = name;
-      c.nameRu = nameRu || null;
       if (imageSnap.preview) c.img = imageSnap.preview;
       activePopupModal = null;
       render();
@@ -3701,7 +4377,7 @@
 
       try {
         const newImg = await uploadImageSnapshot(imageSnap, old.img, !!(imageSnap.file || imageSnap.preparing));
-        const result = await callApi('edit_category', { categoryId: id, name, nameRu: nameRu || null, img: newImg });
+        const result = await callApi('edit_category', { categoryId: id, name, img: newImg });
         const current = categories.find(cat => cat.id === id);
         if (current) Object.assign(current, mapCategoryFromDB(result.category));
         saveCatalogCache();
@@ -3772,8 +4448,9 @@
       }
     }
 
+    // 2.4/2.5: standalone product delete — 24 soat trash'da turadi, tiklash mumkin.
     async function deleteProduct(id) {
-      if (!confirm(tr("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz?", "Вы действительно хотите удалить этот товар?"))) return;
+      if (!confirm(tr("Rostdan ham ushbu mahsulotni o'chirmoqchimisiz? (24 soat ichida Chiqindidan tiklash mumkin)", "Удалить этот товар? (В течение 24 часов его можно восстановить из корзины)"))) return;
       const idx = products.findIndex(prod => prod.id === id);
       if (idx < 0) return;
       const old = cloneData(products[idx]);
@@ -3783,7 +4460,7 @@
       try {
         await callApi('delete_product', { productId: id });
         saveCatalogCache();
-        showActionToast(tr("✅ O'chirildi", "✅ Удалено"), 'success', 1200);
+        showActionToast(tr("✅ O'chirildi (24 soat Chiqindida)", "✅ Удалено (24 часа в корзине)"), 'success', 1800);
       } catch (e) {
         console.error(e);
         products.splice(Math.min(idx, products.length), 0, old);
@@ -3793,29 +4470,226 @@
       }
     }
 
+    // 2.4: o'chirishdan oldin ichki katalog/tovar sonini ko'rsatib tasdiq so'raladi.
+    // 2.5: tasdiqlansa, butun subtree+tovarlar 24 soatlik trash'ga tushadi —
+    // bu kaskad ko'p elementga ta'sir qilgani uchun aniqlik uchun butun
+    // katalogni qayta yuklaymiz (optimistik qisman o'chirish emas).
     async function deleteCategory(id, e) {
       if (e) e.stopPropagation();
-      if (!confirm(tr("Katalog o'chirilsinmi?", "Удалить каталог?"))) return;
-      const idx = categories.findIndex(c => c.id === id);
-      if (idx < 0) return;
-      const old = cloneData(categories[idx]);
-      categories.splice(idx, 1);
-      render();
+      let preview;
+      showActionToast(tr('⏳ Tekshirilmoqda...', '⏳ Проверка...'), 'saving');
+      try {
+        preview = await callApi('get_category_delete_preview', { categoryId: id });
+      } catch (err) {
+        hideActionToast();
+        return alert(tr('❌ Tekshirishda xatolik: ', '❌ Ошибка проверки: ') + (err.message || err));
+      }
+      hideActionToast();
+      const msg = (preview.categoryCount > 0 || preview.productCount > 0)
+        ? tr(
+            `Bu katalog ichida:\n${preview.categoryCount} ta ichki katalog\n${preview.productCount} ta tovar\nbor.\n\nO'chirishga aminmisiz? (24 soat ichida Chiqindidan tiklash mumkin)`,
+            `В этом каталоге:\n${preview.categoryCount} подкаталогов\n${preview.productCount} товаров\n\nУдалить? (В течение 24 часов можно восстановить из корзины)`
+          )
+        : tr("Katalog o'chirilsinmi? (24 soat ichida Chiqindidan tiklash mumkin)", 'Удалить каталог? (В течение 24 часов можно восстановить из корзины)');
+      if (!confirm(msg)) return;
       showActionToast(tr("⏳ O'chirilmoqda...", "⏳ Удаление..."), 'saving');
       try {
         await callApi('delete_category', { categoryId: id });
-        saveCatalogCache();
-        showActionToast(tr("✅ O'chirildi", "✅ Удалено"), 'success', 1200);
+        await loadCatalog();
+        if (adminCatParentId === id) adminCatParentId = null;
+        render();
+        showActionToast(tr("✅ O'chirildi (24 soat Chiqindida)", "✅ Удалено (24 часа в корзине)"), 'success', 1800);
       } catch (e2) {
         console.error(e2);
-        categories.splice(Math.min(idx, categories.length), 0, old);
-        render();
         showActionToast(tr("❌ O'chirilmadi", "❌ Не удалено"), 'error', 1800);
-        if (String(e2.message).includes('category_not_empty')) {
-          alert(tr("❌ Bu katalogda pastki kataloglar yoki tovarlar bog'langan. Avval ularni o'chiring yoki boshqa joyga ko'chiring.", "❌ В каталоге есть подкаталоги или товары. Сначала удалите или переместите их."));
-        } else {
-          alert(tr("❌ O'chirishda xatolik yuz berdi: ", "❌ Ошибка удаления: ") + (e2.message || e2));
+        alert(tr("❌ O'chirishda xatolik yuz berdi: ", "❌ Ошибка удаления: ") + (e2.message || e2));
+      }
+    }
+
+    // 2.6: mahsulotni nusxalash — yangi SKU, "— nusxa" nomi, stock=0 (draft).
+    async function duplicateProduct(id) {
+      showActionToast(tr('⏳ Nusxalanmoqda...', '⏳ Копирование...'), 'saving');
+      try {
+        const result = await callApi('duplicate_product', { productId: id });
+        products.unshift(mapProductFromDB(result.product));
+        saveCatalogCache();
+        selectedProductModal = mapProductFromDB(result.product);
+        render();
+        showActionToast(tr('✅ Nusxa yaratildi (zaxira 0, ko\'rinmaydi)', '✅ Копия создана (остаток 0, скрыта)'), 'success', 2200);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Nusxalab bo\'lmadi', '❌ Не удалось скопировать'), 'error', 1800);
+        alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+      }
+    }
+
+    // 2.8: narx tarixi ko'rish.
+    async function openPriceHistoryModal(productId) {
+      priceHistoryProductId = productId;
+      priceHistoryList = null;
+      activePopupModal = 'PRICE_HISTORY';
+      render();
+      try {
+        const result = await callApi('get_product_price_history', { productId });
+        priceHistoryList = result.history || [];
+      } catch (e) {
+        console.error(e);
+        priceHistoryList = [];
+      }
+      if (activePopupModal === 'PRICE_HISTORY') renderModalContainer();
+    }
+
+    // 2.3: "Katalogni o'zgartirish" — tovarni boshqa kategoriyaga ko'chirish.
+    function openMoveProductModal(productId) {
+      moveProductId = productId;
+      moveTargetCategoryId = '';
+      activePopupModal = 'MOVE_PRODUCT_CATEGORY';
+      render();
+    }
+    async function saveMoveProduct() {
+      const newCategoryId = moveTargetCategoryId || null;
+      showActionToast(tr('⏳ Ko\'chirilmoqda...', '⏳ Перемещение...'), 'saving');
+      try {
+        const result = await callApi('edit_product_field', { productId: moveProductId, field: 'categoryId', value: newCategoryId });
+        const idx = products.findIndex(p => p.id === moveProductId);
+        if (idx >= 0) products[idx] = mapProductFromDB(result.product);
+        saveCatalogCache();
+        activePopupModal = null;
+        selectedProductModal = idx >= 0 ? products[idx] : null;
+        render();
+        showActionToast(tr('✅ Katalog o\'zgartirildi', '✅ Каталог изменён'), 'success', 1500);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ O\'zgartirilmadi', '❌ Не изменено'), 'error', 1800);
+        alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+      }
+    }
+
+    // 2.2: kategoriyani boshqa kategoriya ichiga ko'chirish (server cycle'ni ham tekshiradi).
+    function categoryDescendantIds(id) {
+      const result = new Set([String(id)]);
+      const queue = [String(id)];
+      while (queue.length) {
+        const cur = queue.shift();
+        for (const c of categories.filter(x => String(x.parentId || '') === cur)) {
+          if (!result.has(String(c.id))) { result.add(String(c.id)); queue.push(String(c.id)); }
         }
+      }
+      return result;
+    }
+    function openMoveCategoryModal(categoryId, e) {
+      if (e) e.stopPropagation();
+      moveCategoryId = categoryId;
+      moveCategoryTargetId = '';
+      activePopupModal = 'MOVE_CATEGORY';
+      render();
+    }
+    async function saveMoveCategory() {
+      const newParentId = moveCategoryTargetId || null;
+      showActionToast(tr('⏳ Ko\'chirilmoqda...', '⏳ Перемещение...'), 'saving');
+      try {
+        await callApi('move_category', { categoryId: moveCategoryId, newParentId });
+        await loadCatalog();
+        activePopupModal = null;
+        render();
+        showActionToast(tr('✅ Katalog ko\'chirildi', '✅ Каталог перемещён'), 'success', 1500);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Ko\'chirilmadi', '❌ Не перемещено'), 'error', 1800);
+        const msg = String(e.message || '').includes('cannot_move_into_own_descendant')
+          ? tr("❌ Katalogni o'zining ichki kataloglaridan biriga ko'chirib bo'lmaydi.", '❌ Нельзя переместить каталог в его же подкаталог.')
+          : tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e);
+        alert(msg);
+      }
+    }
+
+    // 2.1: tartib tugmalari — faqat bir xil ota-katalog ichidagi qo'shnilar bilan almashadi.
+    async function moveCategoryOrder(categoryId, direction, e) {
+      if (e) e.stopPropagation();
+      const cat = categories.find(c => c.id === categoryId);
+      if (!cat) return;
+      const siblings = categories.filter(c => String(c.parentId || '') === String(cat.parentId || ''))
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+      const idx = siblings.findIndex(c => c.id === categoryId);
+      const swapIdx = idx + direction;
+      if (swapIdx < 0 || swapIdx >= siblings.length) return;
+      const other = siblings[swapIdx];
+      const catOrder = cat.sortOrder || 0, otherOrder = other.sortOrder || 0;
+      cat.sortOrder = otherOrder; other.sortOrder = catOrder;
+      render();
+      try {
+        await callApi('reorder_categories', { items: [{ id: cat.id, sortOrder: cat.sortOrder }, { id: other.id, sortOrder: other.sortOrder }] });
+        saveCatalogCache();
+      } catch (err) {
+        console.error(err);
+        cat.sortOrder = catOrder; other.sortOrder = otherOrder;
+        render();
+        alert(tr('❌ Tartibni saqlab bo\'lmadi: ', '❌ Не удалось сохранить порядок: ') + (err.message || err));
+      }
+    }
+
+    // 2.7: duplicate tovarlarni ANIQLASH (auto-merge yo'q — spec buni keyinga
+    // qoldirishga ruxsat beradi: "Automatic merge qilmay turish mumkin").
+    // excel-import.js'ning ichki (lazy-load qilinadigan, eksport qilinmagan)
+    // Levenshtein funksiyasiga bog'lanmaslik uchun mustaqil kichik nusxa.
+    function productNameSimilarity(a, b) {
+      const an = normalizeText(a || '').latin, bn = normalizeText(b || '').latin;
+      if (an === bn) return 1;
+      const len = Math.max(an.length, bn.length, 1);
+      const prev = Array.from({ length: bn.length + 1 }, (_, i) => i);
+      const cur = new Array(bn.length + 1);
+      for (let i = 1; i <= an.length; i++) {
+        cur[0] = i;
+        for (let j = 1; j <= bn.length; j++) cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + (an[i - 1] === bn[j - 1] ? 0 : 1));
+        for (let j = 0; j <= bn.length; j++) prev[j] = cur[j];
+      }
+      return 1 - prev[bn.length] / len;
+    }
+    function findDuplicateProductCandidates() {
+      const active = products.filter(p => p.status !== 'DELETED');
+      const pairs = [];
+      for (let i = 0; i < active.length; i++) {
+        for (let j = i + 1; j < active.length; j++) {
+          const a = active[i], b = active[j];
+          if (a.categoryId !== b.categoryId) continue;
+          const score = productNameSimilarity(a.name, b.name);
+          if (score >= 0.82) pairs.push({ a, b, score });
+        }
+      }
+      pairs.sort((x, y) => y.score - x.score);
+      return pairs.slice(0, 50);
+    }
+    function openDuplicateProductsModal() {
+      activePopupModal = 'DUPLICATE_PRODUCTS';
+      render();
+    }
+
+    // 2.5: Chiqindi (trash) ko'rinishi.
+    async function openTrashModal() {
+      trashBatches = null;
+      activePopupModal = 'TRASH';
+      render();
+      try {
+        const result = await callApi('get_trash', {});
+        trashBatches = result.batches || [];
+      } catch (e) {
+        console.error(e);
+        trashBatches = [];
+      }
+      if (activePopupModal === 'TRASH') renderModalContainer();
+    }
+    async function restoreTrashBatch(batchId) {
+      showActionToast(tr('⏳ Tiklanmoqda...', '⏳ Восстановление...'), 'saving');
+      try {
+        await callApi('restore_trash_batch', { batchId });
+        await loadCatalog();
+        if (trashBatches) trashBatches = trashBatches.filter(b => b.id !== batchId);
+        render();
+        showActionToast(tr('✅ Tiklandi', '✅ Восстановлено'), 'success', 1500);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Tiklanmadi', '❌ Не восстановлено'), 'error', 1800);
+        alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
       }
     }
 
@@ -3963,7 +4837,7 @@
       catalogLoading = true;
       const [prodRes, catRes] = await Promise.all([
         sb.from('products').select('id,sku,name,name_ru,price,old_price,stock,category_id,status,img,description,description_ru,is_featured,sort_order,sizes,variants,sold_count,created_at,import_batch_id').neq('status', 'DELETED').order('sort_order', { ascending: true }),
-        sb.from('categories').select('id,name,name_ru,parent_id,img')
+        sb.from('categories').select('id,name,name_ru,parent_id,img,sort_order').is('deleted_at', null).order('sort_order', { ascending: true })
       ]);
       if (prodRes.error) throw prodRes.error;
       if (catRes.error) throw catRes.error;
@@ -4008,8 +4882,11 @@
           isWarned: !!bootData.isWarned, warnReason: bootData.warnReason || null,
         };
         shopLogoUrl = bootData.logoUrl || null;
+        botUsername = bootData.botUsername || null;
         shopContact = bootData.shopContact || { address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null };
         fulfillmentConfig = commerce.normalizeConfig(bootData.fulfillmentConfig, TOP_LEVEL_REGION_IDS);
+        designSettings = bootData.designSettings || { themeId: 'minimal', colors: {} };
+        applyDesignColors(designSettings.colors);
         if (bootData.profile?.phone) {
           registeredUser = { firstName: bootData.profile.firstName || '', lastName: bootData.profile.lastName || '', phone: bootData.profile.phone };
           currentUser.firstName = registeredUser.firstName; currentUser.lastName = registeredUser.lastName; currentUser.phone = registeredUser.phone;

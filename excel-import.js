@@ -459,10 +459,12 @@
       }
       catCols.sort((a,b)=>a.depth-b.depth);
       if(!pathCol&&!catCols.length)throw new Error(xl("Katalog yo'li yoki eski Bosh katalog / Katalog1 ustunlari topilmadi","Не найден столбец Katalog yo'li или старые Bosh katalog / Katalog1"));
+      // 3.6: Excel'da endi manual RU ustunlari o'qilmaydi (bo'lsa ham e'tiborsiz
+      // qoldiriladi) — RU tarjimasi importdan keyin serverda avtomatik bajariladi.
       const cols={
-        name:findCol('Tovar nomi'), nameRu:findCol('Tovar nomi RU (ixtiyoriy)','Tovar nomi RU'),
+        name:findCol('Tovar nomi'), nameRu:null,
         price:findCol('Tovar narxi','Narxi'), oldPrice:findCol('Eski narxi'), stock:findCol('Soni'),
-        desc:findCol('Izohi','Izoh'), descRu:findCol('Izohi RU (ixtiyoriy)','Izohi RU','Izoh RU'),
+        desc:findCol('Izohi','Izoh'), descRu:null,
         size:findCol("O'lchami","O‘lchami"), color:findCol('Rang')
       };
       if(!cols.name||!cols.price)throw new Error(xl('Tovar nomi yoki Tovar narxi ustuni topilmadi','Не найден столбец названия или цены товара'));
