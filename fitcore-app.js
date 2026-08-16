@@ -319,6 +319,11 @@
     let checkoutReceiptFile = null;
     let checkoutReceiptPreparing = null;
     let checkoutReceiptPreviewUrl = null; // 1.8: local preview uchun object URL
+    // 8-bo'lim: preview asl native File'dan uzoq yashaydigan object URL bo'lib
+    // qolmasligi uchun — capture muvaffaqiyatli bo'lgach detached Blob'dan
+    // yangilanadi. Bu versiya tez-tez qayta tanlashda eski (sekin) capture'ning
+    // yangi tanlovni bosib yubormasligini kafolatlaydi.
+    let checkoutReceiptSelectionVersion = 0;
     // 1.14: BTS/EMU filial tanlash — mijoz qo'lda manzil yozmaydi.
     let checkoutBranches = [];
     let checkoutBranchesLoading = false;
@@ -846,7 +851,11 @@
         const img = new Image();
         const url = URL.createObjectURL(blob);
         img.onload = () => resolve({ source: img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, close: () => URL.revokeObjectURL(url) });
-        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image_decode_failed')); };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          imageIO.logStage('DECODE_FAILED', { mime: blob?.type, size: blob?.size, level: 'warn' });
+          reject(new Error('image_decode_failed'));
+        };
         img.src = url;
       });
     }
@@ -898,6 +907,7 @@
           decoded.close?.();
         }
       } catch (_) {
+        imageIO.logStage('COMPRESS_FAILED', { mime: file?.type, size: file?.size, message: _?.message, level: 'warn' });
         return file;
       }
     }
@@ -980,6 +990,7 @@
     async function onImagePicked(event, previewId, buttonId, urlInputId, errorId) {
       const file = event.target.files?.[0];
       if (!file) return;
+      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
 
       try { validatePickedImageFile(file); }
       catch (e) {
@@ -1017,21 +1028,34 @@
 
       let preparing;
       preparing = readBlobAsArrayBuffer(file).then(bytes => {
-        const detached = makeDetachedImageFile(bytes, file);
+        let detached;
+        try {
+          detached = makeDetachedImageFile(bytes, file);
+        } catch (detachErr) {
+          imageIO.logStage('DETACH_FAILED', { mime: file?.type, size: file?.size, message: detachErr?.message, level: 'error' });
+          throw imageIO.stageError('DETACH_FAILED', 'detach_failed', detachErr);
+        }
+        // 8-bo'lim: preview yangilanishi (URL.createObjectURL) kosmetik —
+        // muvaffaqiyatsiz bo'lsa ham bu READ xatosi sifatida yuqoriga
+        // chiqmasin, o'qish+siqish bosqichi baribir davom etadi.
         if (selectionVersion === tempImageSelectionVersion && tempImagePreparingPromise === preparing) {
-          tempImageFile = detached;
-          const stablePreviewUrl = URL.createObjectURL(detached);
-          const oldPreviewUrl = tempImagePreviewUrl;
-          tempImagePreviewUrl = stablePreviewUrl;
-          if (prev) { prev.src = stablePreviewUrl; prev.classList.remove('hidden'); }
-          if (oldPreviewUrl && oldPreviewUrl !== stablePreviewUrl && oldPreviewUrl.startsWith('blob:')) {
-            try { URL.revokeObjectURL(oldPreviewUrl); } catch (_) {}
+          try {
+            tempImageFile = detached;
+            const stablePreviewUrl = URL.createObjectURL(detached);
+            const oldPreviewUrl = tempImagePreviewUrl;
+            tempImagePreviewUrl = stablePreviewUrl;
+            if (prev) { prev.src = stablePreviewUrl; prev.classList.remove('hidden'); }
+            if (oldPreviewUrl && oldPreviewUrl !== stablePreviewUrl && oldPreviewUrl.startsWith('blob:')) {
+              try { URL.revokeObjectURL(oldPreviewUrl); } catch (_) {}
+            }
+          } catch (previewErr) {
+            imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
           }
         }
         return compressImageToLimit(detached, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8);
       }).catch(error => {
         const wrapped = new Error(tr("Rasm faylini lokal o'qishda xato.", "Ошибка локального чтения изображения."));
-        wrapped.code = 'READ_ORIGINAL_FAILED';
+        wrapped.code = error?.code === 'DETACH_FAILED' ? 'DETACH_FAILED' : (error?.stage || 'READ_BOTH_FAILED');
         wrapped.cause = error;
         throw wrapped;
       });
@@ -1079,6 +1103,7 @@
 
     async function uploadImageSnapshot(snapshot, existingImg, strict = false) {
       if (!snapshot || (!snapshot.file && !snapshot.preparing)) return existingImg || null;
+      const pipelineStartedAt = Date.now();
       let prepared;
       try {
         prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file;
@@ -1088,16 +1113,19 @@
         return existingImg || null;
       }
       if (!prepared) return existingImg || null;
+      imageIO.logStage('PREPARED_OK', { mime: prepared.type, size: prepared.size, duration: Date.now() - pipelineStartedAt });
 
       showActionToast(tr("☁️ Rasm yuklanmoqda...", "☁️ Фото загружается..."), 'saving');
       const mimeType = String(prepared.type || '').toLowerCase();
       if (!SUPPORTED_IMAGE_MIME.has(mimeType)) {
         const err = new Error('invalid_image_type');
+        imageIO.logStage('FINAL_SIZE_FAILED', { mime: mimeType, message: 'invalid_image_type', level: 'warn' });
         if (strict) throw err;
         return existingImg || null;
       }
       if (prepared.size > MAX_STORED_IMAGE_BYTES) {
         const err = new Error('image_too_large');
+        imageIO.logStage('FINAL_SIZE_FAILED', { size: prepared.size, message: 'image_too_large', level: 'warn' });
         if (strict) throw err;
         return existingImg || null;
       }
@@ -1107,29 +1135,36 @@
       // chetlab o'tadi va productionda kuzatilgan intermittent direct-upload
       // xatosining asosiy transport yo'lini yo'q qiladi.
       let serverErr = null;
+      const serverUploadStartedAt = Date.now();
       try {
         const imageUpload = { mimeType, base64: await fileToBase64(prepared) };
         const result = await callApi('upload_product_image', { imageUpload });
         if (!result?.url) throw new Error('image_public_url_failed');
+        imageIO.logStage('SERVER_UPLOAD_OK', { duration: Date.now() - serverUploadStartedAt, size: prepared.size });
         return result.url;
       } catch (e) {
         serverErr = e;
         console.warn('[image:SERVER_UPLOAD_FAILED]', e);
+        imageIO.logStage('SERVER_UPLOAD_FAILED', { duration: Date.now() - serverUploadStartedAt, name: e?.name, message: e?.message, level: 'warn' });
       }
 
       // FALLBACK: server transport vaqtincha ishlamasa signed Storage URL.
       // Bir xil transportni qayta urish emas — bu mustaqil ikkinchi yo'l.
       const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
       const ext = extByMime[mimeType] || 'jpg';
+      const fallbackUploadStartedAt = Date.now();
       try {
         const { path, token } = await callApi('get_upload_url', { ext, size: prepared.size, mimeType });
         const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
         if (upErr) throw upErr;
         const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
         if (!pub?.publicUrl) throw new Error('image_public_url_failed');
+        imageIO.logStage('SIGNED_URL_UPLOAD_OK', { duration: Date.now() - fallbackUploadStartedAt });
         return pub.publicUrl;
       } catch (fallbackErr) {
         console.error('[image:DIRECT_UPLOAD_FALLBACK_FAILED]', { serverErr, fallbackErr });
+        imageIO.logStage('SIGNED_URL_UPLOAD_FAILED', { duration: Date.now() - fallbackUploadStartedAt, name: fallbackErr?.name, message: fallbackErr?.message, level: 'error' });
+        imageIO.logStage('UPLOAD_ALL_FAILED', { duration: Date.now() - pipelineStartedAt, level: 'error' });
         if (strict) throw serverErr || fallbackErr || new Error('image_upload_failed');
         return existingImg || null;
       }
@@ -1610,6 +1645,7 @@
     }
 
     function clearCheckoutReceipt() {
+      checkoutReceiptSelectionVersion += 1;
       if (checkoutReceiptPreviewUrl) URL.revokeObjectURL(checkoutReceiptPreviewUrl);
       checkoutReceiptFile = null;
       checkoutReceiptPreparing = null;
@@ -1953,16 +1989,38 @@
     async function onCheckoutReceiptPicked(event) {
       const file = event.target.files?.[0];
       if (!file) return;
+      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
         event.target.value = '';
         return alert(tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
       }
       // 1.11: baytlar tanlangan zahoti mustaqil nusxalanadi — vaqtinchalik File
       // obyektiga (event.target orqali) keyin ishonilmaydi.
+      const selectionVersion = ++checkoutReceiptSelectionVersion;
       checkoutReceiptFile = file;
-      checkoutReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => makeDetachedImageFile(bytes, file)).then(detached => compressImageToLimit(detached, MAX_RECEIPT_BYTES, 1600, 0.85));
-      if (checkoutReceiptPreviewUrl) URL.revokeObjectURL(checkoutReceiptPreviewUrl);
+      if (checkoutReceiptPreviewUrl) { try { URL.revokeObjectURL(checkoutReceiptPreviewUrl); } catch (_) {} }
       checkoutReceiptPreviewUrl = URL.createObjectURL(file);
+      checkoutReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => {
+        const detached = makeDetachedImageFile(bytes, file);
+        // 8-bo'lim: preview endi asl native File emas, mustaqil detached
+        // Blob'dan — Telegram WebView keyinroq asl handle'ni yaroqsiz qilib
+        // qo'ysa ham preview buzilib qolmaydi (bu chekda avval yo'q edi,
+        // boshqa barcha rasm oqimlarida allaqachon bor edi).
+        if (selectionVersion === checkoutReceiptSelectionVersion) {
+          try {
+            const stableUrl = URL.createObjectURL(detached);
+            const oldUrl = checkoutReceiptPreviewUrl;
+            checkoutReceiptPreviewUrl = stableUrl;
+            rerenderReceiptPicker();
+            if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) {
+              try { URL.revokeObjectURL(oldUrl); } catch (_) {}
+            }
+          } catch (previewErr) {
+            imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
+          }
+        }
+        return detached;
+      }).then(detached => compressImageToLimit(detached, MAX_RECEIPT_BYTES, 1600, 0.85));
       rerenderReceiptPicker();
     }
 
@@ -3096,6 +3154,7 @@
     async function saveShopLogoFromPicker(event) {
       const file = event.target.files?.[0];
       if (!file) return;
+      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
       try { validatePickedImageFile(file); }
       catch (e) {
         event.target.value = '';
