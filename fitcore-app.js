@@ -121,6 +121,23 @@
     const TOP_LEVEL_REGION_IDS = TOP_LEVEL_REGIONS.map(region => region.id);
     const imageIO = window.FitcoreImageIO;
     const commerce = window.FitcoreCommerce;
+    const SUPPORTED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    const MAX_ORIGINAL_IMAGE_BYTES = 15 * 1024 * 1024;
+    const MAX_STORED_IMAGE_BYTES = 5 * 1024 * 1024;
+    // Server-first upload Telegram WebView'da direct Storage fetch'ga qaraganda barqarorroq.
+    // Base64 request'ni kichik saqlash uchun local rasmlarni imkon qadar 2MB ostiga siqamiz.
+    const TARGET_PRODUCT_IMAGE_BYTES = 2 * 1024 * 1024;
+    const MAX_RECEIPT_BYTES = 6 * 1024 * 1024;
+
+    function validatePickedImageFile(file, maxOriginalBytes = MAX_ORIGINAL_IMAGE_BYTES) {
+      if (!file || !SUPPORTED_IMAGE_MIME.has(String(file.type || '').toLowerCase())) {
+        throw new Error('invalid_image_type');
+      }
+      if (!Number.isFinite(file.size) || file.size <= 0 || file.size > maxOriginalBytes) {
+        throw new Error('image_too_large');
+      }
+      return true;
+    }
 
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
@@ -331,6 +348,11 @@
     let moveCategoryId = null;
     let moveCategoryTargetId = '';
     let trashBatches = null;
+    let bulkProductSelectMode = false;
+    const bulkSelectedProductIds = new Set();
+    let bulkMoveTargetCategoryId = '';
+    let dashboardLiteData = null;
+    let dashboardLiteLoading = false;
 
     // Rasm yuklash uchun: haqiqiy fayl (Storage'ga yuklanadi) va preview (faqat ko'rsatish uchun)
     let tempImageFile = null;
@@ -438,6 +460,7 @@
     function toggleUiLang() {
       uiLang = uiLang === 'uz' ? 'ru' : 'uz';
       localStorage.setItem('uiLang', uiLang);
+      document.documentElement.lang = uiLang;
       render();
     }
     // Admin kiritgan tovar nomi/tavsifi — ruscha tarjimasi bo'lsa va til
@@ -879,6 +902,21 @@
       }
     }
 
+    async function compressImageToLimit(file, maxBytes, maxDim = 1000, quality = 0.8) {
+      if (!file) return file;
+      const dims = Array.from(new Set([maxDim, Math.min(maxDim, 1200), Math.min(maxDim, 900), Math.min(maxDim, 720), Math.min(maxDim, 600)]))
+        .filter((n) => Number(n) > 0)
+        .sort((a, b) => b - a);
+      const qualities = [quality, Math.min(quality, 0.75), 0.65, 0.55, 0.48];
+      let best = file;
+      for (let i = 0; i < dims.length; i++) {
+        const candidate = await compressImage(file, dims[i], qualities[Math.min(i, qualities.length - 1)]);
+        if (candidate && (!best || candidate.size < best.size)) best = candidate;
+        if (candidate && candidate.size <= maxBytes) return candidate;
+      }
+      return best;
+    }
+
     function validateExternalImageUrl(value) {
       const raw = String(value || '').trim();
       if (!raw) return null;
@@ -943,14 +981,13 @@
       const file = event.target.files?.[0];
       if (!file) return;
 
-      if (!file.type.startsWith('image/')) {
-        alert(tr("⚠️ Faqat rasm fayllarini tanlang!", "⚠️ Выберите файл изображения!"));
+      try { validatePickedImageFile(file); }
+      catch (e) {
         event.target.value = '';
-        return;
-      }
-      if (file.size > 15 * 1024 * 1024) {
-        alert(tr("⚠️ Rasm hajmi 15MB dan oshmasligi kerak!", "⚠️ Размер изображения не должен превышать 15 МБ!"));
-        event.target.value = '';
+        const msg = String(e?.message || e) === 'invalid_image_type'
+          ? tr('⚠️ Faqat JPG/JPEG, PNG yoki WebP rasm tanlang!', '⚠️ Выберите JPG/JPEG, PNG или WebP!')
+          : tr('⚠️ Original rasm hajmi 15MB dan oshmasligi kerak!', '⚠️ Исходное изображение не должно превышать 15 МБ!');
+        alert(msg);
         return;
       }
 
@@ -991,7 +1028,7 @@
             try { URL.revokeObjectURL(oldPreviewUrl); } catch (_) {}
           }
         }
-        return compressImage(detached, 1000, 0.8);
+        return compressImageToLimit(detached, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8);
       }).catch(error => {
         const wrapped = new Error(tr("Rasm faylini lokal o'qishda xato.", "Ошибка локального чтения изображения."));
         wrapped.code = 'READ_ORIGINAL_FAILED';
@@ -1006,14 +1043,12 @@
       return imageIO.blobToBase64(file);
     }
 
-    // 5.1/5.5: mahsulot rasmi endi kategoriya/logotip bilan bir xil pipeline
-    // orqali (uploadImageSnapshot — to'g'ridan-to'g'ri Storage'ga signed URL
-    // orqali binary yuklash) yuboriladi, base64-JSON orqali emas — bu ~33%
-    // katta payload va ikki tomonlama encode/decode'ni olib tashlaydi (5.5
-    // ning sekinlik sababi shu edi). uploadImageSnapshot o'zi ham baytlarni
-    // o'qish/tayyorlash bosqichidagi xatoni ushlaydi (strict=false bo'lsa hech
-    // qachon throw qilmaydi) — shuning uchun rasm xatosi requireImage=false
-    // holatlarda (yangi mahsulot) matn ma'lumotlarini yo'qotmaydi.
+    // Mahsulot/kategoriya/logotip bitta pipeline'da: local baytlar darhol
+    // detached nusxaga olinadi va kichraytiriladi. Telegram WebView'da direct
+    // Storage fetch oldingi production testda beqaror bo'lgani uchun PRIMARY
+    // transport app-api server upload. U ishlamasa signed Storage URL fallback.
+    // Admin local rasm tanlagan bo'lsa requireImage=true ishlaydi:
+    // upload xatosi mahsulotni jim rasmsiz saqlab yubormaydi.
     async function productImagePayloadFromSnapshot(snapshot, requireImage = false) {
       if (snapshot?.file || snapshot?.preparing) {
         const uploadedUrl = await uploadImageSnapshot(snapshot, null, requireImage);
@@ -1055,22 +1090,49 @@
       if (!prepared) return existingImg || null;
 
       showActionToast(tr("☁️ Rasm yuklanmoqda...", "☁️ Фото загружается..."), 'saving');
-      const ext = (prepared.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-      let lastErr = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const { path, token } = await callApi('get_upload_url', { ext });
-          const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
-          if (upErr) throw upErr;
-          const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
-          return pub?.publicUrl || existingImg || null;
-        } catch (e) {
-          lastErr = e;
-          console.error(`[image:UPLOAD_FAILED] Rasm yuklash xatosi (${attempt + 1}-urinish):`, e);
-        }
+      const mimeType = String(prepared.type || '').toLowerCase();
+      if (!SUPPORTED_IMAGE_MIME.has(mimeType)) {
+        const err = new Error('invalid_image_type');
+        if (strict) throw err;
+        return existingImg || null;
       }
-      if (strict) throw lastErr || new Error('image_upload_failed');
-      return existingImg || null;
+      if (prepared.size > MAX_STORED_IMAGE_BYTES) {
+        const err = new Error('image_too_large');
+        if (strict) throw err;
+        return existingImg || null;
+      }
+
+      // PRIMARY: prepared detached bytes -> authenticated app-api -> Storage.
+      // Bu browser/WebView'dan Supabase Storage endpoint'iga bevosita fetch'ni
+      // chetlab o'tadi va productionda kuzatilgan intermittent direct-upload
+      // xatosining asosiy transport yo'lini yo'q qiladi.
+      let serverErr = null;
+      try {
+        const imageUpload = { mimeType, base64: await fileToBase64(prepared) };
+        const result = await callApi('upload_product_image', { imageUpload });
+        if (!result?.url) throw new Error('image_public_url_failed');
+        return result.url;
+      } catch (e) {
+        serverErr = e;
+        console.warn('[image:SERVER_UPLOAD_FAILED]', e);
+      }
+
+      // FALLBACK: server transport vaqtincha ishlamasa signed Storage URL.
+      // Bir xil transportni qayta urish emas — bu mustaqil ikkinchi yo'l.
+      const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+      const ext = extByMime[mimeType] || 'jpg';
+      try {
+        const { path, token } = await callApi('get_upload_url', { ext, size: prepared.size, mimeType });
+        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
+        if (upErr) throw upErr;
+        const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
+        if (!pub?.publicUrl) throw new Error('image_public_url_failed');
+        return pub.publicUrl;
+      } catch (fallbackErr) {
+        console.error('[image:DIRECT_UPLOAD_FALLBACK_FAILED]', { serverErr, fallbackErr });
+        if (strict) throw serverErr || fallbackErr || new Error('image_upload_failed');
+        return existingImg || null;
+      }
     }
 
     // Eski chaqiruvlar uchun wrapper.
@@ -1101,7 +1163,7 @@
         else { logoImg.classList.add('hidden'); }
       }
       const flagBtn = document.getElementById('lang-flag-btn');
-      if (flagBtn) flagBtn.innerText = uiLang === 'uz' ? '🇺🇿' : '🇷🇺';
+      if (flagBtn) flagBtn.innerText = uiLang === 'uz' ? '🇷🇺' : '🇺🇿';
       const cartBtn = document.getElementById('header-cart-btn');
       if (cartBtn) cartBtn.classList.toggle('hidden', isAdminMode && isUserAnAdmin);
     }
@@ -1213,9 +1275,12 @@
       const variantSizes = [...new Set(vars.map(v => v.size).filter(Boolean))];
       const variantColors = [...new Set(vars.map(v => v.color).filter(Boolean))];
       const hasDiscount = p.oldPrice && p.oldPrice > p.price;
+      const bulkSelecting = isAdminMode && isUserAnAdmin && bulkProductSelectMode;
+      const cardClick = bulkSelecting ? `toggleBulkProductSelection('${p.id}', event)` : `openProductDetailModal('${p.id}')`;
 
       return `
-        <div onclick="openProductDetailModal('${p.id}')" class="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex flex-col justify-between relative cursor-pointer hover:shadow-md transition-all">
+        <div data-product-card-id="${escapeHtml(p.id)}" onclick="${cardClick}" class="bg-white rounded-2xl p-3 shadow-sm border ${bulkSelecting && bulkSelectedProductIds.has(String(p.id)) ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-100'} flex flex-col justify-between relative cursor-pointer hover:shadow-md transition-all">
+          ${bulkSelecting ? `<div class="absolute top-2 left-2 z-10 w-7 h-7 rounded-full flex items-center justify-center font-black ${bulkSelectedProductIds.has(String(p.id)) ? 'bg-blue-600 text-white' : 'bg-white/95 text-gray-400 border'}">${bulkSelectedProductIds.has(String(p.id)) ? '✓' : '○'}</div>` : ''}
           <div>
             <div class="relative">
               <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-full h-28 object-cover rounded-xl mb-2" loading="lazy">
@@ -1240,7 +1305,7 @@
           </div>
 
           <!-- ADMIN CONTROLS -->
-          ${(isAdminMode && isUserAnAdmin) ? `
+          ${(isAdminMode && isUserAnAdmin && !bulkSelecting) ? `
             <div class="mt-2 pt-2 border-t flex flex-col space-y-1" onclick="event.stopPropagation()">
               <div class="flex justify-between items-center text-[10px]">
                 <button onclick="moveProductSort('${p.id}', -1)" ${idx === 0 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬆️</button>
@@ -1314,13 +1379,14 @@
               <button onclick="openExcelImportModal()" class="w-full bg-slate-800 text-white font-bold py-1.5 rounded-xl text-xs">${tr("📊 Excel orqali ko'p tovar qo'shish", "📊 Массовый импорт из Excel")}</button>
               <button onclick="openTrashModal()" class="w-full bg-white border text-gray-600 font-bold py-1.5 rounded-xl text-xs">🗑️ ${tr("Chiqindi (24 soat)", "Корзина (24 часа)")}</button>
               <button onclick="openDuplicateProductsModal()" class="w-full bg-white border text-gray-600 font-bold py-1.5 rounded-xl text-xs">🧭 ${tr("Duplicate tovarlarni tekshirish", "Проверить дубликаты товаров")}</button>
+              <button onclick="toggleBulkProductSelectMode()" class="w-full ${bulkProductSelectMode ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'} font-bold py-1.5 rounded-xl text-xs">☑️ ${bulkProductSelectMode ? tr('Tanlashni tugatish','Завершить выбор') : tr('Tovarlarni tanlash','Выбрать товары')}</button>
             ` : ''}
           </div>
 
           <!-- SUBCATEGORIES LIST -->
           <div class="space-y-2">
             ${subCats.map((sub, subIdx) => `
-              <div onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="bg-white p-3.5 rounded-2xl border flex items-center justify-between shadow-sm cursor-pointer hover:bg-gray-50">
+              <div data-category-row-id="${sub.id}" onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="bg-white p-3.5 rounded-2xl border flex items-center justify-between shadow-sm cursor-pointer hover:bg-gray-50">
                 <div class="flex items-center space-x-3">
                   ${sub.img && (sub.img.startsWith('http') || sub.img.startsWith('data:')) ?
                     `<img src="${escapeHtml(sub.img)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-8 h-8 object-cover rounded-lg" loading="lazy">` :
@@ -1353,8 +1419,9 @@
               <h4 class="font-bold text-xs text-gray-500 uppercase">${tr("📦 Tovarlar", "📦 Товары")} (${catProds.length})</h4>
               <div class="flex gap-1">
                 ${catProdsRaw.length > 0 ? `
+                  ${bulkProductSelectMode ? `<button onclick="selectAllVisibleProducts()" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700">${tr('Barchasini tanlash','Выбрать все')}</button>` : ''}
                   <button onclick="openCategoryFilterModal()" class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${filterActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
-                    🔍 Filtr${filterActive ? ' •' : ''}
+                    🔍 ${tr('Filtr','Фильтр')}${filterActive ? ' •' : ''}
                   </button>
                 ` : ''}
               </div>
@@ -1362,6 +1429,8 @@
             <div class="grid grid-cols-2 gap-3">
               ${paginatedProds.map((p, idx) => renderProductCardHTML(p, idx, paginatedProds.length)).join('')}
             </div>
+
+            ${bulkProductSelectMode ? `<div class="sticky bottom-20 z-30 bg-slate-900 text-white rounded-2xl p-2.5 shadow-xl flex flex-wrap items-center gap-2"><b class="text-xs flex-1 min-w-[90px]">${bulkSelectedProductIds.size} ${tr('ta tanlandi','выбрано')}</b><button onclick="openBulkMoveProductsModal()" ${bulkSelectedProductIds.size ? '' : 'disabled'} class="px-3 py-2 rounded-xl bg-blue-600 disabled:opacity-40 text-[11px] font-bold">📁 ${tr('Ko‘chirish','Переместить')}</button><button onclick="bulkTrashSelectedProducts()" ${bulkSelectedProductIds.size ? '' : 'disabled'} class="px-3 py-2 rounded-xl bg-red-600 disabled:opacity-40 text-[11px] font-bold">🗑 ${tr('Chiqindiga','В корзину')}</button><button onclick="clearBulkProductSelection()" class="px-3 py-2 rounded-xl bg-white/10 text-[11px] font-bold">✕</button></div>` : ''}
 
             ${totalPages > 1 ? `
               <div class="flex justify-center items-center space-x-2 pt-4">
@@ -1853,7 +1922,7 @@
       const payWrap = document.getElementById('pay-method-wrap');
       if (payWrap) payWrap.innerHTML = paymentOptions.length ? paymentOptions.map(method => `
         <button type="button" onclick="selectPayment('${method.id}')" class="p-2.5 border rounded-xl font-bold text-xs ${method.id === selectedPayMethod ? 'border-blue-600 bg-blue-50 text-blue-700' : 'bg-white text-gray-700'}">
-          ${method.id === 'CASH' ? '💵' : '💳'} ${escapeHtml(method.name)}
+          ${method.id === 'CASH' ? '💵' : '💳'} ${escapeHtml(method.id === 'CASH' ? tr('Naqd','Наличные') : method.id === 'CARD' ? tr('Karta orqali','Картой') : method.name)}
         </button>`).join('') : `<div class="col-span-2 bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl font-bold">${tr("Bu hudud uchun to'lov usuli yoqilmagan.", 'Для этого региона способы оплаты не настроены.')}</div>`;
 
       const cardDetails = document.getElementById('card-payment-details');
@@ -1891,7 +1960,7 @@
       // 1.11: baytlar tanlangan zahoti mustaqil nusxalanadi — vaqtinchalik File
       // obyektiga (event.target orqali) keyin ishonilmaydi.
       checkoutReceiptFile = file;
-      checkoutReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => makeDetachedImageFile(bytes, file)).then(detached => compressImage(detached, 1600, 0.85));
+      checkoutReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => makeDetachedImageFile(bytes, file)).then(detached => compressImageToLimit(detached, MAX_RECEIPT_BYTES, 1600, 0.85));
       if (checkoutReceiptPreviewUrl) URL.revokeObjectURL(checkoutReceiptPreviewUrl);
       checkoutReceiptPreviewUrl = URL.createObjectURL(file);
       rerenderReceiptPicker();
@@ -2232,7 +2301,7 @@
         <div class="space-y-4">
           <div class="flex items-center justify-between gap-2">
             <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
-            <div class="flex gap-1"><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${getMissingImageProducts().length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly?'bg-blue-600 text-white':'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz','Импорт без фото')} (${products.filter(p=>p.status!=='DELETED'&&!hasProductImage(p)&&p.importBatchId).length})</button></div>
+            <div class="flex gap-1"><button onclick="openDashboardLite()" class="px-2 py-1.5 rounded-xl text-[10px] font-bold bg-slate-900 text-white">📊 ${tr('Hisobot','Отчёт')}</button><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${getMissingImageProducts().length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly?'bg-blue-600 text-white':'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz','Импорт без фото')} (${products.filter(p=>p.status!=='DELETED'&&!hasProductImage(p)&&p.importBatchId).length})</button></div>
           </div>
 
           <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
@@ -2739,14 +2808,14 @@
 
     function renderPaymentMethodSettings(method) {
       return `<div class="border rounded-2xl p-3 space-y-3">
-        <label class="flex items-center justify-between font-black"><span>${method.id === 'CASH' ? '💵' : '💳'} ${escapeHtml(method.name)}</span><input type="checkbox" ${method.enabled ? 'checked' : ''} onchange="setPaymentMethodEnabled('${method.id}',this.checked)"></label>
+        <label class="flex items-center justify-between font-black"><span>${method.id === 'CASH' ? '💵' : '💳'} ${escapeHtml(method.id === 'CASH' ? tr('Naqd','Наличные') : method.id === 'CARD' ? tr('Karta orqali','Картой') : method.name)}</span><input type="checkbox" ${method.enabled ? 'checked' : ''} onchange="setPaymentMethodEnabled('${method.id}',this.checked)"></label>
         ${method.enabled ? `${method.id === 'CARD' ? `<div class="bg-blue-50 border border-blue-200 p-3 rounded-xl space-y-2"><input type="text" value="${escapeHtml(method.cardNumber || '')}" oninput="setCardSetting('cardNumber',this.value)" placeholder="8600 0000 0000 0000" class="w-full p-2 border rounded-xl font-mono"><input type="text" value="${escapeHtml(method.cardHolder || '')}" oninput="setCardSetting('cardHolder',this.value)" placeholder="${tr('Karta egasi','Владелец карты')}" class="w-full p-2 border rounded-xl"><label class="flex items-center gap-2 font-bold"><input type="checkbox" ${method.receiptRequired ? 'checked' : ''} onchange="setCardSetting('receiptRequired',this.checked)">${tr('Chek yuklash majburiy','Загрузка чека обязательна')}</label><p class="text-[10px] text-blue-700">${tr('Faqat xaridorga ko‘rsatiladigan karta raqami va egasi. CVV/PIN/SMS saqlanmaydi.','Только номер и владелец карты для показа покупателю. CVV/PIN/SMS не сохраняются.')}</p></div>` : ''}${settingsBulkButtons(`bulkPaymentRegions('${method.id}',true)`, `bulkPaymentRegions('${method.id}',false)`)}<div class="space-y-2">${TOP_LEVEL_REGIONS.map(region => `<label class="flex items-center justify-between border rounded-xl p-2.5 font-bold"><span>${escapeHtml(uiLang === 'ru' ? region.nameRu : region.nameUz)}</span><input type="checkbox" ${method.regions[region.id]?.enabled ? 'checked' : ''} onchange="setPaymentRegionEnabled('${method.id}','${encodedRegionId(region.id)}',this.checked)"></label>`).join('')}</div>` : ''}
       </div>`;
     }
 
     function renderFulfillmentDeliveryBody() {
       const kind = fulfillmentDeliveryKind;
-      if (kind === 'POST') return `<div class="space-y-3"><label class="flex items-center justify-between font-black"><span>${tr('Pochta orqali yetkazib berishni yoqish','Включить доставку почтой')}</span><input type="checkbox" ${fulfillmentDraft.delivery.post.enabled ? 'checked' : ''} onchange="setPostEnabled(this.checked)"></label><p class="text-[10px] text-gray-500">${tr('Filial datasetlari kiritilmagan; real filiallar uydirilmaydi. Provider/branch snapshot tayyor.','Датасеты филиалов не загружены; вымышленных филиалов нет. Структура provider/branch готова.')}</p>${fulfillmentDraft.delivery.post.enabled ? fulfillmentDraft.delivery.post.providers.map(renderPostProviderSettings).join('') : ''}</div>`;
+      if (kind === 'POST') return `<div class="space-y-3"><label class="flex items-center justify-between font-black"><span>${tr('Pochta orqali yetkazib berishni yoqish','Включить доставку почтой')}</span><input type="checkbox" ${fulfillmentDraft.delivery.post.enabled ? 'checked' : ''} onchange="setPostEnabled(this.checked)"></label><p class="text-[10px] text-gray-500">${tr('BTS va EMU filiallari bazadan olinadi: mijoz viloyat → tuman/shahar → provider → filialni tanlaydi.','Филиалы BTS и EMU берутся из базы: клиент выбирает регион → район/город → службу → отделение.')}</p>${fulfillmentDraft.delivery.post.enabled ? fulfillmentDraft.delivery.post.providers.map(renderPostProviderSettings).join('') : ''}</div>`;
       const key = DELIVERY_CONFIG_KEYS[kind], method = fulfillmentDraft.delivery[key];
       const descriptions = {
         FREE: tr('Tanlangan hududlarda checkoutda faqat bepul variant chiqadi.', 'В выбранных регионах появится бесплатный вариант.'),
@@ -2884,7 +2953,7 @@
                 ${(isUserAnAdmin && isAdminMode) ? `
                   <label class="cursor-pointer text-[10px] font-bold px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200" title="${tr("Logotip qo'shish/almashtirish","Добавить/заменить логотип")}">
                     🖼️
-                    <input type="file" accept="image/*" class="hidden" onchange="saveShopLogoFromPicker(event)">
+                    <input type="file" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="saveShopLogoFromPicker(event)">
                   </label>
                 ` : ''}
               </div>
@@ -2946,7 +3015,7 @@
 
           ${isUserAnAdmin ? `
             <button id="admin-role-toggle-btn" data-target-mode="${isAdminMode ? 'user' : 'admin'}" onclick="toggleAdminRole()" class="w-full p-4 rounded-2xl flex items-center justify-between font-bold shadow-md">
-              <span>${isAdminMode ? '👤 User rejimiga o\'tish' : '🛡️ Admin rejimiga o\'tish'}</span>
+              <span>${isAdminMode ? tr('👤 User rejimiga o\'tish','👤 Перейти в режим пользователя') : tr('🛡️ Admin rejimiga o\'tish','🛡️ Перейти в режим администратора')}</span>
               <i data-lucide="refresh-cw" class="w-5 h-5"></i>
             </button>
           ` : ''}
@@ -3017,30 +3086,23 @@
     // kabi bir xil barqaror pipeline: baytlar avval mustaqil nusxalanadi,
     // vaqtinchalik File obyektiga (upload tugagunicha) keyin ishonilmaydi.
     async function uploadImageFileQuiet(file, existingUrl) {
+      validatePickedImageFile(file);
       const bytes = await readBlobAsArrayBuffer(file);
       const detached = makeDetachedImageFile(bytes, file);
-      const prepared = await compressImage(detached, 1000, 0.8);
-      const ext = (prepared.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-      let lastErr = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const { path, token } = await callApi('get_upload_url', { ext });
-          const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
-          if (upErr) throw upErr;
-          const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
-          return pub?.publicUrl || existingUrl || null;
-        } catch (e) {
-          lastErr = e;
-        }
-      }
-      throw lastErr || new Error('image_upload_failed');
+      const prepared = await compressImageToLimit(detached, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8);
+      return uploadImageSnapshot({ file: prepared, preparing: Promise.resolve(prepared), url: null }, existingUrl, true);
     }
 
     async function saveShopLogoFromPicker(event) {
       const file = event.target.files?.[0];
       if (!file) return;
-      if (!file.type.startsWith('image/')) return alert(tr("⚠️ Faqat rasm faylini tanlang!", "⚠️ Выберите файл изображения!"));
-      if (file.size > 15 * 1024 * 1024) return alert(tr("⚠️ Rasm hajmi 15MB dan oshmasligi kerak!", "⚠️ Размер изображения не должен превышать 15 МБ!"));
+      try { validatePickedImageFile(file); }
+      catch (e) {
+        event.target.value = '';
+        return alert(String(e?.message || e) === 'invalid_image_type'
+          ? tr('⚠️ Faqat JPG/JPEG, PNG yoki WebP rasm tanlang!', '⚠️ Выберите JPG/JPEG, PNG или WebP!')
+          : tr('⚠️ Original rasm hajmi 15MB dan oshmasligi kerak!', '⚠️ Исходное изображение не должно превышать 15 МБ!'));
+      }
 
       // 5.3 root cause: bu picker boshqa barcha rasm oqimlaridan farqli
       // o'laroq, avval og'ir render()ni chaqirib, faqat keyin fayl baytlarini
@@ -3097,8 +3159,34 @@
     }
 
     // MODALS ENGINE
+    function closeAnyOpenModal() {
+      clearTempImageSelection();
+      activePopupModal = null;
+      selectedProductModal = null;
+      selectedOrderModal = null;
+      selectedCategoryModal = null;
+      selectedUserModal = null;
+      render();
+    }
+
+    function installModalEscapeHandlers() {
+      const container = document.getElementById('modal-container');
+      if (!container || container.dataset.escapeHandlers === '1') return;
+      container.dataset.escapeHandlers = '1';
+      container.addEventListener('click', (event) => {
+        const overlay = event.target;
+        if (overlay instanceof HTMLElement && overlay.parentElement === container && overlay.classList.contains('fixed')) {
+          closeAnyOpenModal();
+        }
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && container.innerHTML.trim()) closeAnyOpenModal();
+      });
+    }
+
     function renderModalContainer() {
       const container = document.getElementById('modal-container');
+      installModalEscapeHandlers();
 
       // REGISTRATION MODAL
       if (activePopupModal === 'REGISTRATION') {
@@ -3290,7 +3378,7 @@
               </div>
               <div>
                 <label class="font-bold text-gray-600">${tr("Katalog rasmi (Xotiradan yuklash):", "Изображение каталога (загрузить с устройства):")}</label>
-                <input type="file" accept="image/*" onchange="onImagePicked(event, 'm-cat-prev')" class="w-full mt-1 text-xs">
+                <input type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'm-cat-prev')" class="w-full mt-1 text-xs">
                 <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl mt-2 hidden border">
               </div>
               <div class="flex space-x-2 pt-2">
@@ -3315,7 +3403,7 @@
               </div>
               <div>
                 <label class="font-bold text-gray-600">${tr("Katalog rasmi (Xotiradan yuklash):", "Изображение каталога (загрузить с устройства):")}</label>
-                <input type="file" accept="image/*" onchange="onImagePicked(event, 'ec-img-prev')" class="w-full mt-1 text-xs">
+                <input type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'ec-img-prev')" class="w-full mt-1 text-xs">
                 <img id="ec-img-prev" src="${escapeHtml((c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? c.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-16 h-16 object-cover rounded-xl mt-2 ${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? '' : 'hidden'} border">
               </div>
               <div class="flex space-x-2 pt-2">
@@ -3342,7 +3430,7 @@
               ${p ? `
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0">
-                    <p class="font-black text-sm text-gray-900">${escapeHtml(p.name)}</p>
+                    <p class="font-black text-sm text-gray-900">${escapeHtml(productName(p))}</p>
                     <p class="mt-1 text-[10px] text-blue-700 font-bold break-words">📁 ${escapeHtml(categoryPathForProduct(p))}</p>
                     <p class="mt-1 text-[10px] font-mono text-gray-500">SKU: ${escapeHtml(p.sku || '—')}</p>
                   </div>
@@ -3445,17 +3533,30 @@
         return;
       }
 
+      if (activePopupModal === 'BULK_MOVE_PRODUCTS') {
+        const selectedCount = bulkSelectedProductIds.size;
+        const options = categories.filter(c => !c.deletedAt).map(c => `<option value="${escapeHtml(c.id)}" ${String(bulkMoveTargetCategoryId)===String(c.id)?'selected':''}>${escapeHtml(categoryName(c))}</option>`).join('');
+        container.innerHTML = `<div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();"><div class="bg-white rounded-t-3xl sm:rounded-3xl max-w-sm w-full max-h-[90dvh] flex flex-col overflow-hidden" onclick="event.stopPropagation()"><div class="p-4 border-b flex justify-between items-center"><h3 class="font-bold">📁 ${tr('Tovarlarni ko‘chirish','Перемещение товаров')}</h3><button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button></div><div class="p-4 overflow-y-auto space-y-3"><p class="text-xs text-gray-500">${selectedCount} ${tr('ta tovar tanlandi','товаров выбрано')}</p><select onchange="bulkMoveTargetCategoryId=this.value" class="w-full border rounded-xl p-2.5"><option value="">${tr('Bosh katalog','Главный каталог')}</option>${options}</select><button onclick="saveBulkMoveProducts()" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr('Ko‘chirish','Переместить')}</button></div></div></div>`;
+        return;
+      }
+
+      if (activePopupModal === 'DASHBOARD_LITE') {
+        const d = dashboardLiteData;
+        container.innerHTML = `<div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();"><div class="bg-white rounded-t-3xl sm:rounded-3xl max-w-sm w-full max-h-[90dvh] flex flex-col overflow-hidden" onclick="event.stopPropagation()"><div class="p-4 border-b flex justify-between items-center"><h3 class="font-bold">📊 ${tr('Dashboard / Hisobot','Dashboard / Отчёт')}</h3><button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button></div><div class="p-4 overflow-y-auto">${dashboardLiteLoading || !d ? `<p class="text-center py-8 text-gray-400">${tr('Yuklanmoqda...','Загрузка...')}</p>` : `<div class="grid grid-cols-2 gap-2 text-xs"><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Bugungi buyurtmalar','Заказы сегодня')}</p><b class="text-xl">${d.todayOrders}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Bugungi summa','Сумма сегодня')}</p><b>${money(d.todayOrderTotal)}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Joriy oy buyurtmalar','Заказы за месяц')}</p><b class="text-xl">${d.monthOrders}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Oylik buyurtmalar summasi','Сумма заказов за месяц')}</p><b>${money(d.monthOrderTotal)}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Aktiv buyurtmalar','Активные заказы')}</p><b class="text-xl">${d.activeOrders}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Qoldiq 0','Нет в наличии')}</p><b class="text-xl">${d.outOfStock}</b></div><div class="border rounded-xl p-3 col-span-2"><p class="text-gray-500">${tr('Kam qolgan (1–5)','Мало на складе (1–5)')}</p><b class="text-xl">${d.lowStock}</b></div></div>`}</div></div></div>`;
+        return;
+      }
+
       // 2.5: Chiqindi (24 soatlik trash) ko'rinishi.
       if (activePopupModal === 'TRASH') {
         const batches = trashBatches || [];
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();">
-            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-5 max-w-sm w-full max-h-[85vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              <div class="flex items-center justify-between border-b pb-2">
+            <div class="bg-white rounded-t-3xl sm:rounded-3xl max-w-sm w-full max-h-[90dvh] flex flex-col shadow-2xl text-xs overflow-hidden" onclick="event.stopPropagation()">
+              <div class="sticky top-0 z-10 bg-white flex items-center justify-between border-b p-4">
                 <h3 class="font-bold text-sm text-gray-900">${tr("🗑️ Chiqindi", "🗑️ Корзина")}</h3>
                 <button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
               </div>
-              <p class="text-[10px] text-gray-400">${tr("O'chirilgan kataloglar/tovarlar shu yerda 24 soat turadi, keyin butunlay o'chadi.", "Удалённые каталоги/товары хранятся здесь 24 часа, затем удаляются навсегда.")}</p>
+              <div class="overflow-y-auto p-4 space-y-3"><p class="text-[10px] text-gray-400">${tr("O'chirilgan kataloglar/tovarlar shu yerda 24 soat turadi, keyin butunlay o'chadi.", "Удалённые каталоги/товары хранятся здесь 24 часа, затем удаляются навсегда.")}</p>
               ${trashBatches === null ? `<p class="text-center text-gray-400 py-6">${tr('Yuklanmoqda...', 'Загрузка...')}</p>`
                 : batches.length === 0 ? `<p class="text-center text-gray-400 py-6">${tr("Chiqindi bo'sh.", 'Корзина пуста.')}</p>`
                 : `<div class="space-y-2">${batches.map(b => `
@@ -3463,9 +3564,10 @@
                       <p class="font-bold">${b.kind === 'CATEGORY' ? `📁 ${escapeHtml(b.rootCategoryName || ('#' + b.id))}` : `📦 ${escapeHtml((b.productNames || [])[0] || ('#' + b.id))}`}</p>
                       <p class="text-[10px] text-gray-500">${b.categoryCount ? `${b.categoryCount} ${tr('katalog','кат.')} · ` : ''}${b.productCount} ${tr('tovar','тов.')}</p>
                       <p class="text-[10px] text-gray-400">${tr("Muddati", "Истекает")}: ${new Date(b.expiresAt).toLocaleString()}</p>
-                      <button onclick="restoreTrashBatch(${b.id})" class="w-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded-lg">${tr("♻️ Tiklash", "♻️ Восстановить")}</button>
+                      <div class="grid grid-cols-2 gap-1.5"><button onclick="restoreTrashBatch(${b.id})" class="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded-lg">${tr("♻️ Tiklash", "♻️ Восстановить")}</button><button onclick="purgeTrashBatchNow(${b.id})" class="bg-red-50 text-red-700 border border-red-200 font-bold py-1.5 rounded-lg">${tr("🗑 Butunlay", "🗑 Навсегда")}</button></div>
                     </div>
                   `).join('')}</div>`}
+              </div>
             </div>
           </div>`;
         return;
@@ -3867,7 +3969,7 @@
                     ${productVariants(p).length ? '' : `<button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>`}
                   </div>
                   <div class="flex justify-between items-start gap-2 pt-1 text-xs">
-                    <span class="font-bold text-gray-600 flex-1">${tr("Variantlar:", "Варианты:")} <b>${productVariants(p).length ? escapeHtml(productVariants(p).map(v => `${variantLabel(v)} (${v.qty} ta, ID:${v.sku})`).join(', ')) : tr('kiritilmagan','не указано')}</b></span>
+                    <span class="font-bold text-gray-600 flex-1">${tr("Variantlar:", "Варианты:")} <b>${productVariants(p).length ? escapeHtml(productVariants(p).map(v => `${variantLabel(v)} (${v.qty} ${tr('ta','шт.')}, ID:${v.sku})`).join(', ')) : tr('kiritilmagan','не указано')}</b></span>
                     <button onclick="openEditFieldModal('${p.id}', 'variants')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
                   </div>
                   <div class="flex justify-between items-center pt-1 text-xs">
@@ -3883,7 +3985,7 @@
                   <h4 class="font-bold text-gray-700">${tr("📝 Tavsif / Izoh:", "📝 Описание:")}</h4>
                   ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'desc')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
                 </div>
-                <p class="text-gray-600 leading-relaxed">${escapeHtml(productDesc(p) || 'Tavsif kiritilmagan.')}</p>
+                <p class="text-gray-600 leading-relaxed">${escapeHtml(productDesc(p) || tr('Tavsif kiritilmagan.','Описание не указано.'))}</p>
               </div>
 
               ${!isAdminMode ? `
@@ -3891,7 +3993,7 @@
                   ${p.stock > 0 ? (
                     productVariants(p).length > 0 ? `
                       <div class="space-y-2">
-                        <p class="text-xs font-bold text-gray-600">${t('choose_variant')} (bir nechtasini tanlash mumkin):</p>
+                        <p class="text-xs font-bold text-gray-600">${t('choose_variant')} ${tr('(bir nechtasini tanlash mumkin):','(можно выбрать несколько):')}</p>
                         <div class="grid grid-cols-2 gap-2">
                           ${productVariants(p).map((v, vIdx) => {
                             const k = variantKey(v.size, v.color);
@@ -3904,7 +4006,7 @@
                                   class="w-full px-2 py-1.5 rounded-lg font-bold text-xs ${disabled ? 'bg-gray-100 text-gray-300' : (selected ? 'bg-blue-600 text-white' : 'bg-white text-gray-700')}">
                                   ${escapeHtml(variantLabel(v))}
                                 </button>
-                                <p class="text-[9px] text-center mt-1 text-gray-400">${v.qty} ta</p>
+                                <p class="text-[9px] text-center mt-1 text-gray-400">${v.qty} ${tr('ta','шт.')}</p>
                                 ${selected ? `
                                   <div class="flex items-center justify-center gap-2 mt-1.5">
                                     <button onclick="setVariantQty(${vIdx}, -1)" class="w-7 h-7 bg-white font-bold rounded-lg shadow text-sm text-blue-600">-</button>
@@ -3922,7 +4024,7 @@
                     inCart ? `
                       <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-2xl p-2">
                         <button onclick="changeCartQty('${p.id}', -1, event); openProductDetailModal('${p.id}');" class="w-10 h-10 bg-white font-bold rounded-xl shadow text-base text-blue-600">-</button>
-                        <span class="font-bold text-base text-blue-800">${inCart.qty} ta savatda</span>
+                        <span class="font-bold text-base text-blue-800">${inCart.qty} ${tr('ta savatda','шт. в корзине')}</span>
                         <button onclick="changeCartQty('${p.id}', 1, event); openProductDetailModal('${p.id}');" class="w-10 h-10 bg-blue-600 font-bold rounded-xl text-base text-white">+</button>
                       </div>
                     ` : `
@@ -4270,12 +4372,12 @@
       const imageSnap = takeTempImageSnapshot();
       const categoryId = adminCatParentId;
 
-      // Modal darhol yopiladi — foydalanuvchi serverni kutmaydi.
-      activePopupModal = null;
-      render();
+      // Formani server javobigacha ochiq qoldiramiz: rasm xatosida admin kiritgan
+      // name/price/stock/description yo'qolmasligi kerak.
       showActionToast(tr("⏳ Tovar saqlanmoqda...", "⏳ Товар сохраняется..."), 'saving');
       try {
-        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, false);
+        const localImageWasSelected = !!(imageSnap?.file || imageSnap?.preparing);
+        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, localImageWasSelected);
         const result = await callApi('add_product', {
           name, price, oldPrice,
           stock: isNaN(stock) ? 0 : stock,
@@ -4284,6 +4386,7 @@
         });
         upsertLocalProduct(result.product);
         saveCatalogCache();
+        activePopupModal = null;
         showActionToast(`${tr("✅ Tovar qo'shildi. ID:", "✅ Товар добавлен. ID:")} ${result.product.sku}`, 'success', 1800);
         render();
       } catch (e) {
@@ -4295,6 +4398,8 @@
         } else {
           alert(tr("❌ Tovarni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения товара: ") + ((imageSnap?.file || imageSnap?.preparing || imageSnap?.url) ? friendlyImageError(e) : (e.message || e)));
         }
+        // Input matnlari DOM'da qoladi. Rasm selection esa qayta tanlanishi uchun tozalanadi.
+        clearTempImageSelection();
       } finally { releaseImageSnapshot(imageSnap); }
     }
 
@@ -4388,10 +4493,14 @@
         }
       }
 
-      // PIN kabi: Saqlash bosilishi bilan modal yopiladi va yangi qiymat darhol ko'rinadi.
-      activePopupModal = null;
-      selectedProductModal = p;
-      render();
+      // Matn/son kabi tez maydonlar PIN kabi optimistik yopiladi. Rasm esa
+      // Telegram WebView'da o'qish/yuklash xatosi bo'lsa admin qayta tanlay olishi
+      // uchun edit modalini muvaffaqiyatli uploadgacha ochiq qoldiradi.
+      if (field !== 'img') {
+        activePopupModal = null;
+        selectedProductModal = p;
+        render();
+      }
       showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохраняется..."), 'saving');
 
       try {
@@ -4404,6 +4513,10 @@
         const current = products.find(prod => prod.id === prodId);
         if (current) Object.assign(current, mapProductFromDB(result.product));
         saveCatalogCache();
+        if (field === 'img') {
+          activePopupModal = null;
+          selectedProductModal = current || p;
+        }
         showActionToast(tr("✅ Saqlandi", "✅ Сохранено"), 'success', 1200);
         render();
       } catch (e) {
@@ -4411,7 +4524,8 @@
         const curIdx = products.findIndex(prod => prod.id === prodId);
         if (curIdx >= 0) products[curIdx] = old;
         selectedProductModal = products.find(prod => prod.id === prodId) || null;
-        render();
+        // Rasm xatosida edit oynasini yopmaymiz: forma va qayta tanlash imkoniyati qoladi.
+        if (field !== 'img') render();
         showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 1800);
         alert(tr("❌ Saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения: ") + (field === 'img' ? friendlyImageError(e) : (e.message || e)));
       } finally {
@@ -4651,7 +4765,7 @@
       }
     }
 
-    // 2.6: mahsulotni nusxalash — yangi SKU, "— nusxa" nomi, stock=0 (draft).
+    // 2.6: mahsulotni nusxalash — yangi SKU, mustaqil rasm va original qoldiq/variant qty bilan.
     async function duplicateProduct(id) {
       showActionToast(tr('⏳ Nusxalanmoqda...', '⏳ Копирование...'), 'saving');
       try {
@@ -4660,7 +4774,7 @@
         saveCatalogCache();
         selectedProductModal = mapProductFromDB(result.product);
         render();
-        showActionToast(tr('✅ Nusxa yaratildi (zaxira 0, ko\'rinmaydi)', '✅ Копия создана (остаток 0, скрыта)'), 'success', 2200);
+        showActionToast(tr('✅ Nusxa yaratildi', '✅ Копия создана'), 'success', 1800);
       } catch (e) {
         console.error(e);
         showActionToast(tr('❌ Nusxalab bo\'lmadi', '❌ Не удалось скопировать'), 'error', 1800);
@@ -4761,7 +4875,19 @@
       const other = siblings[swapIdx];
       const catOrder = cat.sortOrder || 0, otherOrder = other.sortOrder || 0;
       cat.sortOrder = otherOrder; other.sortOrder = catOrder;
-      render();
+
+      // Vizual tartibni butun ilovani render qilmasdan shu ikki DOM qatori bilan
+      // darhol almashtiramiz. Server yozuvi fon rejimida keladi.
+      const rows = Array.from(document.querySelectorAll('[data-category-row-id]'));
+      const rowA = rows.find(el => String(el.dataset.categoryRowId) === String(cat.id));
+      const rowB = rows.find(el => String(el.dataset.categoryRowId) === String(other.id));
+      if (rowA && rowB && rowA.parentNode === rowB.parentNode) {
+        const parent = rowA.parentNode;
+        if (direction < 0) parent.insertBefore(rowA, rowB);
+        else parent.insertBefore(rowB, rowA);
+      } else {
+        render();
+      }
       try {
         await callApi('reorder_categories', { items: [{ id: cat.id, sortOrder: cat.sortOrder }, { id: other.id, sortOrder: other.sortOrder }] });
         saveCatalogCache();
@@ -4807,6 +4933,78 @@
     function openDuplicateProductsModal() {
       activePopupModal = 'DUPLICATE_PRODUCTS';
       render();
+    }
+
+    function toggleBulkProductSelectMode() {
+      bulkProductSelectMode = !bulkProductSelectMode;
+      bulkSelectedProductIds.clear();
+      render();
+    }
+    function toggleBulkProductSelection(productId, event) {
+      if (event) event.stopPropagation();
+      const id = String(productId);
+      if (bulkSelectedProductIds.has(id)) bulkSelectedProductIds.delete(id); else bulkSelectedProductIds.add(id);
+      render();
+    }
+    function selectAllVisibleProducts() {
+      for (const id of currentVisibleProductIds) bulkSelectedProductIds.add(String(id));
+      render();
+    }
+    function clearBulkProductSelection() {
+      bulkSelectedProductIds.clear();
+      bulkProductSelectMode = false;
+      render();
+    }
+    function openBulkMoveProductsModal() {
+      if (!bulkSelectedProductIds.size) return;
+      bulkMoveTargetCategoryId = '';
+      activePopupModal = 'BULK_MOVE_PRODUCTS';
+      render();
+    }
+    async function saveBulkMoveProducts() {
+      const ids = [...bulkSelectedProductIds];
+      if (!ids.length) return;
+      showActionToast(tr('⏳ Ko‘chirilmoqda...','⏳ Перемещение...'), 'saving');
+      try {
+        const result = await callApi('bulk_move_products', { productIds: ids, categoryId: bulkMoveTargetCategoryId || null });
+        for (const row of result.products || []) upsertLocalProduct(row);
+        saveCatalogCache();
+        activePopupModal = null; bulkProductSelectMode = false; bulkSelectedProductIds.clear();
+        render();
+        showActionToast(tr('✅ Tovarlar ko‘chirildi','✅ Товары перемещены'), 'success', 1500);
+      } catch (e) {
+        console.error(e);
+        alert(tr('❌ Ko‘chirishda xatolik: ','❌ Ошибка перемещения: ') + (e.message || e));
+      }
+    }
+    async function bulkTrashSelectedProducts() {
+      const ids = [...bulkSelectedProductIds];
+      if (!ids.length) return;
+      if (!confirm(`${ids.length} ${tr('ta tovar chiqindiga o‘tkazilsinmi?','товаров переместить в корзину?')}`)) return;
+      showActionToast(tr('⏳ Chiqindiga o‘tkazilmoqda...','⏳ Перемещение в корзину...'), 'saving');
+      try {
+        await callApi('bulk_trash_products', { productIds: ids });
+        products = products.filter(p => !bulkSelectedProductIds.has(String(p.id)));
+        bulkSelectedProductIds.clear(); bulkProductSelectMode = false;
+        saveCatalogCache(); render();
+        showActionToast(tr('✅ Chiqindiga o‘tkazildi','✅ Перемещено в корзину'), 'success', 1500);
+      } catch (e) { console.error(e); alert(tr('❌ Xatolik: ','❌ Ошибка: ') + (e.message || e)); }
+    }
+    async function purgeTrashBatchNow(batchId) {
+      if (!confirm(tr('Bu elementlar darhol va qaytarib bo‘lmaydigan tarzda o‘chirilsinmi?','Удалить эти элементы навсегда прямо сейчас?'))) return;
+      showActionToast(tr('⏳ Butunlay o‘chirilmoqda...','⏳ Удаление навсегда...'), 'saving');
+      try {
+        await callApi('purge_trash_batch_now', { batchId });
+        if (trashBatches) trashBatches = trashBatches.filter(b => Number(b.id) !== Number(batchId));
+        await loadCatalog(); render();
+        showActionToast(tr('✅ Butunlay o‘chirildi','✅ Удалено навсегда'), 'success', 1500);
+      } catch (e) { console.error(e); alert(tr('❌ O‘chirishda xatolik: ','❌ Ошибка удаления: ') + (e.message || e)); }
+    }
+    async function openDashboardLite() {
+      dashboardLiteData = null; dashboardLiteLoading = true; activePopupModal = 'DASHBOARD_LITE'; render();
+      try { dashboardLiteData = await callApi('get_dashboard_lite', {}); }
+      catch (e) { console.error(e); dashboardLiteData = null; alert(tr('❌ Dashboard yuklanmadi: ','❌ Dashboard не загружен: ') + (e.message || e)); }
+      finally { dashboardLiteLoading = false; if (activePopupModal === 'DASHBOARD_LITE') renderModalContainer(); }
     }
 
     // 2.5: Chiqindi (trash) ko'rinishi.
@@ -5051,6 +5249,18 @@
       setupRealtime();
       switchTab('home');
       catalogPromise.catch(e => console.error('Katalogni yangilash xatosi:', e));
+
+      // Eski versiyalarda FRESH deb noto'g'ri belgilangan yoki bo'sh qolgan RU
+      // matnlarni bir sessiyada bir marta server fonida qayta tekshirtiramiz.
+      // Bu boot'ni kutdirmaydi va oddiy foydalanuvchida umuman ishlamaydi.
+      if (isUserAnAdmin && sessionStorage.getItem('fitcore-ru-repair-v2') !== '1') {
+        sessionStorage.setItem('fitcore-ru-repair-v2', '1');
+        callApi('retry_bad_translations', {}).then((r) => {
+          if (Number(r?.scheduledProducts || 0) + Number(r?.scheduledCategories || 0) > 0) {
+            console.info('[FITCORE] RU translation repair scheduled', r);
+          }
+        }).catch((e) => console.warn('[FITCORE] RU translation repair could not start', e));
+      }
     }
 
     // INITIAL LAUNCH

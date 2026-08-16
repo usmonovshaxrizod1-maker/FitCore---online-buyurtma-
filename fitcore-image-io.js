@@ -6,16 +6,45 @@
 })(typeof globalThis !== 'undefined' ? globalThis : window, function buildFitcoreImageIO() {
   'use strict';
 
-  function readBlobAsArrayBuffer(blob) {
-    if (!blob) return Promise.reject(new Error('blob_required'));
-    if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
-    if (typeof FileReader === 'undefined') return Promise.reject(new Error('blob_array_buffer_unavailable'));
+  function readWithFileReader(blob, timeoutMs = 12000) {
+    if (typeof FileReader === 'undefined') return Promise.reject(new Error('filereader_unavailable'));
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error || new Error('blob_read_failed'));
-      reader.readAsArrayBuffer(blob);
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        try { reader.abort(); } catch (_) {}
+        finish(reject, new Error('blob_read_timeout'));
+      }, timeoutMs);
+      reader.onload = () => finish(resolve, reader.result);
+      reader.onerror = () => finish(reject, reader.error || new Error('blob_read_failed'));
+      reader.onabort = () => finish(reject, new Error('blob_read_aborted'));
+      try { reader.readAsArrayBuffer(blob); }
+      catch (e) { finish(reject, e); }
     });
+  }
+
+  async function readBlobAsArrayBuffer(blob) {
+    if (!blob) throw new Error('blob_required');
+    // Telegram WebView'da FileReader native file-picker handle bilan barqarorroq.
+    // arrayBuffer() fallback bo'lib qoladi; bir xil transportni ikki marta urmaymiz.
+    let firstError = null;
+    try { return await readWithFileReader(blob); }
+    catch (e) { firstError = e; }
+    if (typeof blob.arrayBuffer === 'function') {
+      try { return await blob.arrayBuffer(); }
+      catch (e) {
+        const err = new Error('blob_read_failed_all_methods');
+        err.cause = e || firstError;
+        throw err;
+      }
+    }
+    throw firstError || new Error('blob_array_buffer_unavailable');
   }
 
   function makeDetachedImageFile(bytes, source) {
