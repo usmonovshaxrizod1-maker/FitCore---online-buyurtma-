@@ -408,12 +408,16 @@
     let currentTab = 'home';
     let warehouseMissingImageOnly = false;
     let warehouseImportedMissingImageOnly = false;
+    let warehouseSection = 'holat'; // holat | yangilash | kirim | kam | tugagan | tarix
+    let inventoryMovements = null;
+    let inventoryMovementsLoading = false;
     let isAdminMode = false;
     let authReady = false;
     let adminCatParentId = null;
     let categoryPage = 1;
     // sortPrice/sortNew/sortSold: null | 'asc' | 'desc' — har biri mustaqil yoqiladi
-    let categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null };
+    let categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null, hideOutOfStock: false };
+    let homePage = 1;
     let ordersPage = 1;
     let userOrderFilter = 'ALL';
     let selectedProductModal = null;
@@ -477,11 +481,19 @@
     let moveCategoryId = null;
     let moveCategoryTargetId = '';
     let trashBatches = null;
+    let trashPage = 1;
+    let trashSelectMode = false;
+    const trashSelectedBatchIds = new Set();
     let bulkProductSelectMode = false;
     const bulkSelectedProductIds = new Set();
     let bulkMoveTargetCategoryId = '';
-    let dashboardLiteData = null;
-    let dashboardLiteLoading = false;
+    // Dashboard — alohida sahifa (currentTab === 'dashboard').
+    let dashboardData = null;
+    let dashboardLoading = false;
+    let dashboardRangePreset = 'today'; // today | 7d | 30d | month | custom
+    let dashboardCustomFrom = '';
+    let dashboardCustomTo = '';
+    let dashboardReturnTab = 'warehouse';
 
     // Rasm: lokal fayl (siqilib, base64 sifatida save so'rovi ichida
     // yuboriladi) YOKI HTTPS URL — ikkalasi ham qo'llab-quvvatlanadi.
@@ -587,7 +599,7 @@
       nav_cart: { uz: "Savatcha", ru: "Корзина" },
       nav_orders: { uz: "Buyurtmalar", ru: "Заказы" },
       nav_warehouse: { uz: "Ombor", ru: "Склад" },
-      nav_users: { uz: "Mijozlar", ru: "Клиенты" },
+      nav_support: { uz: "Qo'llab-quvvatlash", ru: "Поддержка" },
       nav_profile: { uz: "Profil", ru: "Профиль" },
       // 14-band: oddiy mijozga ID orqali qidirish mumkinligini reklama qilmaydi
       // — texnik SKU/ID tushunchasi faqat admin uchun. Qidiruv FUNKSIYASI (ID
@@ -932,7 +944,7 @@
         console.error("Murojaatlarni yuklashda xatolik:", e);
       } finally {
         adminSupportTicketsLoading = false;
-        if (activePopupModal === 'ADMIN_SUPPORT' || currentTab === 'profile') render();
+        if (currentTab === 'support' || currentTab === 'profile') render();
       }
     }
     async function loadSupportMessages(ticketId, force = false) {
@@ -1031,9 +1043,9 @@
       }
     }
 
-    // ---- Admin tomon: Support -> User -> Chatlar -> Chat ----
+    // ---- Admin tomon: Support -> User -> Chatlar -> Chat (to'liq sahifa) ----
     function openAdminSupportModal() {
-      activePopupModal = 'ADMIN_SUPPORT';
+      currentTab = 'support';
       adminSupportSelectedUser = null;
       adminSupportSelectedTicketId = null;
       supportReplyTarget = null;
@@ -1139,9 +1151,15 @@
       if (activeNav) activeNav.classList.add('text-blue-600', 'font-bold');
       render(); // tugma bosilishi darhol sezilsin
       if (tab === 'orders') loadOrdersLazy();
-      if (tab === 'users' && isUserAnAdmin) loadUsersLazy();
+      if (tab === 'support' && isUserAnAdmin) { adminSupportSelectedUser = null; adminSupportSelectedTicketId = null; loadAdminSupportTicketsLazy(); }
       if (tab === 'profile' && isSuperAdmin) loadAdminsLazy();
       if (tab === 'profile' && isUserAnAdmin) loadAdminSupportTicketsLazy();
+    }
+
+    function openAllCustomersPage() {
+      currentTab = 'users';
+      render();
+      loadUsersLazy();
     }
 
     function toggleAdminRole() {
@@ -1481,7 +1499,7 @@
       const map = {
         'nav-label-home': 'nav_home', 'nav-label-categories': 'nav_categories',
         'nav-label-cart': 'nav_cart', 'nav-label-orders': 'nav_orders',
-        'nav-label-warehouse': 'nav_warehouse', 'nav-label-users': 'nav_users',
+        'nav-label-warehouse': 'nav_warehouse', 'nav-label-support': 'nav_support',
         'nav-label-profile': 'nav_profile',
       };
       for (const [elId, key] of Object.entries(map)) {
@@ -1550,7 +1568,7 @@
       const roleTag = document.getElementById('role-tag');
       if (roleTag && authReady) roleTag.classList.remove('hidden');
       const whBtn = document.getElementById('nav-warehouse-btn');
-      const usersBtn = document.getElementById('nav-users-btn');
+      const supportBtn = document.getElementById('nav-support-btn');
       const cartNavBtn = document.getElementById('nav-cart');
 
       if (isAdminMode && isUserAnAdmin) {
@@ -1558,8 +1576,8 @@
         roleTag.dataset.role = 'admin';
         whBtn.classList.remove('hidden');
         whBtn.classList.add('flex');
-        usersBtn.classList.remove('hidden');
-        usersBtn.classList.add('flex');
+        supportBtn.classList.remove('hidden');
+        supportBtn.classList.add('flex');
         cartNavBtn.classList.add('hidden');
         cartNavBtn.classList.remove('flex');
         if (currentTab === 'cart') currentTab = 'home';
@@ -1567,10 +1585,10 @@
         roleTag.innerText = "STORE";
         roleTag.dataset.role = 'store';
         whBtn.classList.add('hidden');
-        usersBtn.classList.add('hidden');
+        supportBtn.classList.add('hidden');
         cartNavBtn.classList.remove('hidden');
         cartNavBtn.classList.add('flex');
-        if (currentTab === 'warehouse' || currentTab === 'users') currentTab = 'home';
+        if (currentTab === 'warehouse' || currentTab === 'support' || currentTab === 'dashboard' || currentTab === 'users') currentTab = 'home';
       }
 
       const container = document.getElementById('app-content');
@@ -1580,6 +1598,8 @@
         case 'cart': renderCart(container); break;
         case 'orders': renderOrders(container); break;
         case 'warehouse': renderWarehouse(container); break;
+        case 'support': renderAdminSupportPage(container); break;
+        case 'dashboard': renderDashboard(container); break;
         case 'users': renderUsers(container); break;
         case 'profile': renderProfile(container); break;
       }
@@ -1605,11 +1625,12 @@
 
           ${(isAdminMode && isUserAnAdmin) ? `
             <div class="bg-amber-50 border border-amber-200 p-3 rounded-2xl text-xs font-bold text-amber-900 shadow-sm flex items-center justify-between">
-              <span>${tr("🛡️ Admin rejimi: Bosh sahifa (Pin 📌 orqali tanlangan tovarlar)", "🛡️ Режим администратора: Главная (товары, закреплённые 📌)")}</span>
+              <span>${tr("🛡️ Admin rejimi", "🛡️ Режим администратора")}</span>
             </div>
           ` : ''}
 
           <div id="products-grid" class="grid grid-cols-2 gap-3"></div>
+          <div id="products-pagination" class="flex flex-wrap justify-center items-center gap-1.5 pt-2"></div>
         </div>
       `;
       handleSearch();
@@ -1618,6 +1639,7 @@
     // Qidiruvni har harfda emas, 300ms kutib bir marta ishlatish (tezlik uchun)
     let searchDebounceTimer = null;
     function handleSearchDebounced() {
+      homePage = 1; // 7-band: qidiruv o'zgarsa 1-sahifaga qayt
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(handleSearch, 300);
     }
@@ -1634,15 +1656,30 @@
       currentVisibleProductIds = filtered.map(p => p.id);
 
       const grid = document.getElementById('products-grid');
+      const pager = document.getElementById('products-pagination');
       if (!grid) return;
 
       if (filtered.length === 0) {
         grid.innerHTML = `<div class="col-span-2 text-center py-8 bg-white rounded-2xl p-4 text-xs text-gray-500">${tr("🔍 Bosh sahifa uchun tovar biriktirilmagan yoki topilmadi", "🔍 Для главной страницы нет закреплённых товаров")}</div>`;
+        if (pager) pager.innerHTML = '';
         return;
       }
 
-      grid.innerHTML = filtered.map((p, idx) => renderProductCardHTML(p, idx, filtered.length)).join('');
+      // 7-band: bosh sahifada ham 10 tadan pagination (katalog ichidagi bilan
+      // bir xil uslub — 10 tagacha pagination yo'q).
+      const totalPages = Math.max(1, Math.ceil(filtered.length / 10));
+      if (homePage > totalPages) homePage = 1;
+      const start = (homePage - 1) * 10;
+      const pageItems = filtered.slice(start, start + 10);
+
+      grid.innerHTML = pageItems.map((p, i) => renderProductCardHTML(p, start + i, filtered.length)).join('');
       lucide.createIcons();
+
+      if (pager) {
+        pager.innerHTML = totalPages > 1 ? Array.from({ length: totalPages }, (_, i) => i + 1).map(pNum => `
+          <button onclick="homePage=${pNum}; handleSearch();" class="px-3 py-1.5 rounded-xl text-xs font-bold ${homePage === pNum ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'}">${pNum}</button>
+        `).join('') : '';
+      }
     }
 
     // REUSABLE PRODUCT CARD
@@ -1832,7 +1869,7 @@
     }
 
     function isCategoryFilterActive() {
-      return !!(categoryFilter.search || categoryFilter.minPrice || categoryFilter.maxPrice || categoryFilter.sortPrice || categoryFilter.sortNew || categoryFilter.sortSold);
+      return !!(categoryFilter.search || categoryFilter.minPrice || categoryFilter.maxPrice || categoryFilter.sortPrice || categoryFilter.sortNew || categoryFilter.sortSold || categoryFilter.hideOutOfStock);
     }
 
     function applyCategoryFilter(list) {
@@ -1841,6 +1878,7 @@
         const matchedIds = new Set(searchProducts(categoryFilter.search).map(p => String(p.id)));
         result = result.filter(p => matchedIds.has(String(p.id)));
       }
+      if (categoryFilter.hideOutOfStock) result = result.filter(p => Number(p.stock) > 0);
       const min = parseFloat(categoryFilter.minPrice);
       const max = parseFloat(categoryFilter.maxPrice);
       if (!isNaN(min)) result = result.filter(p => p.price >= min);
@@ -1878,6 +1916,7 @@
     function setCategoryPriceBound(field, value) {
       categoryFilter[field] = value;
       categoryPage = 1;
+      homePage = 1;
     }
 
     // Har bir saralash: yo'q -> o'suvchi -> kamayuvchi -> yo'q, mustaqil ravishda
@@ -1886,12 +1925,21 @@
       const idx = order.indexOf(categoryFilter[key]);
       categoryFilter[key] = order[(idx + 1) % order.length];
       categoryPage = 1;
+      homePage = 1;
       render();
     }
 
     function clearCategoryFilter() {
-      categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null };
+      categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null, hideOutOfStock: false };
       categoryPage = 1;
+      homePage = 1;
+      render();
+    }
+
+    function toggleCategoryHideOutOfStock() {
+      categoryFilter.hideOutOfStock = !categoryFilter.hideOutOfStock;
+      categoryPage = 1;
+      homePage = 1;
       render();
     }
 
@@ -2679,29 +2727,180 @@
       render();
     }
 
-    // 5. WAREHOUSE TAB
+    // 5. WAREHOUSE TAB — Ombor 2.0: bir nechta ichki bo'lim.
+    function warehouseLowStockThreshold() { return 5; }
+    function warehouseActiveProducts() { return products.filter(p => p.status !== 'DELETED'); }
+    function setWarehouseSection(section) {
+      warehouseSection = section;
+      render();
+      if (section === 'tarix') loadInventoryMovements();
+    }
     function renderWarehouse(container) {
-      const topCats = categories.filter(c => !c.parentId);
-
+      const sections = [
+        { id: 'holat', label: tr('Holat', 'Состояние') },
+        { id: 'yangilash', label: tr('Yangilash', 'Обновить') },
+        { id: 'kirim', label: tr('Kirim', 'Приход') },
+        { id: 'kam', label: tr('Kam qolgan', 'Мало') },
+        { id: 'tugagan', label: tr('Tugagan', 'Нет в наличии') },
+        { id: 'tarix', label: tr('Tarix', 'История') },
+      ];
       container.innerHTML = `
         <div class="space-y-4">
           <div class="flex items-center justify-between gap-2">
             <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
-            <div class="flex gap-1"><button onclick="openDashboardLite()" class="px-2 py-1.5 rounded-xl text-[10px] font-bold bg-slate-900 text-white">📊 ${tr('Hisobot','Отчёт')}</button><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly?'bg-amber-500 text-white':'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz','Без фото')} (${getMissingImageProducts().length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly?'bg-blue-600 text-white':'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz','Импорт без фото')} (${products.filter(p=>p.status!=='DELETED'&&!hasProductImage(p)&&p.importBatchId).length})</button></div>
+            <button onclick="openDashboard()" class="px-2 py-1.5 rounded-xl text-[10px] font-bold bg-slate-900 text-white">📊 ${tr('Hisobot', 'Отчёт')}</button>
           </div>
 
-          <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
-            ${topCats.map(parent => renderCategoryTreeNodeHTML(parent, 0)).join('')}
+          <div class="flex flex-wrap gap-1.5">
+            ${sections.map(s => `<button onclick="setWarehouseSection('${s.id}')" class="px-2.5 py-1.5 rounded-xl text-[11px] font-bold ${warehouseSection === s.id ? 'bg-slate-900 text-white' : 'bg-white border text-gray-600'}">${s.label}</button>`).join('')}
           </div>
 
-          <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
-            <h3 class="font-bold text-sm text-gray-800">${tr("⚡ ID orqali ko'p tovar qoldig'ini yangilash", "⚡ Массовое обновление остатков по ID")}</h3>
-            <p class="text-[10px] text-gray-500">${tr("SKU va sonini kiriting (Masalan:", "Введите SKU и количество (Например:")} <b>111001 35</b>)</p>
-            <textarea id="bulk-input" rows="4" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="111001 35&#10;111002 20"></textarea>
-            <button onclick="saveBulkStock()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs">${tr("💾 Barchasini saqlash", "💾 Сохранить все")}</button>
-          </div>
+          ${warehouseSection === 'holat' ? renderWarehouseHolatHtml()
+            : warehouseSection === 'yangilash' ? renderWarehouseYangilashHtml()
+            : warehouseSection === 'kirim' ? renderWarehouseKirimHtml()
+            : warehouseSection === 'kam' ? renderWarehouseProductListHtml(warehouseActiveProducts().filter(p => Number(p.stock) > 0 && Number(p.stock) <= warehouseLowStockThreshold()), tr("Kam qolgan mahsulotlar yo'q.", 'Товаров с малым остатком нет.'))
+            : warehouseSection === 'tugagan' ? renderWarehouseProductListHtml(warehouseActiveProducts().filter(p => Number(p.stock) <= 0), tr("Tugagan mahsulotlar yo'q.", 'Закончившихся товаров нет.'))
+            : renderWarehouseTarixHtml()}
         </div>
       `;
+    }
+
+    // A. Ombor holati — umumiy son ko'rsatkichlari + mavjud katalog daraxti.
+    function renderWarehouseHolatHtml() {
+      const active = warehouseActiveProducts();
+      const totalStock = active.reduce((sum, p) => sum + (Number(p.stock) || 0), 0);
+      const lowCount = active.filter(p => Number(p.stock) > 0 && Number(p.stock) <= warehouseLowStockThreshold()).length;
+      const outCount = active.filter(p => Number(p.stock) <= 0).length;
+      const topCats = categories.filter(c => !c.parentId);
+      return `
+        <div class="grid grid-cols-2 gap-2">
+          ${dashboardStatCard({ icon: '📚', label: tr('Jami mahsulot', 'Всего товаров'), value: String(active.length), tint: 'emerald' })}
+          ${dashboardStatCard({ icon: '📦', label: tr('Jami qoldiq', 'Общий остаток'), value: String(totalStock), tint: 'blue' })}
+          ${dashboardStatCard({ icon: '⚠️', label: tr('Kam qolgan', 'Мало на складе'), value: String(lowCount), tint: 'amber' })}
+          ${dashboardStatCard({ icon: '🚫', label: tr('Tugagan', 'Закончились'), value: String(outCount), tint: 'red' })}
+        </div>
+        <div class="flex gap-1.5">
+          <button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly ? 'bg-amber-500 text-white' : 'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz', 'Без фото')} (${getMissingImageProducts().length})</button>
+          <button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly ? 'bg-blue-600 text-white' : 'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz', 'Импорт без фото')} (${products.filter(p => p.status !== 'DELETED' && !hasProductImage(p) && p.importBatchId).length})</button>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
+          ${topCats.map(parent => renderCategoryTreeNodeHTML(parent, 0)).join('')}
+        </div>
+      `;
+    }
+
+    // B. Qoldiqni yangilash — HOZIRGI ishlayotgan funksiya, o'zgarishsiz,
+    // faqat Ombor ichki bo'limiga ko'chirilgan.
+    function renderWarehouseYangilashHtml() {
+      return `
+        <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
+          <h3 class="font-bold text-sm text-gray-800">${tr("⚡ ID orqali ko'p tovar qoldig'ini yangilash", "⚡ Массовое обновление остатков по ID")}</h3>
+          <p class="text-[10px] text-gray-500">${tr("SKU va sonini kiriting (Masalan:", "Введите SKU и количество (Например:")} <b>111001 35</b>)</p>
+          <textarea id="bulk-input" rows="4" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="111001 35&#10;111002 20"></textarea>
+          <button onclick="saveBulkStock()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs">${tr("💾 Barchasini saqlash", "💾 Сохранить все")}</button>
+        </div>
+      `;
+    }
+
+    // C. Kirim — mavjud qoldiqqa QO'SHISH (almashtirish emas).
+    function renderWarehouseKirimHtml() {
+      const eligible = warehouseActiveProducts().filter(p => !(Array.isArray(p.variants) && p.variants.length));
+      return `
+        <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
+          <h3 class="font-bold text-sm text-gray-800">📥 ${tr('Yangi kirim', 'Новое поступление')}</h3>
+          <p class="text-[10px] text-gray-500">${tr("Hozirgi qoldiqqa qo'shiladi (masalan: hozir 5, kirim +10, yangi qoldiq 15). O'lchamli/variantli tovarlar hozircha bu yerdan qo'llab-quvvatlanmaydi.", 'Добавляется к текущему остатку (например: сейчас 5, приход +10, новый остаток 15). Товары с вариантами пока не поддерживаются здесь.')}</p>
+          <div>
+            <label class="block font-bold text-gray-600 mb-1">${tr('Mahsulot', 'Товар')}</label>
+            <select id="kirim-product" class="w-full p-2.5 border rounded-xl bg-gray-50">
+              <option value="">${tr('— tanlang —', '— выберите —')}</option>
+              ${eligible.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(productName(p))} (SKU ${escapeHtml(p.sku)}, ${tr('hozir', 'сейчас')} ${p.stock})</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block font-bold text-gray-600 mb-1">${tr('Kirim miqdori (+)', 'Количество прихода (+)')}</label>
+            <input id="kirim-qty" type="number" min="1" step="1" placeholder="10" class="w-full p-2.5 border rounded-xl">
+          </div>
+          <button onclick="submitStockIncoming()" class="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-xl text-xs">✅ ${tr("Kirimni qo'shish", 'Добавить приход')}</button>
+        </div>
+      `;
+    }
+
+    // D/E. Kam qolganlar / Tugaganlar — bir xil ro'yxat ko'rinishi.
+    function renderWarehouseProductListHtml(list, emptyText) {
+      if (!list.length) return `<p class="text-center text-gray-400 py-10 text-xs">${emptyText}</p>`;
+      return `
+        <div class="bg-white rounded-2xl border divide-y overflow-hidden">
+          ${list.map(p => `
+            <div class="p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-50" onclick="openProductDetailModal('${p.id}')">
+              <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-10 h-10 rounded-lg object-cover flex-shrink-0">
+              <div class="min-w-0 flex-1">
+                <p class="font-bold text-sm text-gray-800 truncate">${escapeHtml(productName(p))}</p>
+                <p class="text-[10px] text-gray-400 font-mono">SKU: ${escapeHtml(p.sku)}</p>
+              </div>
+              <span class="font-black text-xs ${Number(p.stock) <= 0 ? 'text-red-600' : 'text-amber-600'}">${p.stock}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // F. Harakatlar tarixi.
+    function renderWarehouseTarixHtml() {
+      if (inventoryMovementsLoading || inventoryMovements === null) return `<p class="text-center text-gray-400 py-10 text-xs">${tr('Yuklanmoqda...', 'Загрузка...')}</p>`;
+      if (!inventoryMovements.length) return `<p class="text-center text-gray-400 py-10 text-xs">${tr("Hali harakatlar yo'q.", 'Движений пока нет.')}</p>`;
+      const typeLabel = (mt) => mt === 'INCOMING' ? tr('Kirim', 'Приход') : mt === 'ORDER' ? tr('Buyurtma', 'Заказ') : tr("Qo'lda yangilash", 'Ручное обновление');
+      return `
+        <div class="bg-white rounded-2xl border divide-y overflow-hidden">
+          ${inventoryMovements.map(m => `
+            <div class="p-3 text-xs">
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-gray-800 truncate">${escapeHtml(m.productName || m.productId || '—')}</span>
+                <span class="font-black ${Number(m.changeQty) >= 0 ? 'text-emerald-600' : 'text-red-600'}">${Number(m.changeQty) >= 0 ? '+' : ''}${m.changeQty}</span>
+              </div>
+              <div class="flex items-center justify-between mt-0.5 text-[10px] text-gray-400">
+                <span>${typeLabel(m.movementType)}${m.reason ? ` · ${escapeHtml(m.reason)}` : ''}</span>
+                <span>${m.oldStock} → ${m.newStock}</span>
+              </div>
+              <p class="text-[9px] text-gray-300 mt-0.5">${new Date(m.createdAt).toLocaleString()}</p>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    async function loadInventoryMovements() {
+      inventoryMovementsLoading = true;
+      render();
+      try {
+        const data = await callApi('get_inventory_movements', { limit: 100 });
+        inventoryMovements = data.movements || [];
+      } catch (e) {
+        console.error(e);
+        inventoryMovements = [];
+      } finally {
+        inventoryMovementsLoading = false;
+        if (currentTab === 'warehouse' && warehouseSection === 'tarix') render();
+      }
+    }
+
+    async function submitStockIncoming() {
+      const productId = document.getElementById('kirim-product')?.value || '';
+      const qty = Number.parseInt(document.getElementById('kirim-qty')?.value || '', 10);
+      if (!productId) return alert(tr('Mahsulotni tanlang.', 'Выберите товар.'));
+      if (!Number.isInteger(qty) || qty <= 0) return alert(tr("Kirim miqdorini to'g'ri kiriting.", 'Введите корректное количество прихода.'));
+      showActionToast(tr('⏳ Saqlanmoqda...', '⏳ Сохранение...'), 'saving');
+      try {
+        const result = await callApi('stock_incoming', { productId, qty });
+        const idx = products.findIndex(p => p.id === productId);
+        if (idx >= 0) Object.assign(products[idx], mapProductFromDB(result.product));
+        saveCatalogCache();
+        showActionToast(tr('✅ Kirim saqlandi', '✅ Приход сохранён'), 'success', 1500);
+        render();
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Saqlanmadi', '❌ Не сохранено'), 'error', 1800);
+        alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+      }
     }
 
     function renderCategoryTreeNodeHTML(cat, depth) {
@@ -2736,11 +2935,74 @@
       `;
     }
 
+    // QO'LLAB-QUVVATLASH TAB (admin) — to'liq sahifa, avval modal edi.
+    // Ichki tuzilma (Support -> User -> Chatlar -> Chat) o'zgarmagan, faqat
+    // taqdimot modal → sahifa bo'lib o'zgardi.
+    function renderAdminSupportPage(container) {
+      const grouped = groupAdminSupportTicketsByUser();
+      const selectedUserTickets = adminSupportSelectedUser ? adminSupportTickets.filter(t => t.tgId === adminSupportSelectedUser) : [];
+      const openTicket = adminSupportSelectedTicketId ? adminSupportTickets.find(t => t.id === adminSupportSelectedTicketId) : null;
+      container.innerHTML = `
+        <div class="space-y-3 text-xs">
+          ${openTicket ? `
+            <div class="flex items-center justify-between border-b pb-2">
+              <button onclick="backToAdminSupportUserTickets()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga', 'Назад')}</button>
+              <h3 class="font-bold text-sm text-gray-900">${openTicket.orderId ? `#${openTicket.orderId} · ` : ''}${escapeHtml(supportUserLabel(openTicket.tgId))}</h3>
+              <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${openTicket.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (openTicket.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan', 'Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi', 'Новое') : tr('Javob berilgan', 'Отвечено'))}</span>
+            </div>
+            <div>
+              ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, true)}
+            </div>
+            ${openTicket.status !== 'CLOSED' ? `
+              ${renderSupportReplyBarHtml()}
+              <textarea id="sup-admin-message" rows="2" placeholder="${tr('Javob yozing...', 'Напишите ответ...')}" class="w-full p-2.5 border rounded-xl"></textarea>
+              <button onclick="submitAdminSupportReply()" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
+            ` : `<p class="text-center text-gray-400 py-2">${tr('Mijoz bu murojaatni tugatgan.', 'Клиент завершил это обращение.')}</p>`}
+          ` : adminSupportSelectedUser ? `
+            <div class="flex items-center justify-between border-b pb-2">
+              <button onclick="backToAdminSupportUsers()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga', 'Назад')}</button>
+              <h3 class="font-bold text-sm text-gray-900">${escapeHtml(supportUserLabel(adminSupportSelectedUser))}</h3>
+              <span></span>
+            </div>
+            ${selectedUserTickets.map(t => `
+              <div class="border rounded-xl p-2.5 space-y-1 cursor-pointer bg-white" onclick="openAdminSupportChat(${t.id})">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold">${t.orderId ? `📦 #${t.orderId}` : tr('Umumiy', 'Общее')}</span>
+                  <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${t.status === 'CLOSED' ? tr('Tugallangan', 'Завершено') : (t.status === 'OPEN' ? tr('Yangi', 'Новое') : tr('Javob berilgan', 'Отвечено'))}${supportNeedsAttention(t) ? ' •' : ''}</span>
+                </div>
+                <p class="text-[10px] text-gray-400">${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</p>
+                <p>${escapeHtml((t.lastMessage?.body || '').slice(0, 80))}</p>
+              </div>
+            `).join('')}
+          ` : `
+            <h2 class="text-lg font-bold text-slate-800">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</h2>
+            <div class="bg-white rounded-2xl border divide-y overflow-hidden">
+              ${adminSupportTicketsLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : ''}
+              ${(!adminSupportTicketsLoading && !grouped.length) ? `<p class="text-center text-gray-400 py-4">${tr('Murojaatlar yo‘q', 'Обращений нет')}</p>` : ''}
+              ${grouped.map(g => `
+                <div class="p-2.5 flex items-center justify-between cursor-pointer hover:bg-gray-50" onclick="selectAdminSupportUser('${g.tgId}')">
+                  <div>
+                    <p class="font-bold">${escapeHtml(supportUserLabel(g.tgId))}</p>
+                    <p class="text-[10px] text-gray-400">${g.tickets.length} ${tr('ta murojaat', 'обращений')}</p>
+                  </div>
+                  ${g.needsAttention || g.hasOpen ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">${tr('Yangi', 'Новое')}</span>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
     // 5.5. FOYDALANUVCHILAR (MIJOZLAR) TAB — faqat admin ko'radi
     function renderUsers(container) {
       container.innerHTML = `
         <div class="space-y-4">
-          <h2 class="text-lg font-bold text-slate-800">👥 ${t('users_title')}</h2>
+          <div class="flex items-center justify-between gap-2">
+            <button onclick="openDashboard()" class="text-xs font-bold text-blue-600 flex items-center gap-1">‹ ${tr('Dashboard', 'Dashboard')}</button>
+            <h2 class="text-lg font-bold text-slate-800">👥 ${t('users_title')}</h2>
+            <span class="w-16"></span>
+          </div>
           <p class="text-[11px] text-gray-500">${tr("Mijozlar buyurtmalar soni bo'yicha tartiblangan.", "Клиенты отсортированы по количеству заказов.")}</p>
           <div class="bg-white rounded-2xl border divide-y">
             ${usersLoading ? `<p class="text-xs text-blue-500 p-4 text-center">${tr("⏳ Yuklanmoqda...", "⏳ Загрузка...")}</p>` : (usersSummary.length === 0 ? `<p class="text-xs text-gray-400 p-4 text-center">${tr("Hozircha mijozlar yo'q", "Клиентов пока нет")}</p>` : '')}
@@ -3974,34 +4236,58 @@
         return;
       }
 
-      if (activePopupModal === 'DASHBOARD_LITE') {
-        const d = dashboardLiteData;
-        container.innerHTML = `<div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();"><div class="bg-white rounded-t-3xl sm:rounded-3xl max-w-sm w-full max-h-[90dvh] flex flex-col overflow-hidden" onclick="event.stopPropagation()"><div class="p-4 border-b flex justify-between items-center"><h3 class="font-bold">📊 ${tr('Dashboard / Hisobot','Dashboard / Отчёт')}</h3><button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button></div><div class="p-4 overflow-y-auto">${dashboardLiteLoading || !d ? `<p class="text-center py-8 text-gray-400">${tr('Yuklanmoqda...','Загрузка...')}</p>` : `<div class="grid grid-cols-2 gap-2 text-xs"><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Bugungi buyurtmalar','Заказы сегодня')}</p><b class="text-xl">${d.todayOrders}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Bugungi summa','Сумма сегодня')}</p><b>${money(d.todayOrderTotal)}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Joriy oy buyurtmalar','Заказы за месяц')}</p><b class="text-xl">${d.monthOrders}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Oylik buyurtmalar summasi','Сумма заказов за месяц')}</p><b>${money(d.monthOrderTotal)}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Aktiv buyurtmalar','Активные заказы')}</p><b class="text-xl">${d.activeOrders}</b></div><div class="border rounded-xl p-3"><p class="text-gray-500">${tr('Qoldiq 0','Нет в наличии')}</p><b class="text-xl">${d.outOfStock}</b></div><div class="border rounded-xl p-3 col-span-2"><p class="text-gray-500">${tr('Kam qolgan (1–5)','Мало на складе (1–5)')}</p><b class="text-xl">${d.lowStock}</b></div></div>`}</div></div></div>`;
-        return;
-      }
-
       // 2.5: Chiqindi (24 soatlik trash) ko'rinishi.
       if (activePopupModal === 'TRASH') {
         const batches = trashBatches || [];
+        const totalPages = Math.max(1, Math.ceil(batches.length / 10));
+        if (trashPage > totalPages) trashPage = 1;
+        const pageItems = batches.slice((trashPage - 1) * 10, trashPage * 10);
+        const selectedCount = trashSelectedBatchIds.size;
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();">
             <div class="bg-white rounded-t-3xl sm:rounded-3xl max-w-sm w-full max-h-[90dvh] flex flex-col shadow-2xl text-xs overflow-hidden" onclick="event.stopPropagation()">
               <div class="sticky top-0 z-10 bg-white flex items-center justify-between border-b p-4">
                 <h3 class="font-bold text-sm text-gray-900">${tr("🗑️ Chiqindi", "🗑️ Корзина")}</h3>
-                <button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+                <div class="flex items-center gap-1.5">
+                  ${batches.length ? `<button onclick="toggleTrashSelectMode()" class="px-2.5 py-1.5 rounded-xl font-bold ${trashSelectMode ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">${trashSelectMode ? tr('Bekor qilish', 'Отмена') : tr('Tanlash', 'Выбрать')}</button>` : ''}
+                  <button onclick="activePopupModal=null; trashSelectMode=false; trashSelectedBatchIds.clear(); render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+                </div>
               </div>
               <div class="overflow-y-auto p-4 space-y-3"><p class="text-[10px] text-gray-400">${tr("O'chirilgan kataloglar/tovarlar shu yerda 24 soat turadi, keyin butunlay o'chadi.", "Удалённые каталоги/товары хранятся здесь 24 часа, затем удаляются навсегда.")}</p>
+              ${trashSelectMode ? `
+                <div class="flex flex-wrap items-center gap-1.5 bg-slate-50 border rounded-xl p-2">
+                  <button onclick="selectAllVisibleTrashBatches()" class="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-white border">${tr('Sahifadagi barchasi', 'Все на странице')} (${pageItems.length})</button>
+                  <button onclick="selectAllTrashBatches()" class="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-white border">${tr('Barcha', 'Все')} ${batches.length} ${tr('ta', '')}</button>
+                  <button onclick="clearTrashSelection()" class="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-white border">${tr('Tanlovni bekor qilish', 'Снять выбор')}</button>
+                </div>
+              ` : ''}
               ${trashBatches === null ? `<p class="text-center text-gray-400 py-6">${tr('Yuklanmoqda...', 'Загрузка...')}</p>`
                 : batches.length === 0 ? `<p class="text-center text-gray-400 py-6">${tr("Chiqindi bo'sh.", 'Корзина пуста.')}</p>`
-                : `<div class="space-y-2">${batches.map(b => `
-                    <div class="border rounded-xl p-2.5 space-y-1">
-                      <p class="font-bold">${b.kind === 'CATEGORY' ? `📁 ${escapeHtml(b.rootCategoryName || ('#' + b.id))}` : `📦 ${escapeHtml((b.productNames || [])[0] || ('#' + b.id))}`}</p>
+                : `<div class="space-y-2">${pageItems.map(b => `
+                    <div class="border rounded-xl p-2.5 space-y-1 ${trashSelectMode && trashSelectedBatchIds.has(String(b.id)) ? 'border-blue-500 bg-blue-50' : ''}" ${trashSelectMode ? `onclick="toggleTrashBatchSelection(${b.id}, event)"` : ''}>
+                      <div class="flex items-center gap-2">
+                        ${trashSelectMode ? `<span class="w-5 h-5 flex-shrink-0 rounded-full flex items-center justify-center font-black text-[10px] ${trashSelectedBatchIds.has(String(b.id)) ? 'bg-blue-600 text-white' : 'bg-white border text-gray-400'}">${trashSelectedBatchIds.has(String(b.id)) ? '✓' : ''}</span>` : ''}
+                        <p class="font-bold flex-1 min-w-0 truncate">${b.kind === 'CATEGORY' ? `📁 ${escapeHtml(b.rootCategoryName || ('#' + b.id))}` : `📦 ${escapeHtml((b.productNames || [])[0] || ('#' + b.id))}`}</p>
+                      </div>
                       <p class="text-[10px] text-gray-500">${b.categoryCount ? `${b.categoryCount} ${tr('katalog','кат.')} · ` : ''}${b.productCount} ${tr('tovar','тов.')}</p>
                       <p class="text-[10px] text-gray-400">${tr("Muddati", "Истекает")}: ${new Date(b.expiresAt).toLocaleString()}</p>
-                      <div class="grid grid-cols-2 gap-1.5"><button onclick="restoreTrashBatch(${b.id})" class="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded-lg">${tr("♻️ Tiklash", "♻️ Восстановить")}</button><button onclick="purgeTrashBatchNow(${b.id})" class="bg-red-50 text-red-700 border border-red-200 font-bold py-1.5 rounded-lg">${tr("🗑 Butunlay", "🗑 Навсегда")}</button></div>
+                      ${!trashSelectMode ? `<div class="grid grid-cols-2 gap-1.5"><button onclick="restoreTrashBatch(${b.id})" class="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded-lg">${tr("♻️ Tiklash", "♻️ Восстановить")}</button><button onclick="purgeTrashBatchNow(${b.id})" class="bg-red-50 text-red-700 border border-red-200 font-bold py-1.5 rounded-lg">${tr("🗑 Butunlay", "🗑 Навсегда")}</button></div>` : ''}
                     </div>
-                  `).join('')}</div>`}
+                  `).join('')}</div>
+                  ${totalPages > 1 ? `
+                    <div class="flex justify-center items-center flex-wrap gap-1.5 pt-1">
+                      ${Array.from({ length: totalPages }, (_, i) => i + 1).map(pNum => `
+                        <button onclick="trashPage=${pNum}; renderModalContainer();" class="px-3 py-1.5 rounded-xl text-xs font-bold ${trashPage === pNum ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'}">${pNum}</button>
+                      `).join('')}
+                    </div>
+                  ` : ''}`}
               </div>
+              ${trashSelectMode && selectedCount ? `
+                <div class="sticky bottom-0 bg-white border-t p-3 grid grid-cols-2 gap-2">
+                  <button onclick="restoreSelectedTrashBatches()" class="bg-emerald-600 text-white font-bold py-2.5 rounded-xl">♻️ ${tr('Tiklash', 'Восстановить')} (${selectedCount})</button>
+                  <button onclick="purgeSelectedTrashBatches()" class="bg-red-600 text-white font-bold py-2.5 rounded-xl">🗑 ${tr('Butunlay', 'Навсегда')} (${selectedCount})</button>
+                </div>
+              ` : ''}
             </div>
           </div>`;
         return;
@@ -4319,6 +4605,13 @@
                 </div>
               </div>
 
+              <div>
+                <label class="font-bold text-gray-600">${tr("Mavjudlik", "Наличие")}</label>
+                <button onclick="toggleCategoryHideOutOfStock()" class="w-full mt-1 flex items-center justify-between px-3 py-2.5 rounded-xl font-bold ${categoryFilter.hideOutOfStock ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
+                  <span>📦 ${tr("Tugaganlarni yashirish", "Скрыть закончившиеся")}</span><span>${categoryFilter.hideOutOfStock ? '✓' : ''}</span>
+                </button>
+              </div>
+
               <div class="space-y-2">
                 <label class="font-bold text-gray-600">${tr("Saralash", "Сортировка")}</label>
                 <button onclick="toggleCategorySortOption('sortPrice')" class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold ${sortBtnClass('sortPrice')}">
@@ -4568,66 +4861,6 @@
                     `).join('')}
                   </div>
                 ` : ''}
-              `}
-            </div>
-          </div>
-        `;
-        return;
-      }
-
-      // 2-band: admin uchun murojaatlar — endi Support -> User -> Chatlar
-      // -> Chat bosqichli, flat ro'yxat emas. Admin bu yerdan "yozib
-      // boshlay olmaydi" — faqat kelgan murojaatlarni ko'rib javob beradi.
-      if (activePopupModal === 'ADMIN_SUPPORT') {
-        const grouped = groupAdminSupportTicketsByUser();
-        const selectedUserTickets = adminSupportSelectedUser ? adminSupportTickets.filter(t => t.tgId === adminSupportSelectedUser) : [];
-        const openTicket = adminSupportSelectedTicketId ? adminSupportTickets.find(t => t.id === adminSupportSelectedTicketId) : null;
-        container.innerHTML = `
-          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
-            <div class="bg-white rounded-3xl p-5 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-2 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              ${openTicket ? `
-                <div class="flex items-center justify-between border-b pb-2">
-                  <button onclick="backToAdminSupportUserTickets()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
-                  <h3 class="font-bold text-sm text-gray-900">${openTicket.orderId ? `#${openTicket.orderId} · ` : ''}${escapeHtml(supportUserLabel(openTicket.tgId))}</h3>
-                  <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${openTicket.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (openTicket.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}</span>
-                </div>
-                <div>
-                  ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...','Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, true)}
-                </div>
-                ${openTicket.status !== 'CLOSED' ? `
-                  ${renderSupportReplyBarHtml()}
-                  <textarea id="sup-admin-message" rows="2" placeholder="${tr('Javob yozing...','Напишите ответ...')}" class="w-full p-2.5 border rounded-xl"></textarea>
-                  <button onclick="submitAdminSupportReply()" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish','Отправить')}</button>
-                ` : `<p class="text-center text-gray-400 py-2">${tr('Mijoz bu murojaatni tugatgan.','Клиент завершил это обращение.')}</p>`}
-              ` : adminSupportSelectedUser ? `
-                <div class="flex items-center justify-between border-b pb-2">
-                  <button onclick="backToAdminSupportUsers()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
-                  <h3 class="font-bold text-sm text-gray-900">${escapeHtml(supportUserLabel(adminSupportSelectedUser))}</h3>
-                  <span></span>
-                </div>
-                ${selectedUserTickets.map(t => `
-                  <div class="border rounded-xl p-2.5 space-y-1 cursor-pointer" onclick="openAdminSupportChat(${t.id})">
-                    <div class="flex items-center justify-between">
-                      <span class="font-bold">${t.orderId ? `📦 #${t.orderId}` : tr('Umumiy','Общее')}</span>
-                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${t.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (t.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}${supportNeedsAttention(t) ? ' •' : ''}</span>
-                    </div>
-                    <p class="text-[10px] text-gray-400">${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</p>
-                    <p>${escapeHtml((t.lastMessage?.body || '').slice(0, 80))}</p>
-                  </div>
-                `).join('')}
-              ` : `
-                <h3 class="font-bold text-sm text-gray-900 border-b pb-2">💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}</h3>
-                ${adminSupportTicketsLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...','Загрузка...')}</p>` : ''}
-                ${(!adminSupportTicketsLoading && !grouped.length) ? `<p class="text-center text-gray-400 py-4">${tr('Murojaatlar yo‘q','Обращений нет')}</p>` : ''}
-                ${grouped.map(g => `
-                  <div class="border rounded-xl p-2.5 flex items-center justify-between cursor-pointer" onclick="selectAdminSupportUser('${g.tgId}')">
-                    <div>
-                      <p class="font-bold">${escapeHtml(supportUserLabel(g.tgId))}</p>
-                      <p class="text-[10px] text-gray-400">${g.tickets.length} ${tr('ta murojaat','обращений')}</p>
-                    </div>
-                    ${g.needsAttention || g.hasOpen ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">${tr('Yangi','Новое')}</span>` : ''}
-                  </div>
-                `).join('')}
               `}
             </div>
           </div>
@@ -5728,16 +5961,189 @@
         showActionToast(tr('✅ Butunlay o‘chirildi','✅ Удалено навсегда'), 'success', 1500);
       } catch (e) { console.error(e); alert(tr('❌ O‘chirishda xatolik: ','❌ Ошибка удаления: ') + (e.message || e)); }
     }
-    async function openDashboardLite() {
-      dashboardLiteData = null; dashboardLiteLoading = true; activePopupModal = 'DASHBOARD_LITE'; render();
-      try { dashboardLiteData = await callApi('get_dashboard_lite', {}); }
-      catch (e) { console.error(e); dashboardLiteData = null; alert(tr('❌ Dashboard yuklanmadi: ','❌ Dashboard не загружен: ') + (e.message || e)); }
-      finally { dashboardLiteLoading = false; if (activePopupModal === 'DASHBOARD_LITE') renderModalContainer(); }
+    function dashboardRangeBounds(preset) {
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const endExclusive = new Date(startOfToday.getTime() + 24 * 3600 * 1000);
+      if (preset === '7d') return { from: new Date(startOfToday.getTime() - 6 * 24 * 3600 * 1000), to: endExclusive };
+      if (preset === '30d') return { from: new Date(startOfToday.getTime() - 29 * 24 * 3600 * 1000), to: endExclusive };
+      if (preset === 'month') return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: endExclusive };
+      if (preset === 'custom') {
+        const from = dashboardCustomFrom ? new Date(dashboardCustomFrom) : startOfToday;
+        const toBase = dashboardCustomTo ? new Date(dashboardCustomTo) : startOfToday;
+        return { from, to: new Date(toBase.getTime() + 24 * 3600 * 1000) };
+      }
+      return { from: startOfToday, to: endExclusive };
+    }
+
+    function openDashboard() {
+      dashboardReturnTab = currentTab === 'dashboard' ? dashboardReturnTab : currentTab;
+      currentTab = 'dashboard';
+      render();
+      loadDashboard();
+      loadUsersLazy(); // "Eng faol mijozlar" ro'yxati openUserModal orqali usersSummary'ga tayanadi
+    }
+
+    function closeDashboard() {
+      currentTab = dashboardReturnTab || 'warehouse';
+      render();
+    }
+
+    function setDashboardRangePreset(preset) {
+      dashboardRangePreset = preset;
+      if (preset === 'custom') { render(); return; }
+      loadDashboard();
+    }
+
+    async function loadDashboard() {
+      dashboardLoading = true;
+      render();
+      try {
+        const { from, to } = dashboardRangeBounds(dashboardRangePreset);
+        dashboardData = await callApi('get_dashboard', { from: from.toISOString(), to: to.toISOString() });
+      } catch (e) {
+        console.error(e);
+        dashboardData = null;
+        alert(tr('❌ Dashboard yuklanmadi: ', '❌ Dashboard не загружен: ') + (e.message || e));
+      } finally {
+        dashboardLoading = false;
+        if (currentTab === 'dashboard') render();
+      }
+    }
+
+    function dashboardStatCard(opts) {
+      const { icon, label, value, tint } = opts;
+      const tints = {
+        blue: 'bg-blue-50 border-blue-100 text-blue-700',
+        amber: 'bg-amber-50 border-amber-100 text-amber-700',
+        emerald: 'bg-emerald-50 border-emerald-100 text-emerald-700',
+        violet: 'bg-violet-50 border-violet-100 text-violet-700',
+        sky: 'bg-sky-50 border-sky-100 text-sky-700',
+        red: 'bg-red-50 border-red-100 text-red-700',
+      };
+      return `
+        <div class="rounded-2xl border p-3 ${tints[tint] || tints.blue}">
+          <div class="flex items-center gap-1.5 text-[10px] font-bold opacity-80"><span>${icon}</span><span>${label}</span></div>
+          <p class="mt-1 text-lg font-black leading-tight">${value}</p>
+        </div>`;
+    }
+
+    function renderDashboard(container) {
+      const d = dashboardData;
+      const presets = [
+        { id: 'today', label: tr('Bugun', 'Сегодня') },
+        { id: '7d', label: tr('7 kun', '7 дней') },
+        { id: '30d', label: tr('30 kun', '30 дней') },
+        { id: 'month', label: tr('Shu oy', 'Этот месяц') },
+        { id: 'custom', label: tr('Ixtiyoriy', 'Период') },
+      ];
+      container.innerHTML = `
+        <div class="space-y-4">
+          <div class="flex items-center justify-between gap-2">
+            <button onclick="closeDashboard()" class="text-xs font-bold text-blue-600 flex items-center gap-1">‹ ${tr('Orqaga', 'Назад')}</button>
+            <h2 class="text-lg font-bold text-slate-800">📊 ${tr('Dashboard / Hisobot', 'Dashboard / Отчёт')}</h2>
+            <span class="w-10"></span>
+          </div>
+
+          <div class="flex flex-wrap gap-1.5">
+            ${presets.map(p => `<button onclick="setDashboardRangePreset('${p.id}')" class="px-2.5 py-1.5 rounded-xl text-[11px] font-bold ${dashboardRangePreset === p.id ? 'bg-slate-900 text-white' : 'bg-white border text-gray-600'}">${p.label}</button>`).join('')}
+          </div>
+          ${dashboardRangePreset === 'custom' ? `
+            <div class="bg-white rounded-2xl border p-3 flex flex-wrap items-end gap-2 text-xs">
+              <div><label class="block font-bold text-gray-500 mb-1">${tr('Dan', 'С')}</label><input type="date" id="dash-from" value="${escapeHtml(dashboardCustomFrom)}" class="p-2 border rounded-xl"></div>
+              <div><label class="block font-bold text-gray-500 mb-1">${tr('Gacha', 'По')}</label><input type="date" id="dash-to" value="${escapeHtml(dashboardCustomTo)}" class="p-2 border rounded-xl"></div>
+              <button onclick="dashboardCustomFrom=document.getElementById('dash-from').value; dashboardCustomTo=document.getElementById('dash-to').value; loadDashboard();" class="bg-blue-600 text-white font-bold px-3 py-2 rounded-xl">${tr("Qo'llash", 'Применить')}</button>
+            </div>
+          ` : ''}
+
+          ${dashboardLoading || !d ? `<p class="text-center text-gray-400 py-10">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : `
+            <div>
+              <h3 class="text-xs font-black text-gray-500 mb-1.5">💰 ${tr('Savdo', 'Продажи')}</h3>
+              <div class="grid grid-cols-2 gap-2">
+                ${dashboardStatCard({ icon: '☀️', label: tr('Bugungi savdo', 'Продажи сегодня'), value: money(d.sales.today), tint: 'blue' })}
+                ${dashboardStatCard({ icon: '📅', label: tr('Haftalik savdo', 'Продажи за неделю'), value: money(d.sales.week), tint: 'blue' })}
+                ${dashboardStatCard({ icon: '🗓️', label: tr('Oylik savdo', 'Продажи за месяц'), value: money(d.sales.month), tint: 'blue' })}
+                ${dashboardStatCard({ icon: '🧾', label: tr('Tanlangan davr buyurtmalari', 'Заказы за период'), value: String(d.sales.rangeOrderCount), tint: 'blue' })}
+              </div>
+            </div>
+
+            <div>
+              <h3 class="text-xs font-black text-gray-500 mb-1.5">📦 ${tr('Buyurtmalar (tanlangan davr)', 'Заказы (за период)')}</h3>
+              <div class="grid grid-cols-2 gap-2">
+                ${dashboardStatCard({ icon: '🆕', label: tr('Yangi', 'Новые'), value: String(d.orders.byStatus.NEW || 0), tint: 'amber' })}
+                ${dashboardStatCard({ icon: '⏳', label: tr('Tayyorlanmoqda', 'В обработке'), value: String(d.orders.byStatus.PROCESSING || 0), tint: 'amber' })}
+                ${dashboardStatCard({ icon: '✅', label: tr('Yetkazilgan', 'Доставлено'), value: String(d.orders.byStatus.DELIVERED || 0), tint: 'emerald' })}
+                ${dashboardStatCard({ icon: '❌', label: tr('Bekor qilingan', 'Отменено'), value: String(d.orders.byStatus.CANCELLED || 0), tint: 'red' })}
+              </div>
+            </div>
+
+            <div>
+              <h3 class="text-xs font-black text-gray-500 mb-1.5">🏷️ ${tr('Tovarlar', 'Товары')}</h3>
+              <div class="grid grid-cols-2 gap-2">
+                ${dashboardStatCard({ icon: '📚', label: tr('Jami mahsulot', 'Всего товаров'), value: String(d.products.total), tint: 'emerald' })}
+                ${dashboardStatCard({ icon: '⚠️', label: tr('Kam qolgan', 'Мало на складе'), value: String(d.products.lowStock), tint: 'amber' })}
+                ${dashboardStatCard({ icon: '🚫', label: tr('Tugagan', 'Закончились'), value: String(d.products.outOfStock), tint: 'red' })}
+              </div>
+              ${d.products.top.length ? `
+                <div class="mt-2 bg-white rounded-2xl border divide-y overflow-hidden">
+                  <p class="px-3 py-2 text-[10px] font-black text-gray-400">${tr('Eng ko‘p sotilgan', 'Самые продаваемые')}</p>
+                  ${d.products.top.map((p, i) => `
+                    <div class="px-3 py-2 flex items-center gap-2 text-xs">
+                      <span class="font-black text-gray-300 w-4">${i + 1}</span>
+                      <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-7 h-7 rounded-lg object-cover flex-shrink-0">
+                      <span class="flex-1 truncate font-bold text-gray-700">${escapeHtml(p.name)}</span>
+                      <span class="font-black text-emerald-700">${p.soldCount}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+            </div>
+
+            <div>
+              <h3 class="text-xs font-black text-gray-500 mb-1.5">👥 ${tr('Mijozlar', 'Клиенты')}</h3>
+              <div class="grid grid-cols-2 gap-2">
+                ${dashboardStatCard({ icon: '👤', label: tr('Jami mijozlar', 'Всего клиентов'), value: String(d.customers.total), tint: 'violet' })}
+                ${dashboardStatCard({ icon: '✨', label: tr('Yangi mijozlar', 'Новые клиенты'), value: String(d.customers.new), tint: 'violet' })}
+                ${dashboardStatCard({ icon: '🔁', label: tr('Qayta buyurtma', 'Повторные заказы'), value: String(d.customers.returning), tint: 'violet' })}
+              </div>
+              <button onclick="openAllCustomersPage()" class="mt-2 w-full text-center text-[11px] font-bold text-violet-700 bg-violet-50 border border-violet-100 rounded-xl py-2">${tr('Barcha mijozlarni ko‘rish →', 'Все клиенты →')}</button>
+              ${d.customers.top.length ? `
+                <div class="mt-2 bg-white rounded-2xl border divide-y overflow-hidden">
+                  <p class="px-3 py-2 text-[10px] font-black text-gray-400">${tr('Eng faol mijozlar', 'Самые активные клиенты')}</p>
+                  ${d.customers.top.map(u => `
+                    <div class="px-3 py-2 flex items-center justify-between text-xs cursor-pointer hover:bg-gray-50" onclick="openUserModal('${u.tgId}')">
+                      <span class="font-bold text-gray-700 truncate">${escapeHtml(u.userName)}</span>
+                      <span class="font-black text-violet-700">${u.totalOrders} ${tr('buyurtma', 'заказов')}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+            </div>
+
+            <div>
+              <h3 class="text-xs font-black text-gray-500 mb-1.5">📍 ${tr('Hududlar (tanlangan davr)', 'Регионы (за период)')}</h3>
+              ${d.regions.length ? `
+                <div class="bg-white rounded-2xl border divide-y overflow-hidden">
+                  ${d.regions.map(r => `
+                    <div class="px-3 py-2 flex items-center justify-between text-xs">
+                      <span class="font-bold text-gray-700">${escapeHtml(r.region)}</span>
+                      <span class="font-black text-sky-700">${r.count}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : `<p class="text-center text-gray-400 py-4 text-xs">${tr("Bu davrda buyurtma yo'q", 'За этот период заказов нет')}</p>`}
+            </div>
+          `}
+        </div>
+      `;
     }
 
     // 2.5: Chiqindi (trash) ko'rinishi.
     async function openTrashModal() {
       trashBatches = null;
+      trashPage = 1;
+      trashSelectMode = false;
+      trashSelectedBatchIds.clear();
       activePopupModal = 'TRASH';
       render();
       try {
@@ -5761,6 +6167,82 @@
         console.error(e);
         showActionToast(tr('❌ Tiklanmadi', '❌ Не восстановлено'), 'error', 1800);
         alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+      }
+    }
+
+    // 9-11-band: Trash bulk select. "Multi-select" batch darajasida ishlaydi
+    // — har bir batch allaqachon bitta atomik birlik (bitta mahsulot yoki
+    // bitta bulk-trash/kategoriya operatsiyasi natijasi), shu sabab bir
+    // nechta batch'ni birga tanlab tiklash/o'chirish xavfsiz semantика.
+    function toggleTrashSelectMode() {
+      trashSelectMode = !trashSelectMode;
+      trashSelectedBatchIds.clear();
+      renderModalContainer();
+    }
+    function toggleTrashBatchSelection(batchId, event) {
+      if (event) event.stopPropagation();
+      const key = String(batchId);
+      if (trashSelectedBatchIds.has(key)) trashSelectedBatchIds.delete(key); else trashSelectedBatchIds.add(key);
+      renderModalContainer();
+    }
+    function selectAllVisibleTrashBatches() {
+      const batches = trashBatches || [];
+      const pageItems = batches.slice((trashPage - 1) * 10, trashPage * 10);
+      for (const b of pageItems) trashSelectedBatchIds.add(String(b.id));
+      renderModalContainer();
+    }
+    function selectAllTrashBatches() {
+      for (const b of (trashBatches || [])) trashSelectedBatchIds.add(String(b.id));
+      renderModalContainer();
+    }
+    function clearTrashSelection() {
+      trashSelectedBatchIds.clear();
+      renderModalContainer();
+    }
+    async function restoreSelectedTrashBatches() {
+      const ids = [...trashSelectedBatchIds].map(Number);
+      if (!ids.length) return;
+      showActionToast(tr('⏳ Tiklanmoqda...', '⏳ Восстановление...'), 'saving');
+      try {
+        const result = await callApi('restore_trash_batches', { batchIds: ids });
+        const failedIds = new Set((result.results || []).filter(r => !r.ok).map(r => r.batchId));
+        await loadCatalog();
+        if (trashBatches) trashBatches = trashBatches.filter(b => failedIds.has(b.id) || !ids.includes(b.id));
+        trashSelectedBatchIds.clear();
+        trashSelectMode = false;
+        render();
+        if (failedIds.size) {
+          showActionToast(tr(`⚠️ ${failedIds.size} tasi tiklanmadi`, `⚠️ ${failedIds.size} не восстановлено`), 'error', 2200);
+        } else {
+          showActionToast(tr('✅ Tiklandi', '✅ Восстановлено'), 'success', 1500);
+        }
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Xatolik', '❌ Ошибка'), 'error', 1800);
+        alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+      }
+    }
+    async function purgeSelectedTrashBatches() {
+      const ids = [...trashSelectedBatchIds].map(Number);
+      if (!ids.length) return;
+      if (!confirm(`${ids.length} ${tr("ta chiqindi butunlay o'chirilsinmi? Bu amalni ortga qaytarib bo'lmaydi.", "элементов будет удалено навсегда. Это действие нельзя отменить.")}`)) return;
+      showActionToast(tr('⏳ Butunlay o‘chirilmoqda...', '⏳ Удаление навсегда...'), 'saving');
+      try {
+        const result = await callApi('purge_trash_batches_now', { batchIds: ids });
+        const failedIds = new Set((result.results || []).filter(r => !r.ok).map(r => r.batchId));
+        if (trashBatches) trashBatches = trashBatches.filter(b => failedIds.has(b.id) || !ids.includes(b.id));
+        trashSelectedBatchIds.clear();
+        trashSelectMode = false;
+        render();
+        if (failedIds.size) {
+          showActionToast(tr(`⚠️ ${failedIds.size} tasi o'chmadi`, `⚠️ ${failedIds.size} не удалено`), 'error', 2200);
+        } else {
+          showActionToast(tr('✅ Butunlay o‘chirildi', '✅ Удалено навсегда'), 'success', 1500);
+        }
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Xatolik', '❌ Ошибка'), 'error', 1800);
+        alert(tr('❌ O‘chirishda xatolik: ', '❌ Ошибка удаления: ') + (e.message || e));
       }
     }
 

@@ -1505,6 +1505,51 @@ body { background: var(--fitcore-page-bg) !important; color: var(--fitcore-text)
 .fitcore-topbar.bg-white { background-color: var(--fitcore-header-bg) !important; }
 .fitcore-bottom-nav.bg-white { background-color: var(--fitcore-bottomnav-bg) !important; }
 
+/* ============================================================
+   DESIGN SYSTEM — semantic holat ranglari (Danger/Success/Warning/Muted).
+   4-BLOK'dagi --fitcore-primary bilan bir xil uslub: yangi rang emas,
+   allaqachon ishlatilayotgan Tailwind classlarini (ular turli joyda
+   turlicha soyada — masalan text-red-500/600/700 aralash ishlatilgan)
+   BITTA izchil o'zgaruvchiga birlashtiradi. Default qiymatlar eng ko'p
+   ishlatilgan soyaga teng qilib tanlangan — hech narsa vizual jihatdan
+   ZO'RAKI o'zgarmaydi, faqat keyingi safar rangni bitta joydan
+   o'zgartirish mumkin bo'ladi. Faqat ilova UI holatlari (xato/tasdiq/
+   ogohlantirish) — Instagram/Facebook brend ikonkalari yoki mahsulot
+   rasmlariga tegilmagan (ular bu classlardan foydalanmaydi).
+   ============================================================ */
+:root {
+  --fitcore-danger: var(--color-red-600);
+  --fitcore-danger-soft: var(--color-red-50);
+  --fitcore-danger-border: var(--color-red-200);
+  --fitcore-success: var(--color-emerald-600);
+  --fitcore-success-soft: var(--color-emerald-50);
+  --fitcore-warning: var(--color-amber-700);
+  --fitcore-warning-soft: var(--color-amber-50);
+  --fitcore-muted: var(--color-gray-400);
+}
+.text-red-500, .text-red-600, .text-red-700 { color: var(--fitcore-danger) !important; }
+.bg-red-600 { background-color: var(--fitcore-danger) !important; }
+.bg-red-600.text-white { color: #fff !important; }
+.bg-red-50, .bg-red-100 { background-color: var(--fitcore-danger-soft) !important; }
+.border-red-200, .border-red-500 { border-color: var(--fitcore-danger-border) !important; }
+
+.text-emerald-600, .text-emerald-700, .text-green-600 { color: var(--fitcore-success) !important; }
+.bg-emerald-600, .bg-green-600 { background-color: var(--fitcore-success) !important; }
+.bg-emerald-600.text-white, .bg-green-600.text-white { color: #fff !important; }
+.bg-emerald-50 { background-color: var(--fitcore-success-soft) !important; }
+
+.text-amber-600, .text-amber-700, .text-amber-800 { color: var(--fitcore-warning) !important; }
+.bg-amber-500, .bg-amber-600 { background-color: var(--fitcore-warning) !important; }
+.bg-amber-500.text-white, .bg-amber-600.text-white { color: #fff !important; }
+.bg-amber-50 { background-color: var(--fitcore-warning-soft) !important; }
+
+/* Standart tugma o'lchamlari — Telegram mobile uchun tap area kichik
+   bo'lmasin. Mavjud tugma classlariga QO'SHIMCHA sifatida ishlatiladi
+   (yangi bo'limlarda: Dashboard/Ombor/Support/Trash), eski tugmalarning
+   className'ga tegilmagan — shu sabab hech qanday joy buzilmaydi. */
+.fitcore-btn { min-height: 44px; border-radius: 0.75rem; font-weight: 700; }
+.fitcore-icon-btn { min-width: 36px; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; }
+
 /* 2-10-band: qo'llab-quvvatlash chat UI — layout uchun bir nechta Tailwind
    utility (justify-end, max-w-[80%], opacity-70, va h.k.) bu build'da yo'q
    ekanligi aniqlandi (xuddi .inline-flex kabi), shuning uchun bu ehtiyoj
