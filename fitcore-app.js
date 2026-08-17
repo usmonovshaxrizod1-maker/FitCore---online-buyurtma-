@@ -5269,6 +5269,15 @@
     }
 
     // 2.1: tartib tugmalari — faqat bir xil ota-katalog ichidagi qo'shnilar bilan almashadi.
+    //
+    // MUHIM TUZATISH (real production DB'da tasdiqlangan): bazadagi barcha
+    // kategoriyalarning sort_order'i 0 ekan (hech qachon farqlantirilmagan).
+    // Eski kod faqat ikkita qo'shnining QIYMATINI almashtirar edi — 0 bilan
+    // 0'ni almashtirish esa hech narsani o'zgartirmaydi, shuning uchun tugma
+    // "ishlamayotganday" ko'rinardi. Endi ikkalasi ARRAY ICHIDA joy
+    // almashadi, so'ng BUTUN qo'shnilar ro'yxati 0..N-1 tarzida qaytadan
+    // raqamlanadi — bu bir martalik ishlatishning o'zi shu guruhdagi
+    // barcha 0 qiymatlarni ham tuzatib (normalizatsiya qilib) qo'yadi.
     async function moveCategoryOrder(categoryId, direction, e) {
       if (e) e.stopPropagation();
       const cat = categories.find(c => c.id === categoryId);
@@ -5278,19 +5287,20 @@
       const idx = siblings.findIndex(c => c.id === categoryId);
       const swapIdx = idx + direction;
       if (swapIdx < 0 || swapIdx >= siblings.length) return;
-      const other = siblings[swapIdx];
-      const catOrder = cat.sortOrder || 0, otherOrder = other.sortOrder || 0;
-      cat.sortOrder = otherOrder; other.sortOrder = catOrder;
 
-      // Optimistic: tugma darhol ishlaydi, server javobi fon rejimida keladi
-      // (moveProductSort bilan bir xil sodda pattern — qo'shimcha guard yo'q).
+      const reordered = siblings.slice();
+      [reordered[idx], reordered[swapIdx]] = [reordered[swapIdx], reordered[idx]];
+      const previousOrders = reordered.map(c => c.sortOrder);
+      reordered.forEach((c, i) => { c.sortOrder = i; });
+
+      // Optimistic: tugma darhol ishlaydi, server javobi fon rejimida keladi.
       render();
       try {
-        await callApi('reorder_categories', { items: [{ id: cat.id, sortOrder: cat.sortOrder }, { id: other.id, sortOrder: other.sortOrder }] });
+        await callApi('reorder_categories', { items: reordered.map(c => ({ id: c.id, sortOrder: c.sortOrder })) });
         saveCatalogCache();
       } catch (err) {
         console.error(err);
-        cat.sortOrder = catOrder; other.sortOrder = otherOrder;
+        reordered.forEach((c, i) => { c.sortOrder = previousOrders[i]; });
         render();
         alert(tr('❌ Tartibni saqlab bo\'lmadi: ', '❌ Не удалось сохранить порядок: ') + (err.message || err));
       }
