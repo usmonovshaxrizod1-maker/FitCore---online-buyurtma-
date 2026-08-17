@@ -243,6 +243,10 @@
     const TOP_LEVEL_REGIONS = REGION_DEFS.map(r => ({ id: r.code, nameUz: r.nameUz, nameRu: r.nameRu }));
     const TOP_LEVEL_REGION_IDS = TOP_LEVEL_REGIONS.map(region => region.id);
     const commerce = window.FitcoreCommerce;
+    // Rasm siqish/saqlash chegaralari (mahsulot/kategoriya/logotip).
+    const TARGET_IMAGE_BYTES = 2 * 1024 * 1024;
+    const MAX_STORED_IMAGE_BYTES = 5 * 1024 * 1024;
+    const MAX_RECEIPT_BYTES = 6 * 1024 * 1024;
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
@@ -437,6 +441,10 @@
     // 15-band: rad etilgan chekni qayta yuborish uchun alohida state —
     // checkout state'idan mustaqil (checkout draft bilan aralashib ketmasin).
     let resubmitOrderId = null;
+    let resubmitReceiptFile = null;
+    let resubmitReceiptPreparing = null;
+    let resubmitReceiptPreviewUrl = null;
+    let resubmitReceiptSelectionVersion = 0;
     // 1.14: BTS/EMU filial tanlash — mijoz qo'lda manzil yozmaydi.
     let checkoutBranches = [];
     let checkoutBranchesLoading = false;
@@ -475,11 +483,23 @@
     let dashboardLiteData = null;
     let dashboardLiteLoading = false;
 
-    // Rasm: faqat URL matn maydoni orqali kiritiladi (lokal fayl yo'q).
+    // Rasm: lokal fayl (siqilib, base64 sifatida save so'rovi ichida
+    // yuboriladi) YOKI HTTPS URL — ikkalasi ham qo'llab-quvvatlanadi.
+    let tempImageFile = null;
+    let tempImagePreviewUrl = null;
+    let tempImagePreparingPromise = null;
     let tempImageUrl = null;
     let tempImageExistingUrl = null;
+    let tempImageSelectionVersion = 0;
 
     function clearTempImageSelection() {
+      tempImageSelectionVersion += 1;
+      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
+        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
+      }
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
+      tempImagePreparingPromise = null;
       tempImageUrl = null;
       tempImageExistingUrl = null;
     }
@@ -488,12 +508,25 @@
       tempImageExistingUrl = hasProductImage({ img: existingUrl }) ? String(existingUrl).trim() : null;
     }
     function takeTempImageSnapshot() {
-      const snap = { url: tempImageUrl };
+      const snap = {
+        file: tempImageFile,
+        preview: tempImagePreviewUrl,
+        preparing: tempImagePreparingPromise,
+        url: tempImageUrl,
+      };
+      tempImageFile = null;
+      tempImagePreviewUrl = null;
+      tempImagePreparingPromise = null;
       tempImageUrl = null;
       tempImageExistingUrl = null;
+      tempImageSelectionVersion += 1;
       return snap;
     }
-    function releaseImageSnapshot(_snap) {}
+    function releaseImageSnapshot(snap) {
+      if (snap?.preview && String(snap.preview).startsWith('blob:')) {
+        try { URL.revokeObjectURL(snap.preview); } catch (_) {}
+      }
+    }
 
     // Joriy ko'rinib turgan mahsulotlar ro'yxati (⬆️⬇️ tugmalari shu ro'yxat ichida ishlashi uchun)
     let currentVisibleProductIds = [];
@@ -1215,16 +1248,95 @@
       }
     }
 
-    // ============ RASM: FAQAT URL ============
-    // Lokal fayldan yuklash (siqish, signed-URL/base64 yuklash, MIME/hajm
-    // tekshiruvi, Telegram WebView o'qish pipeline'i) butunlay olib
-    // tashlandi — ko'p round davomida real qurilmalarda beqaror ishladi
-    // (tasodifiy rad etish/hang, format va hajmga bog'liq bo'lmagan holda).
-    // Admin endi faqat tayyor (boshqa joyda joylashtirilgan) rasmning
-    // to'g'ridan-to'g'ri HTTPS URL manzilini kiritadi — yuklash/konvertatsiya
-    // shart emas, shuning uchun bu yo'lda "o'qish/yuklash xatosi" umuman
-    // bo'lishi mumkin emas. Rasm qo'shish keyingi bosqichda boshqa (hali
-    // belgilanmagan) yondashuv bilan qaytadan quriladi.
+    // ============ RASM: LOKAL FAYL + URL ============
+    // Lokal fayl tanlansa: hech qanday qat'iy MIME ro'yxati bilan OLDINDAN
+    // rad etilmaydi (eski bug: Android content:// orqali tanlangan haqiqiy
+    // JPEG fayllarning `file.type`i ko'pincha bo'sh/nostandart bo'lib,
+    // 10 tadan 8 hol qat'iy ro'yxat tufayli noto'g'ri rad etilardi). Buning
+    // o'rniga fayl to'g'ridan-to'g'ri createImageBitmap(file) orqali dekodlashga
+    // urinib ko'riladi (FileReader/ArrayBuffer bilan OLDINDAN o'qish YO'Q —
+    // aynan shu oldindan o'qish Telegram WebView'da abadiy osilib qolish
+    // bug'ining sababi edi). Faqat DEKOD chindan muvaffaqiyatsiz bo'lsagina
+    // (haqiqatan qo'llab-quvvatlanmaydigan format) xato ko'rsatiladi.
+    async function decodeImageSource(blob) {
+      if (typeof createImageBitmap === 'function') {
+        try {
+          const bitmap = await createImageBitmap(blob);
+          return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close?.() };
+        } catch (_) {}
+      }
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(blob);
+        img.onload = () => resolve({ source: img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, close: () => URL.revokeObjectURL(url) });
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image_decode_failed')); };
+        img.src = url;
+      });
+    }
+
+    function canvasToBlob(canvas, mimeType, quality) {
+      return new Promise(resolve => canvas.toBlob(resolve, mimeType, quality));
+    }
+
+    // Kirish formatidan qat'iy nazar (jpg/png/webp/gif/bmp/heic — brauzer
+    // dekodlay olgan hammasi), chiqish PNG (shaffoflik saqlanishi kerak
+    // bo'lsa, masalan logotip) yoki JPEG (boshqa barcha holatlarda, eng
+    // kichik hajm uchun) bo'lib qayta kodlanadi — shu "siqish" talabining o'zi.
+    async function compressImage(file, maxDim, quality) {
+      let decoded;
+      try { decoded = await decodeImageSource(file); }
+      catch (e) { throw e; }
+      try {
+        let width = decoded.width, height = decoded.height;
+        if (!width || !height) throw new Error('image_decode_failed');
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('image_decode_failed');
+        ctx.drawImage(decoded.source, 0, 0, width, height);
+        const outputType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        const blob = await canvasToBlob(canvas, outputType, outputType === 'image/png' ? undefined : quality);
+        if (!blob) throw new Error('image_decode_failed');
+        return blob;
+      } finally { decoded.close?.(); }
+    }
+
+    async function compressImageToLimit(file, maxBytes, maxDim = 1000, quality = 0.8) {
+      const dims = Array.from(new Set([maxDim, Math.min(maxDim, 1200), Math.min(maxDim, 900), Math.min(maxDim, 720), Math.min(maxDim, 600)]))
+        .filter((n) => Number(n) > 0).sort((a, b) => b - a);
+      const qualities = [quality, Math.min(quality, 0.75), 0.65, 0.55, 0.48];
+      let best = null;
+      let lastErr = null;
+      for (let i = 0; i < dims.length; i++) {
+        try {
+          const candidate = await compressImage(file, dims[i], qualities[Math.min(i, qualities.length - 1)]);
+          if (candidate && (!best || candidate.size < best.size)) best = candidate;
+          if (candidate && candidate.size <= maxBytes) return candidate;
+        } catch (e) { lastErr = e; }
+      }
+      if (!best) throw lastErr || new Error('image_decode_failed');
+      return best;
+    }
+
+    // Faqat CANVAS orqali ISHLAB CHIQARILGAN (allaqachon xotiradagi, native
+    // fayl handle'iga bog'liq bo'lmagan) blob ustida ishlaydi — shuning
+    // uchun bu yerda FileReader xavfsiz (WebView hang muammosi faqat asl
+    // native fayl handle'ini o'qishda bo'lgan).
+    async function blobToBase64(blob) {
+      const buf = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+      }
+      return btoa(binary);
+    }
+
     function validateExternalImageUrl(value) {
       const raw = String(value || '').trim();
       if (!raw) return null;
@@ -1242,10 +1354,18 @@
       el.classList.toggle('hidden', !message);
     }
 
-    function onImageUrlInput(value, previewId, errorId) {
+    function onImageUrlInput(value, previewId, errorId, buttonId) {
       const raw = String(value || '').trim();
+      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
+        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
+      }
+      tempImageFile = null;
+      tempImagePreparingPromise = null;
+      tempImagePreviewUrl = null;
       tempImageUrl = raw || null;
       const preview = document.getElementById(previewId);
+      const pickerButton = buttonId ? document.getElementById(buttonId) : null;
+      if (pickerButton) pickerButton.textContent = `🖼 ${tr('Rasm tanlash', 'Выбрать фото')}`;
 
       if (!raw) {
         setImageUrlError(errorId, '');
@@ -1277,24 +1397,76 @@
 
     function xlImageText(uz, ru) { return tr(uz, ru); }
 
-    // existingImg berilsa (tahrirlash) va URL maydoni bo'sh qoldirilsa —
-    // eski rasm o'zgarishsiz qoladi. Yangi qo'shishda existingImg=null.
-    function resolveImageUrlOrKeep(snapshot, existingImg = null) {
-      if (snapshot?.url) return validateExternalImageUrl(snapshot.url);
-      return existingImg || null;
+    // Fayl tanlangach: preview DARHOL original File'dan ko'rsatiladi (hech
+    // qanday o'qishga hojatsiz), so'ng fonda siqish tugagach preview
+    // mustaqil (canvas'dan yaratilgan) nusxaga o'tkaziladi.
+    async function onImagePicked(event, previewId, buttonId, urlInputId, errorId) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      const selectionVersion = ++tempImageSelectionVersion;
+      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
+        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
+      }
+      tempImageFile = file;
+      try { tempImagePreviewUrl = URL.createObjectURL(file); } catch (_) { tempImagePreviewUrl = null; }
+      tempImageUrl = null;
+      const urlInput = urlInputId ? document.getElementById(urlInputId) : null;
+      if (urlInput) urlInput.value = '';
+      if (errorId) setImageUrlError(errorId, '');
+      const prev = document.getElementById(previewId);
+      if (prev && tempImagePreviewUrl) { prev.src = tempImagePreviewUrl; prev.classList.remove('hidden'); }
+      const pickerButton = buttonId ? document.getElementById(buttonId) : null;
+      if (pickerButton) pickerButton.textContent = `🖼 ${tr('Rasmni almashtirish', 'Заменить фото')}`;
+
+      const preparing = compressImageToLimit(file, TARGET_IMAGE_BYTES, 1000, 0.8).then((compressed) => {
+        if (selectionVersion !== tempImageSelectionVersion || tempImagePreparingPromise !== preparing) return compressed;
+        try {
+          tempImageFile = compressed;
+          const stableUrl = URL.createObjectURL(compressed);
+          const oldUrl = tempImagePreviewUrl;
+          tempImagePreviewUrl = stableUrl;
+          if (prev) { prev.src = stableUrl; prev.classList.remove('hidden'); }
+          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
+        } catch (_) {}
+        return compressed;
+      }).catch((e) => {
+        if (selectionVersion === tempImageSelectionVersion) {
+          if (errorId) setImageUrlError(errorId, tr("Bu rasm formatini o'qib bo'lmadi. Boshqa rasm tanlang.", "Не удалось прочитать этот формат изображения. Выберите другое фото."));
+        }
+        throw e;
+      });
+      tempImagePreparingPromise = preparing;
+      showActionToast(tr("🖼️ Rasm tanlandi", "🖼️ Фото выбрано"), 'success', 1200);
     }
 
-    // Mahsulot rasmi (add/edit-field/rasmsiz-navbat) uchun umumiy: existing
-    // fallback yo'q — chaqiruvchilar allaqachon o'zlari (guard yoki
-    // requireImage) URL borligini ta'minlaydi.
-    async function productImagePayloadFromSnapshot(snapshot, requireImage = false) {
+    // Barcha rasm joylari (mahsulot/kategoriya/logotip/chek) uchun umumiy:
+    // lokal fayl tanlangan bo'lsa siqilgan baytlar base64 sifatida
+    // qaytariladi (save so'rovi ICHIDA yuboriladi — alohida yuklash
+    // so'rovi shart emas), URL kiritilgan bo'lsa to'g'ridan-to'g'ri shu URL
+    // ishlatiladi. Hech narsi tanlanmagan bo'lsa (tahrirlashda maydon bo'sh
+    // qoldirilsa) `img` umuman qaytarilmaydi — backend eski rasmni
+    // o'zgarishsiz qoldiradi.
+    async function imagePayloadFromSnapshot(snapshot, requireImage = false) {
+      if (snapshot?.file || snapshot?.preparing) {
+        let prepared;
+        try { prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file; }
+        catch (e) { throw e; }
+        if (!prepared) { if (requireImage) throw new Error('image_decode_failed'); return { imageUpload: null, img: undefined }; }
+        if (prepared.size > MAX_STORED_IMAGE_BYTES) throw new Error('image_too_large');
+        return { imageUpload: { mimeType: prepared.type, base64: await blobToBase64(prepared) }, img: undefined };
+      }
       if (snapshot?.url) return { imageUpload: null, img: validateExternalImageUrl(snapshot.url) };
-      if (requireImage) throw new Error(tr("Rasm URL kiriting (https://...).", "Укажите URL изображения (https://...)."));
-      return { imageUpload: null, img: null };
+      if (requireImage) throw new Error(tr("Rasm tanlang yoki URL kiriting.", "Выберите фото или укажите URL."));
+      return { imageUpload: null, img: undefined };
     }
     function friendlyImageError(error) {
       const raw = String(error?.message || error || '');
+      if (/failed to fetch|networkerror|load failed/i.test(raw)) return tr("Internet yoki Telegram WebView tarmoq xatosi. Eski rasm o'zgarmadi; internetni tekshirib qayta urinib ko'ring.", "Ошибка сети или Telegram WebView. Старое изображение не изменено; проверьте интернет и повторите.");
       if (/invalid_image_url/i.test(raw)) return tr("Rasm URL noto'g'ri. To'liq HTTPS havola kiriting.", "Неверный URL изображения. Введите полный HTTPS-адрес.");
+      if (/invalid_image_upload|invalid_image_type|image_decode_failed/i.test(raw)) return tr("Bu rasm formatini saqlab bo'lmadi. Boshqa rasm tanlang.", "Не удалось сохранить это изображение. Выберите другое фото.");
+      if (/image_too_large/i.test(raw)) return tr("Rasm juda katta. Kichikroq rasm tanlang.", "Изображение слишком большое. Выберите файл меньшего размера.");
+      if (/image_upload_failed|image_public_url_failed/i.test(raw)) return tr("Rasm server xotirasiga yuklanmadi. Eski rasm saqlanib qoldi; qayta urinib ko'ring.", "Не удалось загрузить изображение в хранилище. Старое изображение сохранено; повторите попытку.");
       return raw || tr("Noma'lum rasm xatosi.", "Неизвестная ошибка изображения.");
     }
 
@@ -1822,20 +1994,82 @@
       return tr('Yetkazib berish narxi hozir to‘lanadigan jami summaga qo‘shiladi.', 'Стоимость доставки включена в итоговую сумму к оплате.');
     }
 
-    // Chek yuklash funksiyasi vaqtincha olib tashlangan (rasm qo'shish
-    // pipeline'i qaytadan qurilguncha) — joy egallovchi matn qoladi.
-    function clearCheckoutReceipt() {}
+    let checkoutReceiptFile = null;
+    let checkoutReceiptPreparing = null;
+    let checkoutReceiptPreviewUrl = null;
+    let checkoutReceiptSelectionVersion = 0;
 
-    function renderReceiptPicker() {
+    function clearCheckoutReceipt() {
+      checkoutReceiptSelectionVersion += 1;
+      if (checkoutReceiptPreviewUrl && String(checkoutReceiptPreviewUrl).startsWith('blob:')) {
+        try { URL.revokeObjectURL(checkoutReceiptPreviewUrl); } catch (_) {}
+      }
+      checkoutReceiptFile = null;
+      checkoutReceiptPreparing = null;
+      checkoutReceiptPreviewUrl = null;
+    }
+
+    // 1.8: native "Choose file / No file chosen" matni hech qachon ko'rinmasin —
+    // faqat custom tugma + tanlangach preview + "Almashtirish".
+    function renderReceiptPicker(receiptRequired) {
+      const label = `${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')} ${receiptRequired ? '*' : `(${tr('ixtiyoriy', 'необязательно')})`}`;
+      const pickerInput = `<input id="chk-receipt" type="file" accept="image/*" onchange="onCheckoutReceiptPicked(event)" class="hidden">`;
+      if (checkoutReceiptPreviewUrl) {
+        return `
+          <label class="block font-bold">${label}</label>
+          <div class="flex items-center gap-3 mt-1">
+            <img src="${checkoutReceiptPreviewUrl}" class="h-16 w-16 object-cover rounded-xl border" alt="">
+            <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}${pickerInput}</label>
+          </div>`;
+      }
       return `
-        <label class="block font-bold">${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')}</label>
-        <p class="mt-1 text-gray-400 font-bold">rasm</p>`;
+        <label class="block font-bold">${label}</label>
+        <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white mt-1">📎 ${tr('Chekni tanlash', 'Выбрать чек')}${pickerInput}</label>`;
     }
 
     function rerenderReceiptPicker() {
       const wrap = document.getElementById('chk-receipt-wrap');
       if (!wrap) return;
-      wrap.innerHTML = renderReceiptPicker();
+      const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
+      const selectedPayment = commerce.paymentOptions(fulfillmentConfig, regionKey).find(m => m.id === selectedPayMethod);
+      wrap.innerHTML = renderReceiptPicker(!!selectedPayment?.receiptRequired);
+    }
+
+    async function onCheckoutReceiptPicked(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const selectionVersion = ++checkoutReceiptSelectionVersion;
+      checkoutReceiptFile = file;
+      if (checkoutReceiptPreviewUrl) { try { URL.revokeObjectURL(checkoutReceiptPreviewUrl); } catch (_) {} }
+      try { checkoutReceiptPreviewUrl = URL.createObjectURL(file); } catch (_) { checkoutReceiptPreviewUrl = null; }
+      checkoutReceiptPreparing = compressImageToLimit(file, MAX_RECEIPT_BYTES, 1600, 0.85).then((compressed) => {
+        if (selectionVersion !== checkoutReceiptSelectionVersion) return compressed;
+        checkoutReceiptFile = compressed;
+        try {
+          const stableUrl = URL.createObjectURL(compressed);
+          const oldUrl = checkoutReceiptPreviewUrl;
+          checkoutReceiptPreviewUrl = stableUrl;
+          rerenderReceiptPicker();
+          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
+        } catch (_) {}
+        return compressed;
+      });
+      rerenderReceiptPicker();
+    }
+
+    async function prepareReceiptImageUpload() {
+      if (!checkoutReceiptFile && !checkoutReceiptPreparing) return null;
+      let prepared;
+      try {
+        prepared = checkoutReceiptPreparing ? await checkoutReceiptPreparing : checkoutReceiptFile;
+      } catch (e) {
+        console.error('[receipt:READ_FAILED]', e);
+        clearCheckoutReceipt();
+        rerenderReceiptPicker();
+        throw new Error('receipt_read_failed');
+      }
+      if (!prepared || prepared.size > MAX_RECEIPT_BYTES) throw new Error('receipt_too_large');
+      return { base64: await blobToBase64(prepared), mimeType: prepared.type, fileName: 'payment-receipt.jpg' };
     }
 
     function openCheckoutForm() {
@@ -2134,7 +2368,7 @@
               <p>${escapeHtml(selectedPayment.cardHolder || '')}</p>
               <p class="text-[10px] text-blue-700">${tr(`CVV, PIN, SMS kod yoki amal qilish muddatini hech kimga bermang — ${escapeHtml(shopDisplayName())} ularni so'ramaydi.`, `Никому не сообщайте CVV, PIN, SMS-код или срок действия — ${escapeHtml(shopDisplayName())} их не запрашивает.`)}</p>
             </div>
-            <div id="chk-receipt-wrap">${renderReceiptPicker()}</div>`;
+            <div id="chk-receipt-wrap">${renderReceiptPicker(selectedPayment.receiptRequired)}</div>`;
         } else {
           cardDetails.classList.add('hidden');
           cardDetails.innerHTML = '';
@@ -2195,9 +2429,9 @@
       if (!selectedDelivery) return alert(tr('Bu hudud uchun yetkazib berish usulini tanlang.', 'Выберите доступный способ доставки.'));
       if (isPostDelivery && !checkoutSelectedBranch) return alert(tr('Iltimos, pochta filialini tanlang.', 'Пожалуйста, выберите отделение почты.'));
       if (!selectedPayment) return alert(tr("Bu hudud uchun to'lov usuli mavjud emas.", 'Для этого региона нет доступного способа оплаты.'));
-      // Chek yuklash funksiyasi vaqtincha olib tashlangan — "chek majburiy"
-      // tekshiruvi ham shu bilan olib tashlandi (aks holda CARD to'lov bilan
-      // buyurtma berish HECH KIM uchun ishlamay qolardi).
+      if (selectedPayment.id === 'CARD' && selectedPayment.receiptRequired && !checkoutReceiptFile && !checkoutReceiptPreparing) {
+        return alert(tr("Buyurtmani yuborish uchun to'lov chekini yuklang.", 'Чтобы отправить заказ, загрузите чек оплаты.'));
+      }
 
       // Savatdagi har bir variant bo'yicha tezkor tekshiruv. Yakuniy atomik tekshiruv serverda.
       for (const [key, itemData] of Object.entries(cart)) {
@@ -2222,13 +2456,21 @@
       }));
 
       try {
-        // Chek yuklash funksiyasi vaqtincha olib tashlangan — order endi
-        // hech qachon chek bilan yuborilmaydi (backend ham buni talab
-        // qilmaydi, MUAMMO-fix: bu 2026-08 roundda birgalikda o'zgartirildi).
+        // 1.7: chek order bilan BIR VAQTDA, bitta create_order so'rovida
+        // yuboriladi — order avval yaratilib, chek keyin "ixtiyoriy
+        // qo'shimcha" sifatida yuborilmaydi.
+        let receiptImageUpload = null;
+        try { receiptImageUpload = await prepareReceiptImageUpload(); }
+        catch (prepError) {
+          if (String(prepError?.message) === 'receipt_read_failed') {
+            return alert(tr("Chek rasmini o'qib bo'lmadi. Iltimos, chek rasmini qaytadan tanlang.", "Не удалось прочитать фото чека. Пожалуйста, выберите фото чека заново."));
+          }
+          return alert(tr("Chek rasmi yaroqsiz yoki juda katta.", 'Файл чека повреждён или слишком большой.'));
+        }
         const result = await callApi('create_order', {
           items: itemsPayload, fullname, phone, regionKey, district, address,
           deliveryMethodId: selectedDeliveryMethodId, paymentMethodId: selectedPayMethod,
-          receiptImageUpload: null, branchId: isPostDelivery ? checkoutSelectedBranch?.id : undefined,
+          receiptImageUpload, branchId: isPostDelivery ? checkoutSelectedBranch?.id : undefined,
         });
         const newOrder = formatOrderForUi(result.order);
         orders.unshift(newOrder);
@@ -3137,7 +3379,7 @@
                   ${facebookNick ? `<a href="https://facebook.com/${encodeURIComponent(facebookNick)}" target="_blank" title="Facebook" class="w-6 h-6 flex items-center justify-center rounded-full bg-blue-600 text-white"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h2.6l.4-4H14V7a1 1 0 0 1 1-1h3z"></path></svg></a>` : ''}
                 </div>
                 ${(isUserAnAdmin && isAdminMode) ? `
-                  <button onclick="activePopupModal='SHOP_INFO'; render();" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">✏️ ${tr("Tahrirlash", "Изменить")}</button>
+                  <button onclick="initializeTempImageEditor(shopLogoUrl); activePopupModal='SHOP_INFO'; render();" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">✏️ ${tr("Tahrirlash", "Изменить")}</button>
                 ` : ''}
               </div>
               <div class="flex items-center gap-2 flex-shrink-0">
@@ -3241,26 +3483,33 @@
         return alert(tr("Kordinatani '41.217408,69.211225' ko'rinishida yozing.", "Введите координаты в формате '41.217408,69.211225'."));
       }
 
-      let newLogoUrl;
-      try { newLogoUrl = validateExternalImageUrl(document.getElementById('sc-logo-url').value); }
-      catch (e) { return alert(e.message || String(e)); }
-      const logoChanged = newLogoUrl !== (shopLogoUrl || null);
+      const imageSnap = takeTempImageSnapshot();
+      let imagePayload;
+      try { imagePayload = await imagePayloadFromSnapshot(imageSnap, false); }
+      catch (e) { releaseImageSnapshot(imageSnap); return alert(friendlyImageError(e)); }
+      const logoChanged = !!(imagePayload.imageUpload || imagePayload.img !== undefined);
 
       const old = { ...shopContact };
       const oldLogo = shopLogoUrl;
       shopContact = { ...next, startMessage: shopContact.startMessage };
-      if (logoChanged) shopLogoUrl = newLogoUrl;
+      if (logoChanged && imagePayload.img !== undefined) shopLogoUrl = imagePayload.img;
       activePopupModal = null;
       render(); // optimistic UI — darhol ko'rinadi
       try {
         await callApi('set_shop_contact', next);
-        if (logoChanged) await callApi('set_shop_logo', { logoUrl: newLogoUrl });
+        if (logoChanged) {
+          const logoResult = await callApi('set_shop_logo', { logoUrl: imagePayload.img, imageUpload: imagePayload.imageUpload });
+          shopLogoUrl = logoResult?.logoUrl ?? shopLogoUrl;
+          render();
+        }
       } catch (e) {
         console.error(e);
         shopContact = old;
         shopLogoUrl = oldLogo;
         render();
-        alert(tr("❌ Do'kon ma'lumotlarini saqlab bo'lmadi: ", "❌ Не удалось сохранить данные магазина: ") + (e.message || e));
+        alert(tr("❌ Do'kon ma'lumotlarini saqlab bo'lmadi: ", "❌ Не удалось сохранить данные магазина: ") + friendlyImageError(e));
+      } finally {
+        releaseImageSnapshot(imageSnap);
       }
     }
 
@@ -3347,11 +3596,14 @@
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-xl text-xs" onclick="event.stopPropagation()">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("✏️ Do'kon haqida", "✏️ О магазине")}</h3>
               <div>
-                <label class="font-bold text-gray-600">${tr("Logotip (URL)", "Логотип (URL)")}</label>
+                <label class="font-bold text-gray-600">${tr("Logotip", "Логотип")}</label>
                 <div class="flex items-center gap-3 mt-1">
-                  ${shopLogoUrl ? `<img src="${escapeHtml(shopLogoUrl)}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border">` : ''}
-                  <input type="url" inputmode="url" id="sc-logo-url" value="${escapeHtml(shopLogoUrl || '')}" placeholder="${tr('Logotip URL (https://...)','URL логотипа (https://...)')}" class="flex-1 p-2 border rounded-xl">
+                  <img id="sc-logo-prev" src="${escapeHtml(shopLogoUrl || '')}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border ${shopLogoUrl ? '' : 'hidden'}">
+                  <input id="sc-logo-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'sc-logo-prev', 'sc-logo-image-button', 'sc-logo-url', 'sc-logo-url-error')" class="hidden">
+                  <button id="sc-logo-image-button" type="button" onclick="document.getElementById('sc-logo-image-input').click()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs">🖼️ ${shopLogoUrl ? tr('Almashtirish', 'Заменить') : tr('Rasm tanlash', 'Выбрать изображение')}</button>
                 </div>
+                <input id="sc-logo-url" type="url" inputmode="url" value="${escapeHtml(shopLogoUrl || '')}" oninput="onImageUrlInput(this.value, 'sc-logo-prev', 'sc-logo-url-error', 'sc-logo-image-button')" placeholder="${tr('yoki Logotip URL (https://...)','или URL логотипа (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
+                <p id="sc-logo-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
               </div>
               <div>
                 <label class="font-bold text-gray-600">${tr("Do'kon nomi", "Название магазина")}</label>
@@ -3521,8 +3773,10 @@
               </div>
 
               <div>
-                <label class="font-bold text-gray-600">${tr("Tovar rasmi (URL)", "Фото товара (URL)")}</label>
-                <input id="m-prod-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-prod-prev', 'm-prod-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="w-full mt-1 p-2 border rounded-xl">
+                <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
+                <input id="m-prod-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'm-prod-prev', 'm-prod-image-button', 'm-prod-image-url', 'm-prod-image-url-error')" class="hidden">
+                <button id="m-prod-image-button" type="button" onclick="document.getElementById('m-prod-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr("Rasm tanlash", "Выбрать фото")}</button>
+                <input id="m-prod-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-prod-prev', 'm-prod-image-url-error', 'm-prod-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
                 <p id="m-prod-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
                 <img id="m-prod-prev" src="" class="w-24 h-24 object-cover rounded-xl mt-2 hidden border">
               </div>
@@ -3547,11 +3801,13 @@
                 <input type="text" id="m-cat-name" placeholder="${tr('Masalan: Proteinlar','Например: Протеины')}" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
-                <label class="font-bold text-gray-600">${tr("Katalog rasmi (URL)", "Изображение каталога (URL)")}</label>
+                <label class="font-bold text-gray-600">${tr("Katalog rasmi", "Изображение каталога")}</label>
                 <div class="flex items-center gap-3 mt-1">
                   <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl hidden border">
-                  <input id="m-cat-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-cat-prev', 'm-cat-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="flex-1 p-2 border rounded-xl">
+                  <input id="m-cat-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'm-cat-prev', 'm-cat-image-button', 'm-cat-image-url', 'm-cat-image-url-error')" class="hidden">
+                  <button id="m-cat-image-button" type="button" onclick="document.getElementById('m-cat-image-input').click()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs">🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}</button>
                 </div>
+                <input id="m-cat-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-cat-prev', 'm-cat-image-url-error', 'm-cat-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
                 <p id="m-cat-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
               </div>
               <div class="flex space-x-2 pt-2">
@@ -3575,11 +3831,13 @@
                 <input type="text" id="ec-name" value="${escapeHtml(c.name)}" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
-                <label class="font-bold text-gray-600">${tr("Katalog rasmi (URL)", "Изображение каталога (URL)")}</label>
+                <label class="font-bold text-gray-600">${tr("Katalog rasmi", "Изображение каталога")}</label>
                 <div class="flex items-center gap-3 mt-1">
                   <img id="ec-img-prev" src="${escapeHtml((c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? c.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-16 h-16 object-cover rounded-xl ${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? '' : 'hidden'} border">
-                  <input id="ec-image-url" type="url" inputmode="url" value="${(c.img && c.img.startsWith('http')) ? escapeHtml(c.img) : ''}" oninput="onImageUrlInput(this.value, 'ec-img-prev', 'ec-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="flex-1 p-2 border rounded-xl">
+                  <input id="ec-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'ec-img-prev', 'ec-image-button', 'ec-image-url', 'ec-image-url-error')" class="hidden">
+                  <button id="ec-image-button" type="button" onclick="document.getElementById('ec-image-input').click()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs">${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? `🔄 ${tr('Rasmni almashtirish', 'Заменить изображение')}` : `🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}`}</button>
                 </div>
+                <input id="ec-image-url" type="url" inputmode="url" value="${(c.img && c.img.startsWith('http')) ? escapeHtml(c.img) : ''}" oninput="onImageUrlInput(this.value, 'ec-img-prev', 'ec-image-url-error', 'ec-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
                 <p id="ec-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
               </div>
               <div class="flex space-x-2 pt-2">
@@ -3616,7 +3874,9 @@
                   <img id="miq-img-prev" src="" class="hidden w-full h-48 object-contain rounded-xl bg-white">
                   <div id="miq-empty-preview" class="h-32 flex items-center justify-center text-center text-gray-400 font-bold">🖼<br>${tr('Rasm preview','Предпросмотр фото')}</div>
                 </div>
-                <input id="miq-image-url" type="url" inputmode="url" oninput="document.getElementById('miq-empty-preview')?.classList.toggle('hidden', !!this.value.trim()); onImageUrlInput(this.value, 'miq-img-prev', 'miq-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="w-full p-2.5 border rounded-xl">
+                <input id="miq-image-input" type="file" accept="image/*" onchange="document.getElementById('miq-empty-preview')?.classList.add('hidden'); onImagePicked(event, 'miq-img-prev', 'miq-image-button', 'miq-image-url', 'miq-image-url-error')" class="hidden">
+                <button id="miq-image-button" type="button" onclick="document.getElementById('miq-image-input').click()" class="w-full bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr('Rasm tanlash','Выбрать фото')}</button>
+                <input id="miq-image-url" type="url" inputmode="url" oninput="document.getElementById('miq-empty-preview')?.classList.toggle('hidden', !!this.value.trim()); onImageUrlInput(this.value, 'miq-img-prev', 'miq-image-url-error', 'miq-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2.5 border rounded-xl">
                 <p id="miq-image-url-error" class="hidden text-[10px] text-red-600"></p>
                 <button onclick="saveMissingImageQueueItem('${p.id}')" ${missingImageQueueSaving ? 'disabled' : ''} class="w-full ${missingImageQueueSaving ? 'bg-gray-300 text-gray-500' : 'bg-emerald-600 text-white'} font-black py-3 rounded-xl">${missingImageQueueSaving ? tr('⏳ Saqlanmoqda…','⏳ Сохранение…') : tr('✅ Saqlash','✅ Сохранить')}</button>
                 <div class="grid grid-cols-2 gap-2 sticky bottom-0 bg-white pt-2">
@@ -3883,8 +4143,10 @@
               ` : ''}
 
               ${field === 'img' ? `
-                <label class="font-bold text-gray-600">${tr("Tovar rasmi (URL)", "Фото товара (URL)")}</label>
-                <input id="ef-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'ef-img-prev', 'ef-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="w-full mt-1 p-2 border rounded-xl">
+                <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
+                <input id="ef-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev', 'ef-image-button', 'ef-image-url', 'ef-image-url-error')" class="hidden">
+                <button id="ef-image-button" type="button" onclick="document.getElementById('ef-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${hasProductImage(p) ? tr("Rasmni almashtirish", "Заменить фото") : tr("Rasm tanlash", "Выбрать фото")}</button>
+                <input id="ef-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'ef-img-prev', 'ef-image-url-error', 'ef-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
                 <p id="ef-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
                 <img id="ef-img-prev" src="${escapeHtml(hasProductImage(p) ? p.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border ${hasProductImage(p) ? '' : 'hidden'}">
               ` : ''}
@@ -4236,11 +4498,19 @@
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📎 ${tr('Yangi chek yuborish', 'Отправить новый чек')}</h3>
               <div>
-                <label class="block font-bold">${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')}</label>
-                <p class="mt-1 text-gray-400 font-bold">rasm</p>
+                <label class="block font-bold">${tr("To'lov cheki/skrinshoti *", 'Чек/скриншот оплаты *')}</label>
+                ${resubmitReceiptPreviewUrl ? `
+                  <div class="flex items-center gap-3 mt-1">
+                    <img src="${resubmitReceiptPreviewUrl}" class="h-16 w-16 object-cover rounded-xl border" alt="">
+                    <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}<input type="file" accept="image/*" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
+                  </div>
+                ` : `
+                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white mt-1">📎 ${tr('Chekni tanlash', 'Выбрать чек')}<input type="file" accept="image/*" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
+                `}
               </div>
               <div class="flex gap-2 pt-1">
-                <button onclick="closeResubmitReceiptModal()" class="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl">${tr('Yopish', 'Закрыть')}</button>
+                <button onclick="submitResubmitReceipt()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
+                <button onclick="closeResubmitReceiptModal()" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr('Bekor qilish', 'Отмена')}</button>
               </div>
             </div>
           </div>
@@ -4723,18 +4993,67 @@
       }
     }
 
-    // 15-band: rad etilgan chekni qayta yuborish oynasi. Chek yuklash
-    // funksiyasi vaqtincha olib tashlangan (rasm qo'shish pipeline'i
-    // qaytadan qurilguncha) — bu oyna endi faqat joy egallovchi.
+    // 15-band: rad etilgan chekni qayta yuborish oynasi.
     function openResubmitReceiptModal(orderId) {
       resubmitOrderId = orderId;
+      resubmitReceiptFile = null;
+      resubmitReceiptPreparing = null;
+      resubmitReceiptPreviewUrl = null;
       activePopupModal = 'RESUBMIT_RECEIPT';
       render();
     }
     function closeResubmitReceiptModal() {
+      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
       resubmitOrderId = null;
+      resubmitReceiptFile = null;
+      resubmitReceiptPreparing = null;
+      resubmitReceiptPreviewUrl = null;
       activePopupModal = null;
       render();
+    }
+    async function onResubmitReceiptPicked(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const selectionVersion = ++resubmitReceiptSelectionVersion;
+      resubmitReceiptFile = file;
+      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
+      try { resubmitReceiptPreviewUrl = URL.createObjectURL(file); } catch (_) { resubmitReceiptPreviewUrl = null; }
+      resubmitReceiptPreparing = compressImageToLimit(file, MAX_RECEIPT_BYTES, 1600, 0.85).then((compressed) => {
+        if (selectionVersion !== resubmitReceiptSelectionVersion) return compressed;
+        resubmitReceiptFile = compressed;
+        try {
+          const stableUrl = URL.createObjectURL(compressed);
+          const oldUrl = resubmitReceiptPreviewUrl;
+          resubmitReceiptPreviewUrl = stableUrl;
+          renderModalContainer();
+          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
+        } catch (_) {}
+        return compressed;
+      });
+      renderModalContainer();
+    }
+    async function submitResubmitReceipt() {
+      if (!resubmitOrderId || (!resubmitReceiptFile && !resubmitReceiptPreparing)) {
+        return alert(tr("Iltimos, chek rasmini tanlang.", "Пожалуйста, выберите изображение чека."));
+      }
+      const orderId = resubmitOrderId;
+      showActionToast(tr('⏳ Yuborilmoqda...', '⏳ Отправка...'), 'saving');
+      try {
+        const prepared = resubmitReceiptPreparing ? await resubmitReceiptPreparing : resubmitReceiptFile;
+        if (!prepared || prepared.size > MAX_RECEIPT_BYTES) throw new Error('receipt_too_large');
+        const imageUpload = { base64: await blobToBase64(prepared), mimeType: prepared.type, fileName: 'payment-receipt.jpg' };
+        await callApi('upload_payment_receipt', { orderId, imageUpload });
+        const patch = { hasReceipt: true, receiptReviewStatus: 'PENDING', receiptRejectReason: null };
+        const idx = orders.findIndex(o => o.id === orderId);
+        if (idx >= 0) orders[idx] = { ...orders[idx], ...patch };
+        if (selectedOrderModal?.id === orderId) selectedOrderModal = { ...selectedOrderModal, ...patch };
+        closeResubmitReceiptModal();
+        showActionToast(tr('✅ Yangi chek yuborildi', '✅ Новый чек отправлен'), 'success', 2000);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Yuborilmadi', '❌ Не отправлено'), 'error', 2200);
+        alert(tr('Xatolik: ', 'Ошибка: ') + friendlyImageError(e));
+      }
     }
 
     // MODAL SAVERS
@@ -4783,7 +5102,7 @@
       // name/price/stock/description yo'qolmasligi kerak.
       showActionToast(tr("⏳ Tovar saqlanmoqda...", "⏳ Товар сохраняется..."), 'saving');
       try {
-        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, false);
+        const imagePayload = await imagePayloadFromSnapshot(imageSnap, false);
         const result = await callApi('add_product', {
           name, price, oldPrice,
           stock: isNaN(stock) ? 0 : stock,
@@ -4802,7 +5121,7 @@
           const limit = String(e.message).split(':')[1];
           alert(`${tr('⚠️ Tovar soni chegarasiga yetdingiz','⚠️ Достигнут лимит количества товаров')} (${limit}). ${tr("Ko'proq tovar qo'shish uchun tarifingizni oshiring.",'Чтобы добавить больше товаров, увеличьте тариф.')}`);
         } else {
-          alert(tr("❌ Tovarni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения товара: ") + (imageSnap?.url ? friendlyImageError(e) : (e.message || e)));
+          alert(tr("❌ Tovarni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения товара: ") + ((imageSnap?.file || imageSnap?.preparing || imageSnap?.url) ? friendlyImageError(e) : (e.message || e)));
         }
         // Input matnlari DOM'da qoladi. Rasm selection esa qayta tanlanishi uchun tozalanadi.
         clearTempImageSelection();
@@ -4819,8 +5138,8 @@
       render();
       showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
       try {
-        const imgUrl = resolveImageUrlOrKeep(imageSnap, null);
-        const result = await callApi('add_category', { name, img: imgUrl, parentId });
+        const imagePayload = await imagePayloadFromSnapshot(imageSnap, false);
+        const result = await callApi('add_category', { name, img: imagePayload.img, imageUpload: imagePayload.imageUpload, parentId });
         upsertLocalCategory(result.category);
         saveCatalogCache();
         showActionToast(tr("✅ Katalog yaratildi", "✅ Каталог создан"), 'success', 1200);
@@ -4828,7 +5147,7 @@
       } catch (e) {
         console.error(e);
         showActionToast(tr("❌ Katalog saqlanmadi", "❌ Каталог не сохранён"), 'error', 1800);
-        alert(tr("❌ Katalogni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения каталога: ") + (e.message || e));
+        alert(tr("❌ Katalogni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения каталога: ") + friendlyImageError(e));
       } finally { releaseImageSnapshot(imageSnap); }
     }
 
@@ -4883,9 +5202,10 @@
         p.desc = val;
       } else if (field === 'img') {
         imageSnap = takeTempImageSnapshot();
-        if (!imageSnap.url) { activePopupModal = null; render(); return; }
+        if (!imageSnap.file && !imageSnap.preparing && !imageSnap.url) { activePopupModal = null; render(); return; }
         // Tanlangan rasm kartochkada ham darhol ko'rinsin.
-        p.img = imageSnap.url;
+        if (imageSnap.preview) p.img = imageSnap.preview;
+        else if (imageSnap.url) p.img = imageSnap.url;
       } else if (field === 'sizes' || field === 'variants') {
         const sizeText = document.getElementById('ef-size-val').value;
         const colorText = document.getElementById('ef-color-val').value;
@@ -4911,7 +5231,7 @@
 
       try {
         if (field === 'img') {
-          const imagePayload = await productImagePayloadFromSnapshot(imageSnap, true);
+          const imagePayload = await imagePayloadFromSnapshot(imageSnap, true);
           payload.value = imagePayload.img;
           payload.imageUpload = imagePayload.imageUpload;
         }
@@ -4951,7 +5271,7 @@
       renderModalContainer();
       showActionToast(tr("⏳ Rasm saqlanmoqda...", "⏳ Изображение сохраняется..."), 'saving');
       try {
-        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, true);
+        const imagePayload = await imagePayloadFromSnapshot(imageSnap, true);
         const result = await callApi('edit_product_field', {
           productId: prodId,
           field: 'img',
@@ -5020,7 +5340,7 @@
       const c = categories.find(cat => cat.id === id);
       if (!c) return;
       selectedCategoryModal = c;
-      clearTempImageSelection();
+      initializeTempImageEditor(c.img);
       activePopupModal = 'EDIT_CAT';
       render();
     }
@@ -5035,14 +5355,15 @@
       const imageSnap = takeTempImageSnapshot();
 
       c.name = name;
-      if (imageSnap.url) c.img = imageSnap.url;
+      if (imageSnap.preview) c.img = imageSnap.preview;
+      else if (imageSnap.url) c.img = imageSnap.url;
       activePopupModal = null;
       render();
       showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
 
       try {
-        const newImg = resolveImageUrlOrKeep(imageSnap, old.img);
-        const result = await callApi('edit_category', { categoryId: id, name, img: newImg });
+        const imagePayload = await imagePayloadFromSnapshot(imageSnap, false);
+        const result = await callApi('edit_category', { categoryId: id, name, img: imagePayload.img, imageUpload: imagePayload.imageUpload });
         const current = categories.find(cat => cat.id === id);
         if (current) Object.assign(current, mapCategoryFromDB(result.category));
         saveCatalogCache();
@@ -5496,7 +5817,12 @@
         return;
       }
       const idx = products.findIndex(p => p.id === mapped.id);
-      if (idx >= 0) products[idx] = mapped; else products.push(mapped);
+      // Kategoriya realtime'dagi bilan bir xil himoya: TOAST qilingan katta
+      // (base64) img ustuni o'zgarmagan UPDATE'da bo'sh kelishi mumkin.
+      if (idx >= 0) {
+        if (!mapped.img && products[idx].img) mapped.img = products[idx].img;
+        products[idx] = mapped;
+      } else products.push(mapped);
       products.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
     }
 
@@ -5537,8 +5863,22 @@
             // e'tiborsiz qoldiriladi — faqat nom/rasm/boshqa maydonlar
             // sinxronlanadi. Yangi (idx<0) qatorlar uchun serverdan kelgan
             // sortOrder shart, chunki mahalliy optimistic qiymat yo'q.
-            if (idx >= 0) { mapped.sortOrder = categories[idx].sortOrder; categories[idx] = mapped; }
-            else categories.push(mapped);
+            //
+            // QO'SHIMCHA TUZATISH (reorder rasmlarni "yo'qotib qo'yish" bug'i):
+            // reorder bir nechta qatorni bir vaqtda yangilaganda (faqat
+            // sort_order ustuniga tegadi), Postgres logical replication katta
+            // (base64) `img` ustunini — u TOAST qilingan va shu UPDATE'da
+            // o'zgarmagan bo'lsa — real qiymatsiz/bo'sh holda yuborishi
+            // mumkin. Shu sabab: agar realtime orqali kelgan img BO'SH bo'lsa,
+            // lekin mahalliyda oldin haqiqiy rasm bo'lgan bo'lsa — eskisi
+            // saqlanadi (rasm "yo'qolib" ko'rinmaydi). Rasm chindan o'chirilsa
+            // yoki almashtirilsa — kelgan qiymat BO'SH BO'LMAYDI, shuning
+            // uchun bu himoya haqiqiy o'zgarishlarga xalaqit bermaydi.
+            if (idx >= 0) {
+              mapped.sortOrder = categories[idx].sortOrder;
+              if (!mapped.img && categories[idx].img) mapped.img = categories[idx].img;
+              categories[idx] = mapped;
+            } else categories.push(mapped);
           }
           saveCatalogCache();
           if (currentTab === 'categories' || currentTab === 'warehouse') render();
