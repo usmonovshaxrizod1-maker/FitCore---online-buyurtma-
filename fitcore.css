@@ -1498,15 +1498,16 @@ body { background: var(--fitcore-page-bg) !important; color: var(--fitcore-text)
 .fitcore-bottom-nav.bg-white { background-color: var(--fitcore-bottomnav-bg) !important; }
 
 /* FITCORE v2.6 — barcha modal/overlaylar kichik Telegram WebView ichida boshqariladigan qolsin. */
+/* 10-band: tepada aniq tashqi joy qolsin — Telegram oynasining yuqori chetiga yopishib qolmasin. */
 #modal-container > .fixed {
   overscroll-behavior: contain;
-  padding-top: max(.35rem, env(safe-area-inset-top));
+  padding-top: max(2.5rem, env(safe-area-inset-top) + 1.5rem);
   padding-bottom: max(.35rem, env(safe-area-inset-bottom));
 }
 #modal-container > .fixed > * {
-  max-height: calc(100dvh - max(.7rem, env(safe-area-inset-top)) - max(.7rem, env(safe-area-inset-bottom)));
+  max-height: calc(100dvh - max(2.85rem, env(safe-area-inset-top) + 1.85rem) - max(.7rem, env(safe-area-inset-bottom)));
   overscroll-behavior: contain;
 }
 @supports not (height: 100dvh) {
-  #modal-container > .fixed > * { max-height: 94vh; }
+  #modal-container > .fixed > * { max-height: 88vh; }
 }

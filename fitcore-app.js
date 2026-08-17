@@ -263,6 +263,14 @@
     let ordersLoaded = false, ordersLoading = false;
     let usersLoaded = false, usersLoading = false;
     let adminsLoaded = false, adminsLoading = false;
+    // 16-band: qo'llab-quvvatlash murojaatlari — mijozning o'zi va admin
+    // ro'yxati alohida yuklanadi (lazy, boshqa lazy ro'yxatlar kabi).
+    let supportTickets = [];
+    let supportTicketsLoaded = false, supportTicketsLoading = false;
+    let adminSupportTickets = [];
+    let adminSupportTicketsLoaded = false, adminSupportTicketsLoading = false;
+    let supportTicketOrderId = null;
+    let expandedAdminTicketId = null;
     let cart = JSON.parse(localStorage.getItem('cart') || "{}");
     let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
     let checkoutDraft = JSON.parse(localStorage.getItem('checkoutDraft') || "null") || { fullname: '', phone: '', regionKey: 'tashkent_city', district: '', address: '' };
@@ -297,12 +305,13 @@
     let userOrderFilter = 'ALL';
     let selectedProductModal = null;
     let selectedOrderModal = null;
+    let rejectReceiptOrderId = null; // 14-band: REJECT_RECEIPT modali qaysi buyurtma uchun ochilgani
     let selectedCategoryModal = null;
     let selectedUserModal = null;
     let usersSummary = [];
     let shopLogoUrl = null;
     let botUsername = null; // 1.10: "Telegramda ko'rish" uchun — hardcode emas, boot() javobidan
-    let shopContact = { address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null };
+    let shopContact = { name: null, address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null, facebook: null, startMessage: null };
     let fulfillmentConfig = commerce.defaultConfig(TOP_LEVEL_REGION_IDS);
     let fulfillmentDraft = null;
 
@@ -319,6 +328,13 @@
     let checkoutReceiptFile = null;
     let checkoutReceiptPreparing = null;
     let checkoutReceiptPreviewUrl = null; // 1.8: local preview uchun object URL
+    // 15-band: rad etilgan chekni qayta yuborish uchun alohida state —
+    // checkout state'idan mustaqil (checkout draft bilan aralashib ketmasin).
+    let resubmitOrderId = null;
+    let resubmitReceiptFile = null;
+    let resubmitReceiptPreparing = null;
+    let resubmitReceiptPreviewUrl = null;
+    let resubmitReceiptSelectionVersion = 0;
     // 8-bo'lim: preview asl native File'dan uzoq yashaydigan object URL bo'lib
     // qolmasligi uchun — capture muvaffaqiyatli bo'lgach detached Blob'dan
     // yangilanadi. Bu versiya tez-tez qayta tanlashda eski (sekin) capture'ning
@@ -419,8 +435,14 @@
       PROCESSING: "bg-blue-100 text-blue-800",
       DELIVERED: "bg-green-100 text-green-800",
       CANCELLED: "bg-red-100 text-red-800",
+      REJECTED: "bg-red-100 text-red-800",
     };
     function statusColorClass(st) { return STATUS_COLORS[st] || "bg-gray-100 text-gray-600"; }
+    // 14-band: chek rad etilgan bo'lsa, orders.status o'zi o'zgarmagan (hali
+    // "Yangi" bo'lishi mumkin) — lekin mijoz/adminga alohida "Rad etildi"
+    // holati ko'rsatiladi, orders.status'ga hech qanday yangi qiymat
+    // qo'shilmagan (mavjud update_order_status RPCga tegilmadi).
+    function orderDisplayStatus(o) { return o?.receiptReviewStatus === 'REJECTED' ? 'REJECTED' : o?.status; }
 
     // ============ TIL (O'ZBEK / RUS) ============
     // Ilovaning tayyor matnlari uchun lug'at. Faqat shu yerda ro'yxatdagi
@@ -473,6 +495,9 @@
     function productName(p) { return (uiLang === 'ru' && p.nameRu) ? p.nameRu : p.name; }
     function productDesc(p) { return (uiLang === 'ru' && p.descRu) ? p.descRu : (p.desc || ''); }
     function categoryName(c) { return (uiLang === 'ru' && c?.nameRu) ? c.nameRu : (c?.name || ''); }
+    // 6-band: admin do'kon nomini o'zgartirmagan bo'lsa standart "FITCORE"
+    // qoladi — orqaga mos, hech kim majburan o'zgartirishga majbur emas.
+    function shopDisplayName() { return (shopContact && shopContact.name) ? shopContact.name : 'FITCORE'; }
     function formatNumber(v) {
       const n = Math.round(Number(v || 0));
       return String(Number.isFinite(n) ? n : 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -534,6 +559,22 @@
       }
       return path.length ? path.join(' / ') : tr('Bosh katalog', 'Главный каталог');
     }
+    // categoryPathForProduct bilan bir xil parentId-yurish logikasi, lekin
+    // bosiladigan breadcrumb qurish uchun {id, name} massivini qaytaradi.
+    function categoryAncestorChain(categoryId) {
+      const byId = new Map(categories.map(c => [String(c.id), c]));
+      const chain = [];
+      const seen = new Set();
+      let currentId = categoryId === null || categoryId === undefined ? null : String(categoryId);
+      while (currentId && !seen.has(currentId)) {
+        seen.add(currentId);
+        const category = byId.get(currentId);
+        if (!category) break;
+        chain.unshift({ id: category.id, name: categoryName(category) });
+        currentId = category.parentId === null || category.parentId === undefined ? null : String(category.parentId);
+      }
+      return chain;
+    }
     function openMissingImageQueue() {
       if (!isUserAnAdmin || !isAdminMode) return;
       missingImageQueueIndex = Math.min(missingImageQueueIndex, Math.max(0, getMissingImageProducts().length - 1));
@@ -555,8 +596,8 @@
     function payMethodLabel(v) { return v === 'CASH' ? tr('Naqd pul','Наличные') : (v === 'CARD' ? tr('Karta','Карта') : (v || '')); }
 
     const STATUS_LABELS_BY_LANG = {
-      uz: { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan" },
-      ru: { NEW: "Новый", PROCESSING: "В обработке", DELIVERED: "Доставлен", CANCELLED: "Отменён" },
+      uz: { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan", REJECTED: "❌ Rad etildi" },
+      ru: { NEW: "Новый", PROCESSING: "В обработке", DELIVERED: "Доставлен", CANCELLED: "Отменён", REJECTED: "❌ Отклонён" },
     };
     function statusLabel(st) { return (STATUS_LABELS_BY_LANG[uiLang] || STATUS_LABELS_BY_LANG.uz)[st] || st; }
 
@@ -713,6 +754,86 @@
       }
     }
 
+    // 16-band: qo'llab-quvvatlash — mijoz o'z murojaatlarini, admin barcha
+    // murojaatlarni lazy yuklaydi (boshqa lazy ro'yxatlar bilan bir xil pattern).
+    async function loadMySupportTicketsLazy(force = false) {
+      if (supportTicketsLoading || (supportTicketsLoaded && !force)) return;
+      supportTicketsLoading = true;
+      try {
+        const data = await callApi('get_my_support_tickets', {});
+        supportTickets = data.tickets || [];
+        supportTicketsLoaded = true;
+      } catch (e) {
+        console.error("Murojaatlarni yuklashda xatolik:", e);
+      } finally {
+        supportTicketsLoading = false;
+        if (activePopupModal === 'SUPPORT') render();
+      }
+    }
+    async function loadAdminSupportTicketsLazy(force = false) {
+      if (!isUserAnAdmin || adminSupportTicketsLoading || (adminSupportTicketsLoaded && !force)) return;
+      adminSupportTicketsLoading = true;
+      try {
+        const data = await callApi('get_support_tickets', {});
+        adminSupportTickets = data.tickets || [];
+        adminSupportTicketsLoaded = true;
+      } catch (e) {
+        console.error("Murojaatlarni yuklashda xatolik:", e);
+      } finally {
+        adminSupportTicketsLoading = false;
+        if (activePopupModal === 'ADMIN_SUPPORT' || currentTab === 'profile') render();
+      }
+    }
+    function openSupportModal(orderId) {
+      supportTicketOrderId = orderId || null;
+      activePopupModal = 'SUPPORT';
+      render();
+      loadMySupportTicketsLazy();
+    }
+    async function submitSupportTicket() {
+      const message = document.getElementById('sup-message')?.value.trim() || '';
+      if (!message) return alert(tr("Murojaat matnini yozing.", "Напишите текст обращения."));
+      showActionToast(tr("⏳ Yuborilmoqda...", "⏳ Отправка..."), 'saving');
+      try {
+        const data = await callApi('create_support_ticket', { message, orderId: supportTicketOrderId });
+        supportTickets = [data.ticket, ...supportTickets];
+        supportTicketOrderId = null;
+        render();
+        showActionToast(tr("✅ Murojaat yuborildi", "✅ Обращение отправлено"), 'success', 1800);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr("❌ Yuborilmadi", "❌ Не отправлено"), 'error', 2000);
+        alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      }
+    }
+    function openAdminSupportModal() {
+      activePopupModal = 'ADMIN_SUPPORT';
+      expandedAdminTicketId = null;
+      render();
+      loadAdminSupportTicketsLazy();
+    }
+    function toggleAdminTicketExpand(id) {
+      expandedAdminTicketId = expandedAdminTicketId === id ? null : id;
+      render();
+    }
+    async function submitTicketReply(id) {
+      const reply = document.getElementById(`sup-reply-${id}`)?.value.trim() || '';
+      if (!reply) return alert(tr("Javob matnini yozing.", "Напишите текст ответа."));
+      showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохранение..."), 'saving');
+      try {
+        const data = await callApi('reply_support_ticket', { ticketId: id, reply });
+        const idx = adminSupportTickets.findIndex(t => t.id === id);
+        if (idx >= 0) adminSupportTickets[idx] = data.ticket;
+        expandedAdminTicketId = null;
+        render();
+        showActionToast(tr("✅ Javob yuborildi", "✅ Ответ отправлен"), 'success', 1800);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 2000);
+        alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      }
+    }
+
     function switchTab(tab) {
       currentTab = tab;
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-blue-600', 'font-bold'));
@@ -722,6 +843,7 @@
       if (tab === 'orders') loadOrdersLazy();
       if (tab === 'users' && isUserAnAdmin) loadUsersLazy();
       if (tab === 'profile' && isSuperAdmin) loadAdminsLazy();
+      if (tab === 'profile' && isUserAnAdmin) loadAdminSupportTicketsLazy();
     }
 
     function toggleAdminRole() {
@@ -1201,7 +1323,30 @@
       if (flagBtn) flagBtn.innerText = uiLang === 'uz' ? '🇷🇺' : '🇺🇿';
       const cartBtn = document.getElementById('header-cart-btn');
       if (cartBtn) cartBtn.classList.toggle('hidden', isAdminMode && isUserAnAdmin);
+      const personBtn = document.getElementById('header-person-btn');
+      if (personBtn) personBtn.onclick = isUserAnAdmin ? togglePersonMenu : (() => switchTab('profile'));
     }
+
+    // 20-band: Profildagi katta "rejim almashtirish" tugmasi o'rniga headerdagi
+    // odamcha icon — faqat admin huquqiga ega userlarga chiqadi, joriy rejimga
+    // qarab bitta variant ko'rsatadi. toggleAdminRole() o'zgarmagan.
+    function togglePersonMenu(event) {
+      if (event) event.stopPropagation();
+      const popover = document.getElementById('role-mode-popover');
+      if (!popover) return;
+      const isOpen = !popover.classList.contains('hidden');
+      if (isOpen) { popover.classList.add('hidden'); return; }
+      const label = isAdminMode ? tr("👤 Userga o'tish", '👤 Перейти к пользователю') : tr("🛡️ Adminga o'tish", '🛡️ Перейти в админку');
+      popover.innerHTML = `<button onclick="document.getElementById('role-mode-popover').classList.add('hidden'); toggleAdminRole();" class="block w-full text-left px-4 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 whitespace-nowrap">${label}</button>`;
+      popover.classList.remove('hidden');
+    }
+    document.addEventListener('click', (event) => {
+      const popover = document.getElementById('role-mode-popover');
+      const personBtn = document.getElementById('header-person-btn');
+      if (!popover || popover.classList.contains('hidden')) return;
+      if (popover.contains(event.target) || (personBtn && personBtn.contains(event.target))) return;
+      popover.classList.add('hidden');
+    });
 
     function render() {
       updateCartBadge();
@@ -1254,12 +1399,18 @@
 
     // 1. HOME TAB
     function renderHome(container) {
+      const homeFilterActive = isCategoryFilterActive();
       container.innerHTML = `
         <div class="space-y-4">
-          <div class="relative">
-            <input type="text" id="search-input" oninput="handleSearchDebounced()" placeholder="${escapeHtml(t('search_placeholder'))}"
-              class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
-            <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <input type="text" id="search-input" oninput="handleSearchDebounced()" placeholder="${escapeHtml(t('search_placeholder'))}"
+                class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
+              <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
+            </div>
+            <button onclick="openCategoryFilterModal()" title="${tr('Filtr','Фильтр')}" class="shrink-0 w-11 h-11 flex items-center justify-center rounded-2xl border shadow-sm ${homeFilterActive ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200'}">
+              🔍${homeFilterActive ? '•' : ''}
+            </button>
           </div>
 
           ${(isAdminMode && isUserAnAdmin) ? `
@@ -1288,6 +1439,7 @@
       if (currentTab === 'home' && !q.trim()) {
         filtered = filtered.filter(p => p.isFeatured === true);
       }
+      if (currentTab === 'home') filtered = applyCategoryFilter(filtered);
 
       currentVisibleProductIds = filtered.map(p => p.id);
 
@@ -1392,13 +1544,19 @@
       const paginatedProds = catProds.slice((categoryPage - 1) * 10, categoryPage * 10);
       currentVisibleProductIds = paginatedProds.map(p => p.id);
 
+      const catAncestors = categoryAncestorChain(adminCatParentId);
+      const breadcrumbHtml = [
+        `<span onclick="adminCatParentId = null; categoryPage=1; render();" class="cursor-pointer hover:underline ${catAncestors.length ? 'text-gray-500' : 'text-blue-600'}">${escapeHtml(uiLang === 'ru' ? 'Главные каталоги' : 'Bosh Kataloglar')}</span>`,
+        ...catAncestors.map((a, i) => `<span class="text-gray-300">/</span><span onclick="adminCatParentId = '${a.id}'; categoryPage=1; render();" class="cursor-pointer hover:underline ${i === catAncestors.length - 1 ? 'text-blue-600' : 'text-gray-500'}">${escapeHtml(a.name)}</span>`)
+      ].join(' ');
+
       container.innerHTML = `
         <div class="space-y-4">
           <div class="bg-white p-3 rounded-2xl border space-y-2 shadow-sm">
-            <div class="flex items-center justify-between text-xs">
-              <span class="font-bold text-gray-700">${tr("📍 Katalog:", "📍 Каталог:")} <b class="text-blue-600">${escapeHtml(currentCat ? categoryName(currentCat) : (uiLang === 'ru' ? 'Главные каталоги' : 'Bosh Kataloglar'))}</b></span>
+            <div class="flex items-center justify-between text-xs gap-2">
+              <span class="font-bold flex flex-wrap items-center gap-x-1 gap-y-0.5">📍 ${breadcrumbHtml}</span>
               ${adminCatParentId ? `
-                <div class="flex space-x-1">
+                <div class="flex space-x-1 shrink-0">
                   <button onclick="goBackCatLevel()" class="bg-gray-100 px-2 py-1 rounded-lg font-bold text-[11px]">${tr("⬅️ Orqaga", "⬅️ Назад")}</button>
                   <button onclick="adminCatParentId = null; categoryPage=1; render();" class="bg-gray-100 px-2 py-1 rounded-lg font-bold text-[11px]">${tr("🏠 Boshiga", "🏠 В начало")}</button>
                 </div>
@@ -1410,11 +1568,13 @@
                 <button onclick="openAddCatModal()" class="flex-1 bg-blue-600 text-white font-bold py-1.5 rounded-xl text-xs">${tr("➕ Katalog qo'shish", "➕ Добавить каталог")}</button>
                 <button onclick="openAddProductModal()" class="flex-1 bg-emerald-600 text-white font-bold py-1.5 rounded-xl text-xs">${tr("➕ Tovar qo'shish", "➕ Добавить товар")}</button>
               </div>
-              <button onclick="openMissingImageQueue()" class="w-full bg-amber-50 text-amber-900 border border-amber-200 font-bold py-1.5 rounded-xl text-xs shadow-sm">🖼 ${tr('Rasmsiz','Без фото')} · ${globalMissingImageCount}</button>
-              <button onclick="openExcelImportModal()" class="w-full bg-slate-800 text-white font-bold py-1.5 rounded-xl text-xs">${tr("📊 Excel orqali ko'p tovar qo'shish", "📊 Массовый импорт из Excel")}</button>
-              <button onclick="openTrashModal()" class="w-full bg-white border text-gray-600 font-bold py-1.5 rounded-xl text-xs">🗑️ ${tr("Chiqindi (24 soat)", "Корзина (24 часа)")}</button>
-              <button onclick="openDuplicateProductsModal()" class="w-full bg-white border text-gray-600 font-bold py-1.5 rounded-xl text-xs">🧭 ${tr("Duplicate tovarlarni tekshirish", "Проверить дубликаты товаров")}</button>
-              <button onclick="toggleBulkProductSelectMode()" class="w-full ${bulkProductSelectMode ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'} font-bold py-1.5 rounded-xl text-xs">☑️ ${bulkProductSelectMode ? tr('Tanlashni tugatish','Завершить выбор') : tr('Tovarlarni tanlash','Выбрать товары')}</button>
+              <div class="flex flex-wrap gap-1.5 pt-1">
+                <button onclick="openMissingImageQueue()" title="${tr('Rasmsiz','Без фото')} · ${globalMissingImageCount}" class="flex items-center gap-1 bg-amber-50 text-amber-900 border border-amber-200 font-bold px-2.5 py-1.5 rounded-xl text-[11px] shadow-sm">🖼️ ${globalMissingImageCount}</button>
+                <button onclick="openExcelImportModal()" title="${tr("Excel orqali ko'p tovar qo'shish", "Массовый импорт из Excel")}" class="flex items-center gap-1 bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-xl text-[11px]">📊</button>
+                <button onclick="openTrashModal()" title="${tr('Chiqindi (24 soat)','Корзина (24 часа)')}" class="flex items-center gap-1 bg-white border text-gray-600 font-bold px-2.5 py-1.5 rounded-xl text-[11px]">🗑️</button>
+                <button onclick="openDuplicateProductsModal()" title="${tr('Duplicate tovarlarni tekshirish','Проверить дубликаты товаров')}" class="flex items-center gap-1 bg-white border text-gray-600 font-bold px-2.5 py-1.5 rounded-xl text-[11px]">🧭</button>
+                <button onclick="toggleBulkProductSelectMode()" title="${bulkProductSelectMode ? tr('Tanlashni tugatish','Завершить выбор') : tr('Tovarlarni tanlash','Выбрать товары')}" class="flex items-center gap-1 ${bulkProductSelectMode ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'} font-bold px-2.5 py-1.5 rounded-xl text-[11px]">☑️</button>
+              </div>
             ` : ''}
           </div>
 
@@ -1434,9 +1594,9 @@
                 </div>
                 <div class="flex items-center space-x-1">
                   ${(isAdminMode && isUserAnAdmin) ? `
-                    <div class="flex flex-col">
-                      <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} class="px-1 text-[10px] ${subIdx === 0 ? 'text-gray-200' : 'text-gray-500'}">▲</button>
-                      <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} class="px-1 text-[10px] ${subIdx === subCats.length - 1 ? 'text-gray-200' : 'text-gray-500'}">▼</button>
+                    <div class="flex flex-col gap-1">
+                      <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} class="w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${subIdx === 0 ? 'bg-gray-50 text-gray-200' : 'bg-slate-100 text-slate-600'}">▲</button>
+                      <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} class="w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${subIdx === subCats.length - 1 ? 'bg-gray-50 text-gray-200' : 'bg-slate-100 text-slate-600'}">▼</button>
                     </div>
                     <button onclick="openMoveCategoryModal('${sub.id}', event)" title="${tr("Boshqa katalogga ko'chirish", "Переместить в другой каталог")}" class="p-1 bg-slate-100 text-slate-600 rounded text-xs font-bold">📁⇢</button>
                     <button onclick="openEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
@@ -1660,14 +1820,14 @@
       if (checkoutReceiptPreviewUrl) {
         return `
           <label class="block font-bold">${label}</label>
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-3 mt-1">
             <img src="${checkoutReceiptPreviewUrl}" class="h-16 w-16 object-cover rounded-xl border" alt="">
             <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}${pickerInput}</label>
           </div>`;
       }
       return `
         <label class="block font-bold">${label}</label>
-        <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">📎 ${tr('Chekni tanlash', 'Выбрать чек')}${pickerInput}</label>`;
+        <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white mt-1">📎 ${tr('Chekni tanlash', 'Выбрать чек')}${pickerInput}</label>`;
     }
 
     function rerenderReceiptPicker() {
@@ -1779,11 +1939,12 @@
       const wrap = document.getElementById('chk-post-district-field');
       const select = document.getElementById('chk-post-district');
       if (!wrap || !select) return;
-      const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
-      const deliveryOptions = commerce.deliveryOptions(fulfillmentConfig, regionKey);
-      const hasPost = deliveryOptions.some(o => o.kind === 'POST');
-      wrap.classList.toggle('hidden', !hasPost);
-      if (!hasPost) return;
+      // 11-band: bu maydon endi "regionda POST bormi" emas, balki "hozir
+      // TANLANGAN usul aynan POST'mi" shartiga qarab ko'rinadi — shu tufayli
+      // umumiy "chk-district-field" bilan bir vaqtda ikkalasi ko'rinmaydi.
+      const isPostSelected = String(selectedDeliveryMethodId || '').startsWith('POST:');
+      wrap.classList.toggle('hidden', !isPostSelected);
+      if (!isPostSelected) return;
       if (checkoutPostDistrictsLoading) {
         select.innerHTML = `<option value="">${tr('Yuklanmoqda...', 'Загрузка...')}</option>`;
         select.disabled = true;
@@ -1797,28 +1958,35 @@
     function handlePostDistrictChange() {
       const value = document.getElementById('chk-post-district')?.value || '';
       checkoutPostDistrict = value || null;
-      // Tuman almashsa, eski provider tanlovi va filiallar ro'yxati endi
-      // mos kelmaydi — tozalanadi, provider qayta qo'lda tanlanishi kerak.
-      if (String(selectedDeliveryMethodId || '').startsWith('POST:')) selectedDeliveryMethodId = null;
+      // Tuman almashsa, eski filiallar ro'yxati endi mos kelmaydi — tozalanadi.
+      // 11-band: provider tanlovi endi RESET qilinmaydi (avval qayta bosish
+      // talab qilinardi) — agar POST provider allaqachon tanlangan bo'lsa,
+      // shu yerning o'zida yangi tuman uchun filiallar qayta yuklanadi.
       checkoutSelectedBranch = null;
       checkoutBranches = [];
       checkoutBranchesLoadedFor = null;
       renderCheckoutOptions();
       saveCheckoutDraft();
+      if (checkoutPostDistrict && String(selectedDeliveryMethodId || '').startsWith('POST:')) {
+        const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
+        loadCheckoutBranches(regionKey, selectedDeliveryMethodId.slice(5), checkoutPostDistrict);
+      }
     }
 
     function selectDelivery(methodId) {
-      // 5.6: provider (BTS/EMU) avtomatik yoki tuman tanlanmasdan bosilishi
-      // mumkin emas — admin/mijoz avval tumanni tanlashi shart.
-      if (methodId?.startsWith('POST:') && !checkoutPostDistrict) {
-        showActionToast(tr("Avval tuman/shaharni tanlang", "Сначала выберите район/город"), 'error', 1600);
-        return;
-      }
+      // 11-band: POST provider endi tuman tanlanmasdan ham bosilishi mumkin —
+      // bosilgach "tuman/shahar (pochta uchun)" maydoni ko'rinadi (chunki
+      // renderPostDistrictField endi TANLANGAN usulga qarab ko'rsatiladi),
+      // foydalanuvchi o'sha yerda tumanni tanlaydi, keyin filiallar avtomatik
+      // yuklanadi (handlePostDistrictChange). Bu ketma-ketlik (viloyat →
+      // tuman/shahar → BTS/EMU → filial) o'zgarmaydi — faqat tuman-maydon
+      // umumiy maydon bilan bir vaqtda ko'rinib qolmasligi uchun bosqichlar
+      // qayta tartiblandi.
       if (methodId !== selectedDeliveryMethodId) checkoutSelectedBranch = null;
       selectedDeliveryMethodId = methodId;
       renderCheckoutOptions();
       saveCheckoutDraft();
-      if (methodId?.startsWith('POST:')) {
+      if (methodId?.startsWith('POST:') && checkoutPostDistrict) {
         const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
         loadCheckoutBranches(regionKey, methodId.slice(5), checkoutPostDistrict);
       }
@@ -1941,7 +2109,11 @@
 
       const notice = document.getElementById('delivery-notice');
       if (notice) {
-        notice.textContent = deliveryOptionNotice(selectedDelivery);
+        // 13-band: admin izohi bo'lsa, standart bildirishnoma ostida
+        // qo'shimcha qator sifatida chiqadi; bo'lmasa hech narsa qo'shilmaydi.
+        const noticeText = escapeHtml(deliveryOptionNotice(selectedDelivery));
+        const comment = selectedDelivery?.comment ? `<br><b>${escapeHtml(selectedDelivery.comment)}</b>` : '';
+        notice.innerHTML = noticeText + comment;
         notice.classList.toggle('hidden', !selectedDelivery);
       }
       // 1.13/1.14: POST (BTS/EMU) uchun tuman/manzil maydonlari yashiriladi —
@@ -1970,7 +2142,7 @@
               <p class="font-bold text-blue-900">${tr("Pul o'tkaziladigan karta", 'Карта для перевода')}</p>
               <p class="font-mono text-sm font-black">${escapeHtml(selectedPayment.cardNumber || '')}</p>
               <p>${escapeHtml(selectedPayment.cardHolder || '')}</p>
-              <p class="text-[10px] text-blue-700">${tr("CVV, PIN, SMS kod yoki amal qilish muddatini hech kimga bermang — FITCORE ularni so'ramaydi.", 'Никому не сообщайте CVV, PIN, SMS-код или срок действия — FITCORE их не запрашивает.')}</p>
+              <p class="text-[10px] text-blue-700">${tr(`CVV, PIN, SMS kod yoki amal qilish muddatini hech kimga bermang — ${escapeHtml(shopDisplayName())} ularni so'ramaydi.`, `Никому не сообщайте CVV, PIN, SMS-код или срок действия — ${escapeHtml(shopDisplayName())} их не запрашивает.`)}</p>
             </div>
             <div id="chk-receipt-wrap">${renderReceiptPicker(selectedPayment.receiptRequired)}</div>`;
         } else {
@@ -2051,6 +2223,81 @@
         mimeType: prepared.type,
         fileName: prepared.name || 'payment-receipt.jpg',
       };
+    }
+
+    // 15-band: rad etilgan chekni qayta yuborish — mavjud rasm pipeline
+    // primitivlaridan (readBlobAsArrayBuffer/makeDetachedImageFile/
+    // compressImageToLimit/fileToBase64) checkout oqimidagi bilan bir xil
+    // tarzda foydalanadi, lekin alohida state/modal'da (checkout draft'ga
+    // aralashmaydi).
+    function openResubmitReceiptModal(orderId) {
+      resubmitOrderId = orderId;
+      resubmitReceiptFile = null;
+      resubmitReceiptPreparing = null;
+      resubmitReceiptPreviewUrl = null;
+      activePopupModal = 'RESUBMIT_RECEIPT';
+      render();
+    }
+    function closeResubmitReceiptModal() {
+      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
+      resubmitOrderId = null;
+      resubmitReceiptFile = null;
+      resubmitReceiptPreparing = null;
+      resubmitReceiptPreviewUrl = null;
+      activePopupModal = null;
+      render();
+    }
+    async function onResubmitReceiptPicked(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
+        event.target.value = '';
+        return alert(tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
+      }
+      const selectionVersion = ++resubmitReceiptSelectionVersion;
+      resubmitReceiptFile = file;
+      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
+      resubmitReceiptPreviewUrl = URL.createObjectURL(file);
+      resubmitReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => {
+        const detached = makeDetachedImageFile(bytes, file);
+        if (selectionVersion === resubmitReceiptSelectionVersion) {
+          try {
+            const stableUrl = URL.createObjectURL(detached);
+            const oldUrl = resubmitReceiptPreviewUrl;
+            resubmitReceiptPreviewUrl = stableUrl;
+            renderModalContainer();
+            if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
+          } catch (previewErr) {
+            imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
+          }
+        }
+        return detached;
+      }).then(detached => compressImageToLimit(detached, MAX_RECEIPT_BYTES, 1600, 0.85));
+      renderModalContainer();
+    }
+    async function submitResubmitReceipt() {
+      if (!resubmitOrderId || (!resubmitReceiptFile && !resubmitReceiptPreparing)) {
+        return alert(tr("Iltimos, chek rasmini tanlang.", "Пожалуйста, выберите изображение чека."));
+      }
+      const orderId = resubmitOrderId;
+      showActionToast(tr('⏳ Yuborilmoqda...', '⏳ Отправка...'), 'saving');
+      try {
+        const prepared = resubmitReceiptPreparing ? await resubmitReceiptPreparing : resubmitReceiptFile;
+        if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
+        const imageUpload = { base64: await fileToBase64(prepared), mimeType: prepared.type, fileName: prepared.name || 'payment-receipt.jpg' };
+        await callApi('upload_payment_receipt', { orderId, imageUpload });
+        const patch = { hasReceipt: true, receiptReviewStatus: 'PENDING', receiptRejectReason: null };
+        const idx = orders.findIndex(o => o.id === orderId);
+        if (idx >= 0) orders[idx] = { ...orders[idx], ...patch };
+        if (selectedOrderModal?.id === orderId) selectedOrderModal = { ...selectedOrderModal, ...patch };
+        closeResubmitReceiptModal();
+        showActionToast(tr('✅ Yangi chek yuborildi', '✅ Новый чек отправлен'), 'success', 2000);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Yuborilmadi', '❌ Не отправлено'), 'error', 2200);
+        alert(tr('Xatolik: ', 'Ошибка: ') + (e.message || e));
+      }
     }
 
     let submittingOrder = false;
@@ -2190,7 +2437,7 @@
           <div class="bg-white rounded-3xl p-6 text-center max-w-sm w-full space-y-4 shadow-2xl">
             <div class="text-5xl">🎉</div>
             <h3 class="text-xl font-black text-gray-900">${tr("Buyurtmangiz qabul qilindi!", "Ваш заказ принят!")}</h3>
-            <p class="text-xs text-gray-500">${tr("Buyurtma ID:", "ID заказа:")} <b class="text-blue-600">#${orderId}</b>${tr(". FITCORE mutaxassislari tez orada siz bilan bog'lanishadi.", ". Специалисты FITCORE скоро свяжутся с вами.")}</p>
+            <p class="text-xs text-gray-500">${tr("Buyurtma ID:", "ID заказа:")} <b class="text-blue-600">#${orderId}</b>${tr(`. ${escapeHtml(shopDisplayName())} mutaxassislari tez orada siz bilan bog'lanishadi.`, `. Специалисты ${escapeHtml(shopDisplayName())} скоро свяжутся с вами.`)}</p>
             <button onclick="document.getElementById('modal-container').innerHTML=''; switchTab('orders');" class="w-full bg-blue-600 text-white font-bold py-3 rounded-xl text-xs">
               ${tr("📦 Buyurtmalarda ko\'rish", "📦 Посмотреть в заказах")}
             </button>
@@ -2257,7 +2504,7 @@
                   <div>
                     <div class="flex items-center space-x-2">
                       <span class="font-black text-blue-600 text-xs">#${o.id}</span>
-                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${statusColorClass(o.status)}">${statusLabel(o.status)}</span>
+                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${statusColorClass(orderDisplayStatus(o))}">${statusLabel(orderDisplayStatus(o))}</span>
                     </div>
                     <p class="font-bold text-xs text-gray-800 mt-1">${escapeHtml(o.user)} (${escapeHtml(o.phone)})</p>
                     <p class="text-[10px] text-gray-400">${escapeHtml(regionLabel(o.region))} | ${escapeHtml(payMethodLabel(o.payMethod))}</p>
@@ -2299,7 +2546,7 @@
             <div onclick="openOrderModal(${o.id})" class="bg-white rounded-2xl p-4 shadow-sm space-y-2 border cursor-pointer hover:bg-gray-50">
               <div class="flex justify-between items-center border-b pb-2">
                 <span class="font-black text-blue-600">#${o.id}</span>
-                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColorClass(o.status)}">${statusLabel(o.status)}</span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColorClass(orderDisplayStatus(o))}">${statusLabel(orderDisplayStatus(o))}</span>
               </div>
               <p class="text-xs text-gray-500">📅 ${escapeHtml(o.date)}</p>
               <p class="text-xs text-gray-600">🚚 ${escapeHtml(deliverySnapshotLabel(o))} · <b>${escapeHtml(shipmentStatusLabel(o.shipment?.status))}</b></p>
@@ -2505,6 +2752,26 @@
       }
     }
 
+    // 18-band: matnni saqlash — webhook ulash (setupBotWebhook, o'zgarmagan)
+    // dan alohida, START_MESSAGE modalidagi "Saqlash" tugmasi chaqiradi.
+    async function saveStartMessage() {
+      if (!isSuperAdmin) return;
+      const value = document.getElementById('sm-text')?.value.trim() || null;
+      const old = shopContact.startMessage;
+      shopContact = { ...shopContact, startMessage: value };
+      showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохранение..."), 'saving');
+      try {
+        await callApi('set_start_message', { startMessage: value });
+        showActionToast(tr("✅ Saqlandi", "✅ Сохранено"), 'success', 1600);
+      } catch (e) {
+        console.error(e);
+        shopContact = { ...shopContact, startMessage: old };
+        render();
+        showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 2000);
+        alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      }
+    }
+
     async function setupBotWebhook() {
       if (!isSuperAdmin) return;
       if (!confirm(tr("Telegram /start xabarlarini Supabase orqali ulaysizmi?", "Подключить сообщения /start через Supabase?"))) return;
@@ -2527,7 +2794,7 @@
 
     function shopInfoIsEmpty() {
       return !shopContact.address && !shopContact.coordinates && !shopContact.phone && !shopContact.phone2 &&
-        !shopContact.phone3 && !shopContact.instagram && !shopContact.telegram;
+        !shopContact.phone3 && !shopContact.instagram && !shopContact.telegram && !shopContact.facebook;
     }
 
     const DELIVERY_CONFIG_KEYS = { FREE: 'free', FIXED: 'fixed', TAXI: 'taxi' };
@@ -2763,6 +3030,15 @@
       fulfillmentDraft.delivery[key].regions[regionId][field] = Math.max(0, Math.round(Number(value) || 0));
     }
 
+    // 13-band: har bir yetkazib berish usuli/region uchun ixtiyoriy admin
+    // izohi — checkoutda usul tanlanganda mavjud bildirishnoma ostida chiqadi.
+    function setDeliveryRegionComment(kind, encodedId, value) {
+      const key = DELIVERY_CONFIG_KEYS[kind];
+      const regionId = decodedRegionId(encodedId);
+      if (!key || !fulfillmentDraft.delivery[key].regions[regionId]) return;
+      fulfillmentDraft.delivery[key].regions[regionId].comment = String(value || '').slice(0, 200);
+    }
+
     function bulkDeliveryRegions(kind, enabled) {
       const key = DELIVERY_CONFIG_KEYS[kind];
       if (!key) return;
@@ -2800,6 +3076,11 @@
     function setPostRegionPayer(providerId, encodedId, payer) {
       const provider = postProvider(providerId), regionId = decodedRegionId(encodedId);
       if (provider?.regions?.[regionId]) provider.regions[regionId].payer = payer === 'SELLER' ? 'SELLER' : 'CUSTOMER';
+    }
+
+    function setPostRegionComment(providerId, encodedId, value) {
+      const provider = postProvider(providerId), regionId = decodedRegionId(encodedId);
+      if (provider?.regions?.[regionId]) provider.regions[regionId].comment = String(value || '').slice(0, 200);
     }
 
     function bulkPostRegions(providerId, enabled) {
@@ -2849,6 +3130,7 @@
           <label class="flex items-center justify-between gap-2 font-bold"><span>${escapeHtml(uiLang === 'ru' ? region.nameRu : region.nameUz)}</span><input type="checkbox" ${entry?.enabled ? 'checked' : ''} onchange="setDeliveryRegionEnabled('${kind}','${encoded}',this.checked)"></label>
           ${entry?.enabled && kind === 'FIXED' ? `<div class="flex items-center gap-2"><input type="number" min="0" value="${entry.fee || ''}" oninput="setDeliveryRegionNumber('FIXED','${encoded}','fee',this.value)" class="flex-1 p-2 border rounded-xl"><span>${tr("so'm",'сум')}</span></div>` : ''}
           ${entry?.enabled && kind === 'TAXI' ? `<div class="grid grid-cols-2 gap-2"><input type="number" min="0" value="${entry.minFee || ''}" oninput="setDeliveryRegionNumber('TAXI','${encoded}','minFee',this.value)" placeholder="Min" class="p-2 border rounded-xl"><input type="number" min="0" value="${entry.maxFee || ''}" oninput="setDeliveryRegionNumber('TAXI','${encoded}','maxFee',this.value)" placeholder="Max" class="p-2 border rounded-xl"></div>` : ''}
+          ${entry?.enabled ? `<input type="text" value="${escapeHtml(entry.comment || '')}" oninput="setDeliveryRegionComment('${kind}','${encoded}',this.value)" placeholder="${tr('Izoh (ixtiyoriy)','Комментарий (необязательно)')}" maxlength="200" class="w-full p-2 border rounded-xl text-[11px]">` : ''}
         </div>`;
       }).join('');
     }
@@ -2859,7 +3141,7 @@
         ${provider.id === 'OTHER' ? `<input type="text" value="${escapeHtml(provider.name)}" oninput="setPostProviderName('OTHER',this.value)" placeholder="${tr('Pochta nomi','Название почты')}" class="w-full p-2 border rounded-xl">` : ''}
         ${provider.enabled ? `${settingsBulkButtons(`bulkPostRegions('${provider.id}',true)`, `bulkPostRegions('${provider.id}',false)`)}<div class="space-y-2">${TOP_LEVEL_REGIONS.map(region => {
           const entry = provider.regions[region.id], encoded = encodedRegionId(region.id);
-          return `<div class="border rounded-xl p-2 space-y-2"><label class="flex justify-between gap-2 font-bold"><span>${escapeHtml(uiLang === 'ru' ? region.nameRu : region.nameUz)}</span><input type="checkbox" ${entry?.enabled ? 'checked' : ''} onchange="setPostRegionEnabled('${provider.id}','${encoded}',this.checked)"></label>${entry?.enabled ? `<select onchange="setPostRegionPayer('${provider.id}','${encoded}',this.value)" class="w-full p-2 border rounded-xl bg-gray-50"><option value="CUSTOMER" ${entry.payer !== 'SELLER' ? 'selected' : ''}>${tr('Pochta xarajati mijoz hisobidan','Почта за счёт клиента')}</option><option value="SELLER" ${entry.payer === 'SELLER' ? 'selected' : ''}>${tr('Pochta xarajati sotuvchi hisobidan','Почта за счёт продавца')}</option></select>` : ''}</div>`;
+          return `<div class="border rounded-xl p-2 space-y-2"><label class="flex justify-between gap-2 font-bold"><span>${escapeHtml(uiLang === 'ru' ? region.nameRu : region.nameUz)}</span><input type="checkbox" ${entry?.enabled ? 'checked' : ''} onchange="setPostRegionEnabled('${provider.id}','${encoded}',this.checked)"></label>${entry?.enabled ? `<select onchange="setPostRegionPayer('${provider.id}','${encoded}',this.value)" class="w-full p-2 border rounded-xl bg-gray-50"><option value="CUSTOMER" ${entry.payer !== 'SELLER' ? 'selected' : ''}>${tr('Pochta xarajati mijoz hisobidan','Почта за счёт клиента')}</option><option value="SELLER" ${entry.payer === 'SELLER' ? 'selected' : ''}>${tr('Pochta xarajati sotuvchi hisobidan','Почта за счёт продавца')}</option></select><input type="text" value="${escapeHtml(entry.comment || '')}" oninput="setPostRegionComment('${provider.id}','${encoded}',this.value)" placeholder="${tr('Izoh (ixtiyoriy)','Комментарий (необязательно)')}" maxlength="200" class="w-full p-2 border rounded-xl text-[11px]">` : ''}</div>`;
         }).join('')}</div>` : ''}
       </div>`;
     }
@@ -2968,6 +3250,7 @@
       const phones = [shopContact.phone, shopContact.phone2, shopContact.phone3].filter(Boolean);
       const instagramNick = cleanSocialNick(shopContact.instagram);
       const telegramNick = cleanSocialNick(shopContact.telegram);
+      const facebookNick = cleanSocialNick(shopContact.facebook);
       const coords = String(shopContact.coordinates || '').trim();
       const mapsUrl = coords ? `https://www.google.com/maps?q=${encodeURIComponent(coords)}` : null;
 
@@ -2984,6 +3267,11 @@
             </div>
           </div>
 
+          <button onclick="openSupportModal(null)" class="w-full bg-white text-slate-700 p-3 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
+            <span>💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</span>
+            <span>›</span>
+          </button>
+
           ${myStatus.isBlocked ? `
             <div class="bg-red-50 border border-red-300 p-4 rounded-2xl text-xs">
               <p class="font-bold text-red-700">${tr("🚫 Siz botdan foydalanish huquqidan mahrum qilingansiz", "🚫 Доступ к оформлению заказов заблокирован")}</p>
@@ -2999,15 +3287,20 @@
           ` : ''}
 
           <div class="shop-about-card bg-white p-4 rounded-2xl shadow-sm border space-y-3">
-            <div class="flex items-center justify-between gap-3 border-b pb-2">
-              <div class="flex items-center gap-2 min-w-0">
-                <h3 class="font-bold text-sm text-gray-900">${tr("📍 Do'kon haqida", "📍 О магазине")}</h3>
+            <div class="flex items-center justify-between gap-3 border-b pb-2 flex-wrap">
+              <div class="flex items-center gap-2 min-w-0 flex-wrap">
+                <h3 class="font-bold text-sm text-gray-900 truncate">📍 ${escapeHtml(shopDisplayName())}</h3>
+                <div class="flex items-center gap-1.5 flex-shrink-0">
+                  ${instagramNick ? `<a href="https://instagram.com/${encodeURIComponent(instagramNick)}" target="_blank" title="Instagram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-xs">📸</a>` : ''}
+                  ${telegramNick ? `<a href="https://t.me/${encodeURIComponent(telegramNick)}" target="_blank" title="Telegram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-xs">✈️</a>` : ''}
+                  ${facebookNick ? `<a href="https://facebook.com/${encodeURIComponent(facebookNick)}" target="_blank" title="Facebook" class="w-6 h-6 flex items-center justify-center rounded-full bg-blue-600 text-white text-[10px] font-black">f</a>` : ''}
+                </div>
                 ${(isUserAnAdmin && isAdminMode) ? `
                   <button onclick="activePopupModal='SHOP_INFO'; render();" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">✏️ ${tr("Tahrirlash", "Изменить")}</button>
                 ` : ''}
               </div>
               <div class="flex items-center gap-2 flex-shrink-0">
-                ${shopLogoUrl ? `<img id="shop-about-logo" src="${escapeHtml(shopLogoUrl)}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border">` : `<div id="shop-about-logo-empty" class="h-10 min-w-10 px-2 rounded-lg bg-slate-50 border flex items-center justify-center text-[9px] font-bold text-slate-400">FITCORE</div>`}
+                ${shopLogoUrl ? `<img id="shop-about-logo" src="${escapeHtml(shopLogoUrl)}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border">` : `<div id="shop-about-logo-empty" class="h-10 min-w-10 px-2 rounded-lg bg-slate-50 border flex items-center justify-center text-[9px] font-bold text-slate-400">${escapeHtml(shopDisplayName())}</div>`}
                 ${(isUserAnAdmin && isAdminMode) ? `
                   <label class="cursor-pointer text-[10px] font-bold px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200" title="${tr("Logotip qo'shish/almashtirish","Добавить/заменить логотип")}">
                     🖼️
@@ -3045,20 +3338,6 @@
               </a>
             `).join('')}
 
-            ${instagramNick ? `
-              <a href="https://instagram.com/${encodeURIComponent(instagramNick)}" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
-                <span class="w-4 h-4 flex items-center justify-center text-sm flex-shrink-0">📸</span>
-                <p class="text-xs font-bold text-gray-800">Instagram: @${escapeHtml(instagramNick)}</p>
-              </a>
-            ` : ''}
-
-            ${telegramNick ? `
-              <a href="https://t.me/${encodeURIComponent(telegramNick)}" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
-                <span class="w-4 h-4 flex items-center justify-center text-sm flex-shrink-0">✈️</span>
-                <p class="text-xs font-bold text-gray-800">Telegram: @${escapeHtml(telegramNick)}</p>
-              </a>
-            ` : ''}
-
             ${shopInfoIsEmpty() ? `
               <p class="text-[11px] text-gray-400 text-center py-2">${(isUserAnAdmin && isAdminMode) ? tr("Do'kon ma'lumotlarini ✏️ Tahrirlash orqali kiriting.", "Заполните данные магазина через ✏️ Изменить.") : ''}</p>
             ` : ''}
@@ -3066,20 +3345,18 @@
 
           ${(isUserAnAdmin && isAdminMode) ? `
             <button onclick="openShopParams()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-              <span>⚙️ ${tr("Do'kon sozlamalari → Do'kon parametrlari", 'Настройки магазина → Параметры магазина')}</span>
+              <span>⚙️ ${tr("Do'kon sozlamalari", 'Настройки магазина')}</span>
+              <span>›</span>
+            </button>
+            <button onclick="openAdminSupportModal()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
+              <span>💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}${adminSupportTicketsLoaded && adminSupportTickets.some(t => t.status === 'OPEN') ? ` <span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">${adminSupportTickets.filter(t => t.status === 'OPEN').length}</span>` : ''}</span>
               <span>›</span>
             </button>
           ` : ''}
 
-          ${isUserAnAdmin ? `
-            <button id="admin-role-toggle-btn" data-target-mode="${isAdminMode ? 'user' : 'admin'}" onclick="toggleAdminRole()" class="w-full p-4 rounded-2xl flex items-center justify-between font-bold shadow-md">
-              <span>${isAdminMode ? tr('👤 User rejimiga o\'tish','👤 Перейти в режим пользователя') : tr('🛡️ Admin rejimiga o\'tish','🛡️ Перейти в режим администратора')}</span>
-              <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-            </button>
-          ` : ''}
 
           ${(isSuperAdmin && isAdminMode) ? `
-            <button onclick="setupBotWebhook()" class="w-full bg-white text-slate-700 p-3 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
+            <button onclick="activePopupModal='START_MESSAGE'; render();" class="w-full bg-white text-slate-700 p-3 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
               <span>🤖 ${tr("Bot /start xabarini ulash", "Подключить сообщение /start")}</span>
               <i data-lucide="link" class="w-4 h-4"></i>
             </button>
@@ -3090,8 +3367,8 @@
             <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
               <div class="flex justify-between items-center border-b pb-2">
                 <h3 class="font-bold text-xs text-amber-900">${tr("👑 Adminlarni boshqarish (Bosh Admin)", "👑 Управление администраторами (Главный админ)")}</h3>
-                <button onclick="activePopupModal='ADD_ADMIN'; render();" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs flex items-center space-x-1 shadow-sm">
-                  <span>${tr("➕ Yangi admin qo'shish", "➕ Добавить администратора")}</span>
+                <button onclick="activePopupModal='ADD_ADMIN'; render();" title="${tr("Yangi admin qo'shish", "Добавить администратора")}" class="bg-amber-600 hover:bg-amber-700 text-white font-bold w-7 h-7 flex items-center justify-center rounded-xl text-sm shadow-sm">
+                  ➕
                 </button>
               </div>
 
@@ -3113,6 +3390,7 @@
 
     async function saveShopContact() {
       const next = {
+        name: document.getElementById('sc-name').value.trim() || null,
         address: document.getElementById('sc-address').value.trim() || null,
         coordinates: document.getElementById('sc-coordinates').value.trim() || null,
         phone: document.getElementById('sc-phone1').value.trim() || null,
@@ -3120,6 +3398,7 @@
         phone3: document.getElementById('sc-phone3').value.trim() || null,
         instagram: cleanSocialNick(document.getElementById('sc-instagram').value) || null,
         telegram: cleanSocialNick(document.getElementById('sc-telegram').value) || null,
+        facebook: cleanSocialNick(document.getElementById('sc-facebook').value) || null,
       };
 
       if (next.coordinates && !/^\s*-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?\s*$/.test(next.coordinates)) {
@@ -3127,7 +3406,7 @@
       }
 
       const old = { ...shopContact };
-      shopContact = next;
+      shopContact = { ...next, startMessage: shopContact.startMessage };
       activePopupModal = null;
       render(); // optimistic UI — darhol ko'rinadi
       try {
@@ -3252,7 +3531,7 @@
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              <h3 class="font-bold text-sm text-gray-900 border-b pb-2 text-center">${tr("📝 FITCORE ro'yxatdan o'tish", "📝 Регистрация FITCORE")}</h3>
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2 text-center">${tr(`📝 ${escapeHtml(shopDisplayName())} ro'yxatdan o'tish`, `📝 Регистрация ${escapeHtml(shopDisplayName())}`)}</h3>
               <p class="text-[11px] text-gray-500 text-center">${tr("Buyurtmani tez rasmiylashtirish uchun ma'lumotlaringizni kiriting:", "Введите данные для быстрого оформления заказов:")}</p>
               <div>
                 <label class="font-bold text-gray-600">${tr("Ismingiz *", "Имя *")}</label>
@@ -3281,6 +3560,11 @@
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-xl text-xs" onclick="event.stopPropagation()">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("✏️ Do'kon haqida", "✏️ О магазине")}</h3>
               <div>
+                <label class="font-bold text-gray-600">${tr("Do'kon nomi", "Название магазина")}</label>
+                <input type="text" id="sc-name" value="${escapeHtml(shopContact.name || '')}" placeholder="FITCORE" class="w-full mt-1 p-2 border rounded-xl">
+                <p class="text-[9px] text-gray-400 mt-1">${tr("Bo'sh qoldirilsa, standart \"FITCORE\" nomi ishlatiladi.", "Если оставить пустым, используется название \"FITCORE\" по умолчанию.")}</p>
+              </div>
+              <div>
                 <label class="font-bold text-gray-600">${tr("Manzil", "Адрес")}</label>
                 <input type="text" id="sc-address" value="${escapeHtml(shopContact.address || '')}" placeholder="Sergeli tumani, ..." class="w-full mt-1 p-2 border rounded-xl">
               </div>
@@ -3302,11 +3586,41 @@
                 <label class="font-bold text-gray-600">Telegram ${tr("nickname", "никнейм")}</label>
                 <div class="flex items-center mt-1"><span class="px-2 py-2 bg-slate-50 border border-r-0 rounded-l-xl text-gray-500">@</span><input type="text" id="sc-telegram" value="${escapeHtml(cleanSocialNick(shopContact.telegram))}" placeholder="fitcore_uz" class="flex-1 p-2 border rounded-r-xl"></div>
               </div>
+              <div>
+                <label class="font-bold text-gray-600">Facebook ${tr("nickname", "никнейм")}</label>
+                <div class="flex items-center mt-1"><span class="px-2 py-2 bg-slate-50 border border-r-0 rounded-l-xl text-gray-500">@</span><input type="text" id="sc-facebook" value="${escapeHtml(cleanSocialNick(shopContact.facebook))}" placeholder="fitcore.uz" class="flex-1 p-2 border rounded-r-xl"></div>
+              </div>
               <p class="text-[10px] text-gray-400">${tr("Bo'sh qoldirilgan maydonlar foydalanuvchiga umuman ko'rinmaydi.", "Пустые поля вообще не показываются пользователю.")}</p>
               <div class="flex gap-2 pt-2">
                 <button onclick="saveShopContact()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr("Saqlash", "Сохранить")}</button>
                 <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Yopish", "Закрыть")}</button>
               </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // 18-band: "Bot /start xabarini ulash" endi ikkita ishni bir joyda
+      // qiladi — matnni tahrirlash (yangi) va webhookni ulash (mavjud,
+      // setupBotWebhook() o'zgarmagan).
+      if (activePopupModal === 'START_MESSAGE') {
+        const currentStartMessage = shopContact.startMessage || '';
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">🤖 ${tr("Bot /start xabari", "Сообщение бота /start")}</h3>
+              <div>
+                <label class="font-bold text-gray-600">${tr("Xabar matni", "Текст сообщения")}</label>
+                <textarea id="sm-text" rows="8" placeholder="${tr('Standart matn ishlatiladi...', 'Используется стандартный текст...')}" class="w-full mt-1 p-2.5 border rounded-xl font-mono text-[11px]">${escapeHtml(currentStartMessage)}</textarea>
+                <p class="text-[9px] text-gray-400 mt-1">${tr("Bo'sh qoldirilsa, standart xabar matni ishlatiladi. HTML teglar (masalan <b>...</b>) qo'llab-quvvatlanadi.", "Если оставить пустым, используется стандартный текст. Поддерживаются HTML-теги (например <b>...</b>).")}</p>
+                <button onclick="saveStartMessage()" class="w-full mt-2 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr("Matnni saqlash", "Сохранить текст")}</button>
+              </div>
+              <div class="border-t pt-3">
+                <button onclick="setupBotWebhook()" class="w-full bg-slate-100 text-slate-700 font-bold py-2.5 rounded-xl flex items-center justify-center gap-1.5">🔗 ${tr("Webhookni ulash", "Подключить webhook")}</button>
+                <p class="text-[9px] text-gray-400 mt-1">${tr("Bu tugma faqat botni Supabase'ga ulaydi — bir marta bosish yetarli.", "Эта кнопка только подключает бота к Supabase — достаточно нажать один раз.")}</p>
+              </div>
+              <button onclick="activePopupModal=null; render();" class="w-full bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl">${tr("Yopish", "Закрыть")}</button>
             </div>
           </div>
         `;
@@ -3436,9 +3750,13 @@
                 <input type="text" id="m-cat-name" placeholder="${tr('Masalan: Proteinlar','Например: Протеины')}" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
-                <label class="font-bold text-gray-600">${tr("Katalog rasmi (Xotiradan yuklash):", "Изображение каталога (загрузить с устройства):")}</label>
-                <input type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'm-cat-prev')" class="w-full mt-1 text-xs">
-                <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl mt-2 hidden border">
+                <label class="font-bold text-gray-600">${tr("Katalog rasmi", "Изображение каталога")}</label>
+                <div class="flex items-center gap-3 mt-1">
+                  <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl hidden border">
+                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}
+                    <input type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'm-cat-prev')" class="hidden">
+                  </label>
+                </div>
               </div>
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveCategoryFromModal()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("Saqlash", "Сохранить")}</button>
@@ -3461,9 +3779,13 @@
                 <input type="text" id="ec-name" value="${escapeHtml(c.name)}" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
-                <label class="font-bold text-gray-600">${tr("Katalog rasmi (Xotiradan yuklash):", "Изображение каталога (загрузить с устройства):")}</label>
-                <input type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'ec-img-prev')" class="w-full mt-1 text-xs">
-                <img id="ec-img-prev" src="${escapeHtml((c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? c.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-16 h-16 object-cover rounded-xl mt-2 ${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? '' : 'hidden'} border">
+                <label class="font-bold text-gray-600">${tr("Katalog rasmi", "Изображение каталога")}</label>
+                <div class="flex items-center gap-3 mt-1">
+                  <img id="ec-img-prev" src="${escapeHtml((c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? c.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-16 h-16 object-cover rounded-xl ${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? '' : 'hidden'} border">
+                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? `🔄 ${tr('Rasmni almashtirish', 'Заменить изображение')}` : `🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}`}
+                    <input type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'ec-img-prev')" class="hidden">
+                  </label>
+                </div>
               </div>
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveCategoryEdit('${c.id}')" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("Saqlash", "Сохранить")}</button>
@@ -4098,6 +4420,116 @@
         return;
       }
 
+      // 14-band: chekni rad etish — sabab kiritish oynasi.
+      if (activePopupModal === 'REJECT_RECEIPT') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; rejectReceiptOrderId=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">❌ ${tr('Chekni rad etish', 'Отклонить чек')}</h3>
+              <div>
+                <label class="font-bold text-gray-600">${tr('Rad etish sababi *', 'Причина отклонения *')}</label>
+                <textarea id="rr-reason" rows="3" placeholder="${tr('Masalan: rasm noaniq, summa mos emas...', 'Например: изображение нечёткое, сумма не совпадает...')}" class="w-full mt-1 p-2.5 border rounded-xl"></textarea>
+              </div>
+              <div class="flex gap-2 pt-1">
+                <button onclick="submitRejectReceipt()" class="flex-1 bg-red-600 text-white font-bold py-2.5 rounded-xl">❌ ${tr('Rad etish', 'Отклонить')}</button>
+                <button onclick="activePopupModal=null; rejectReceiptOrderId=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr('Bekor qilish', 'Отмена')}</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // 15-band: rad etilgan chekni qayta yuborish oynasi.
+      if (activePopupModal === 'RESUBMIT_RECEIPT') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="closeResubmitReceiptModal();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📎 ${tr('Yangi chek yuborish', 'Отправить новый чек')}</h3>
+              <div>
+                <label class="block font-bold">${tr("To'lov cheki/skrinshoti *", 'Чек/скриншот оплаты *')}</label>
+                ${resubmitReceiptPreviewUrl ? `
+                  <div class="flex items-center gap-3 mt-1">
+                    <img src="${resubmitReceiptPreviewUrl}" class="h-16 w-16 object-cover rounded-xl border" alt="">
+                    <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}<input type="file" accept="image/jpeg,image/png,image/webp" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
+                  </div>
+                ` : `
+                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white mt-1">📎 ${tr('Chekni tanlash', 'Выбрать чек')}<input type="file" accept="image/jpeg,image/png,image/webp" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
+                `}
+              </div>
+              <div class="flex gap-2 pt-1">
+                <button onclick="submitResubmitReceipt()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
+                <button onclick="closeResubmitReceiptModal()" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr('Bekor qilish', 'Отмена')}</button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // 16-band: mijoz uchun qo'llab-quvvatlash — yangi murojaat yozish +
+      // o'z murojaatlari/admin javoblari tarixi.
+      if (activePopupModal === 'SUPPORT') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; supportTicketOrderId=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</h3>
+              ${supportTicketOrderId ? `<p class="text-[10px] text-gray-500">${tr('Buyurtma','Заказ')} #${supportTicketOrderId} ${tr('bo‘yicha murojaat','по этому заказу')}</p>` : ''}
+              <div>
+                <label class="font-bold text-gray-600">${tr('Murojaatingiz', 'Ваше обращение')}</label>
+                <textarea id="sup-message" rows="4" placeholder="${tr('Savolingiz yoki muammoingizni yozing...', 'Опишите ваш вопрос или проблему...')}" class="w-full mt-1 p-2.5 border rounded-xl"></textarea>
+                <button onclick="submitSupportTicket()" class="w-full mt-2 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
+              </div>
+              ${supportTicketsLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...','Загрузка...')}</p>` : ''}
+              ${(!supportTicketsLoading && supportTickets.length) ? `
+                <div class="border-t pt-2 space-y-2">
+                  <p class="font-bold text-gray-600">${tr('Oldingi murojaatlar', 'Предыдущие обращения')}</p>
+                  ${supportTickets.map(t => `
+                    <div class="bg-gray-50 border rounded-xl p-2.5 space-y-1">
+                      <p class="text-[10px] text-gray-400">${t.orderId ? `#${t.orderId} · ` : ''}${new Date(t.createdAt).toLocaleString()}</p>
+                      <p>${escapeHtml(t.message)}</p>
+                      ${t.adminReply ? `<div class="bg-blue-50 border border-blue-100 rounded-lg p-2 mt-1"><p class="text-[10px] font-bold text-blue-700">${tr('Javob','Ответ')}:</p><p>${escapeHtml(t.adminReply)}</p></div>` : `<p class="text-[10px] text-amber-600">${tr('Hali javob berilmagan','Пока нет ответа')}</p>`}
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // 16-band: admin uchun kelgan murojaatlar ro'yxati + javob yozish.
+      if (activePopupModal === 'ADMIN_SUPPORT') {
+        container.innerHTML = `
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
+            <div class="bg-white rounded-3xl p-5 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-2 shadow-2xl text-xs" onclick="event.stopPropagation()">
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}</h3>
+              ${adminSupportTicketsLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...','Загрузка...')}</p>` : ''}
+              ${(!adminSupportTicketsLoading && !adminSupportTickets.length) ? `<p class="text-center text-gray-400 py-4">${tr('Murojaatlar yo‘q','Обращений нет')}</p>` : ''}
+              ${adminSupportTickets.map(t => `
+                <div class="border rounded-xl p-2.5 space-y-1.5">
+                  <div class="flex items-center justify-between cursor-pointer" onclick="toggleAdminTicketExpand(${t.id})">
+                    <span class="font-bold">${t.orderId ? `#${t.orderId} · ` : ''}${escapeHtml(t.tgId)}</span>
+                    <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}">${t.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено')}</span>
+                  </div>
+                  <p class="text-[10px] text-gray-400">${new Date(t.createdAt).toLocaleString()}</p>
+                  <p>${escapeHtml(t.message)}</p>
+                  ${t.adminReply ? `<div class="bg-blue-50 border border-blue-100 rounded-lg p-2"><p class="text-[10px] font-bold text-blue-700">${tr('Javob','Ответ')}:</p><p>${escapeHtml(t.adminReply)}</p></div>` : ''}
+                  ${expandedAdminTicketId === t.id ? `
+                    <div class="pt-1 space-y-1.5">
+                      <textarea id="sup-reply-${t.id}" rows="2" placeholder="${tr('Javob yozing...','Напишите ответ...')}" class="w-full p-2 border rounded-xl">${escapeHtml(t.adminReply || '')}</textarea>
+                      <button onclick="submitTicketReply(${t.id})" class="w-full bg-blue-600 text-white font-bold py-2 rounded-xl">✅ ${tr('Javobni yuborish','Отправить ответ')}</button>
+                    </div>
+                  ` : `<button onclick="toggleAdminTicketExpand(${t.id})" class="text-[10px] font-bold text-blue-600">${t.adminReply ? tr('Javobni tahrirlash','Изменить ответ') : tr('Javob yozish','Ответить')}</button>`}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+        return;
+      }
+
       // ORDER DETAILS MODAL
       if (selectedOrderModal) {
         const o = selectedOrderModal;
@@ -4144,6 +4576,12 @@
 
               ${(isAdminMode && isUserAnAdmin && o.hasReceipt) ? `<button onclick="openOrderReceipt(${o.id})" class="w-full bg-blue-50 text-blue-700 border border-blue-200 py-2 rounded-xl font-bold">🧾 ${tr("To'lov chekini ochish", 'Открыть чек оплаты')}</button>` : ''}
               ${(isAdminMode && isUserAnAdmin && o.receiptSentToTelegram && botUsername) ? `<button onclick="openReceiptInTelegram()" class="w-full bg-sky-50 text-sky-700 border border-sky-200 py-2 rounded-xl font-bold">✈️ ${tr("Telegramda ko'rish", 'Смотреть в Telegram')}</button>` : ''}
+              ${(isAdminMode && isUserAnAdmin && o.hasReceipt && (o.receiptReviewStatus || 'PENDING') === 'PENDING') ? `
+                <div class="grid grid-cols-2 gap-2">
+                  <button onclick="approvePaymentReceipt(${o.id})" class="bg-emerald-600 text-white font-bold py-2 rounded-xl text-[11px]">✅ ${tr('Tasdiqlash', 'Подтвердить')}</button>
+                  <button onclick="openRejectReceiptModal(${o.id})" class="bg-red-600 text-white font-bold py-2 rounded-xl text-[11px]">❌ ${tr('Rad etish', 'Отклонить')}</button>
+                </div>
+              ` : ''}
 
               ${(isAdminMode && isUserAnAdmin && o.delivery?.kind === 'TAXI' && o.status !== 'CANCELLED') ? `
                 <div class="border-t pt-2 space-y-2">
@@ -4167,6 +4605,18 @@
               ${o.status === 'CANCELLED' && o.cancelReason ? `
                 <div class="bg-red-50 border border-red-200 p-2.5 rounded-xl text-[11px] text-red-700">
                   ❌ Bekor qilindi (${o.cancelledBy === 'ADMIN' ? "do'kon tomonidan" : 'mijoz tomonidan'}): ${escapeHtml(o.cancelReason)}
+                </div>
+              ` : ''}
+
+              ${o.receiptReviewStatus === 'REJECTED' ? `
+                <div class="bg-red-50 border border-red-200 p-2.5 rounded-xl text-[11px] text-red-700 space-y-2">
+                  <p>❌ ${tr('Chek rad etildi', 'Чек отклонён')}${o.receiptRejectReason ? `: ${escapeHtml(o.receiptRejectReason)}` : ''}</p>
+                  ${!isAdminMode ? `
+                    <div class="flex gap-2">
+                      <button onclick="openResubmitReceiptModal(${o.id})" class="flex-1 bg-blue-600 text-white font-bold py-2 rounded-xl text-[11px]">📎 ${tr('Yangi chek yuborish', 'Отправить новый чек')}</button>
+                      <button onclick="openSupportModal(${o.id})" class="flex-1 bg-white border border-red-200 text-red-700 font-bold py-2 rounded-xl text-[11px]">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</button>
+                    </div>
+                  ` : ''}
                 </div>
               ` : ''}
 
@@ -4386,6 +4836,53 @@
         render();
         showActionToast(tr("❌ Status saqlanmadi", "❌ Статус не сохранён"), 'error', 1600);
         alert(tr("❌ Statusni o'zgartirishda xatolik yuz berdi.", "❌ Ошибка изменения статуса."));
+      }
+    }
+
+    // 14-band: chekni tasdiqlash — orders.status'ga to'g'ridan-to'g'ri
+    // tegilmaydi, faqat mustaqil receiptReviewStatus (backend "PROCESSING"ga
+    // o'tkazadi, agar order hali "NEW" bo'lsa — mavjud status qiymati).
+    async function approvePaymentReceipt(orderId) {
+      if (!confirm(tr("Chekni tasdiqlaysizmi?", "Подтвердить чек?"))) return;
+      showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохранение..."), 'saving');
+      try {
+        const result = await callApi('approve_payment_receipt', { orderId });
+        const updated = formatOrderForUi(result.order);
+        const idx = orders.findIndex(o => o.id === orderId);
+        if (idx >= 0) orders[idx] = updated;
+        if (selectedOrderModal?.id === orderId) selectedOrderModal = updated;
+        render();
+        showActionToast(tr("✅ Chek tasdiqlandi", "✅ Чек подтверждён"), 'success', 1600);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 2000);
+        alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      }
+    }
+    function openRejectReceiptModal(orderId) {
+      rejectReceiptOrderId = orderId;
+      activePopupModal = 'REJECT_RECEIPT';
+      render();
+    }
+    async function submitRejectReceipt() {
+      const orderId = rejectReceiptOrderId;
+      const reason = document.getElementById('rr-reason')?.value.trim() || '';
+      if (!reason) return alert(tr("Rad etish sababini yozing.", "Укажите причину отклонения."));
+      showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохранение..."), 'saving');
+      try {
+        const result = await callApi('reject_payment_receipt', { orderId, reason });
+        const updated = formatOrderForUi(result.order);
+        const idx = orders.findIndex(o => o.id === orderId);
+        if (idx >= 0) orders[idx] = updated;
+        selectedOrderModal = updated;
+        rejectReceiptOrderId = null;
+        activePopupModal = null;
+        render();
+        showActionToast(tr("✅ Chek rad etildi", "✅ Чек отклонён"), 'success', 1600);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 2000);
+        alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
       }
     }
 
@@ -5285,7 +5782,7 @@
         };
         shopLogoUrl = bootData.logoUrl || null;
         botUsername = bootData.botUsername || null;
-        shopContact = bootData.shopContact || { address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null };
+        shopContact = bootData.shopContact || { name: null, address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null, facebook: null, startMessage: null };
         fulfillmentConfig = commerce.normalizeConfig(bootData.fulfillmentConfig, TOP_LEVEL_REGION_IDS);
         designSettings = bootData.designSettings || { themeId: 'minimal', colors: {} };
         applyDesignColors(designSettings.colors);

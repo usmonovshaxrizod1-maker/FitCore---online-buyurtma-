@@ -9,13 +9,13 @@
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="preconnect" href="https://mvgbqggrzhswjhmwqcyp.supabase.co">
-  <link rel="stylesheet" href="./fitcore.css?v=8">
+  <link rel="stylesheet" href="./fitcore.css?v=9">
   <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
   <script defer src="https://unpkg.com/lucide@latest"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script defer src="./fitcore-image-io.js?v=2"></script>
-  <script defer src="./fitcore-commerce.js?v=1"></script>
-  <script defer src="./fitcore-app.js?v=13"></script>
+  <script defer src="./fitcore-commerce.js?v=2"></script>
+  <script defer src="./fitcore-app.js?v=14"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
@@ -30,12 +30,13 @@
         <i data-lucide="shopping-cart" class="w-5 h-5 text-gray-700"></i>
         <span id="cart-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full items-center justify-center">0</span>
       </button>
-      <button onclick="switchTab('profile')" class="p-2 bg-gray-100 rounded-full">
+      <button onclick="switchTab('profile')" class="p-2 bg-gray-100 rounded-full" id="header-person-btn">
         <i data-lucide="user" class="w-5 h-5 text-gray-700"></i>
       </button>
       <!-- 5.11: joylashuv savat/profildan keyinga ko'chirildi; toggleUiLang/updateHeaderChrome id bo'yicha ishlaydi, DOM tartibiga bog'liq emas -->
       <button onclick="toggleUiLang()" class="p-2 bg-gray-100 rounded-full text-base leading-none" id="lang-flag-btn" title="Til / Язык">🇺🇿</button>
     </div>
+    <div id="role-mode-popover" class="hidden fixed right-4 top-14 z-50 bg-white rounded-xl shadow-lg border overflow-hidden"></div>
   </header>
 
   <!-- MAIN CONTAINER -->

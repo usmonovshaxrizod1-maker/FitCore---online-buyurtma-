@@ -73,6 +73,12 @@
         entry.maxFee = Math.max(entry.minFee, nonNegativeInt(raw.maxFee, entry.minFee));
       }
       if (kind === 'POST') entry.payer = raw.payer === 'SELLER' ? 'SELLER' : 'CUSTOMER';
+      // 13-band: yetkazib berish usuliga admin izohi — ixtiyoriy, faqat
+      // delivery turlarida (to'lov usullarida emas), bo'sh bo'lsa saqlanmaydi.
+      if (kind !== 'PAYMENT') {
+        const comment = String(raw.comment || '').trim().slice(0, 200);
+        if (comment) entry.comment = comment;
+      }
       result[regionId] = entry;
     }
     return result;
@@ -129,18 +135,18 @@
     const delivery = config?.delivery || {};
     const free = delivery.free?.regions?.[regionId];
     if (delivery.free?.enabled && free?.enabled) {
-      result.push({ id: 'FREE', kind: 'FREE', fee: 0, payableFee: 0 });
+      result.push({ id: 'FREE', kind: 'FREE', fee: 0, payableFee: 0, comment: free.comment || null });
     }
     const fixed = delivery.fixed?.regions?.[regionId];
     if (delivery.fixed?.enabled && fixed?.enabled) {
       const fee = nonNegativeInt(fixed.fee);
-      result.push({ id: 'FIXED', kind: 'FIXED', fee, payableFee: fee });
+      result.push({ id: 'FIXED', kind: 'FIXED', fee, payableFee: fee, comment: fixed.comment || null });
     }
     const taxi = delivery.taxi?.regions?.[regionId];
     if (delivery.taxi?.enabled && taxi?.enabled) {
       const minFee = nonNegativeInt(taxi.minFee);
       const maxFee = Math.max(minFee, nonNegativeInt(taxi.maxFee, minFee));
-      result.push({ id: 'TAXI', kind: 'TAXI', fee: 0, payableFee: 0, minFee, maxFee, payer: 'CUSTOMER_DIRECT' });
+      result.push({ id: 'TAXI', kind: 'TAXI', fee: 0, payableFee: 0, minFee, maxFee, payer: 'CUSTOMER_DIRECT', comment: taxi.comment || null });
     }
     if (delivery.post?.enabled) {
       for (const provider of delivery.post.providers || []) {
@@ -154,6 +160,7 @@
           payer: region.payer === 'SELLER' ? 'SELLER' : 'CUSTOMER',
           fee: 0,
           payableFee: 0,
+          comment: region.comment || null,
         });
       }
     }
