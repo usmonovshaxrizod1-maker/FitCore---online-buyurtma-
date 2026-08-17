@@ -258,19 +258,29 @@
     // STATE VARIABLES (bo'sh boshlanadi, Supabase/Edge Function'dan yuklanadi)
     let products = [];
     let categories = [];
+    // 12-band: category id -> vaqt (ms), moveCategoryOrder() optimistic
+    // o'zgartirgan har bir kategoriya uchun. loadCatalog() shu bilan
+    // solishtirib, o'zidan oldin boshlangan (demak stale) javob kelganda
+    // sortOrder'ni qayta yozmaydi. Qarang: loadCatalog(), moveCategoryOrder().
+    let categoryLocalMutationAt = new Map();
     let adminsList = [];
     let orders = [];
     let ordersLoaded = false, ordersLoading = false;
     let usersLoaded = false, usersLoading = false;
     let adminsLoaded = false, adminsLoading = false;
-    // 16-band: qo'llab-quvvatlash murojaatlari — mijozning o'zi va admin
-    // ro'yxati alohida yuklanadi (lazy, boshqa lazy ro'yxatlar kabi).
+    // 2-10-band (2026-08-17): qo'llab-quvvatlash — cheksiz xabarlashuvli
+    // thread, admin tomonda user->chatlar->chat bo'ylab guruhlangan.
     let supportTickets = [];
     let supportTicketsLoaded = false, supportTicketsLoading = false;
     let adminSupportTickets = [];
     let adminSupportTicketsLoaded = false, adminSupportTicketsLoading = false;
-    let supportTicketOrderId = null;
-    let expandedAdminTicketId = null;
+    let supportTicketOrderId = null; // openSupportModal(orderId) orqali kelgan kontekst
+    let supportMessages = []; // hozir ochiq chatning xabarlari
+    let supportMessagesLoading = false;
+    let openSupportTicketId = null; // mijoz tomonda hozir ochiq chat
+    let supportReplyTarget = null; // {id, body, sender} — "shu xabarga javob" preview
+    let adminSupportSelectedUser = null; // admin: Support -> User bosqichi
+    let adminSupportSelectedTicketId = null; // admin: User -> Chat bosqichi
     let cart = JSON.parse(localStorage.getItem('cart') || "{}");
     let registeredUser = JSON.parse(localStorage.getItem('registeredUser') || "null");
     let checkoutDraft = JSON.parse(localStorage.getItem('checkoutDraft') || "null") || { fullname: '', phone: '', regionKey: 'tashkent_city', district: '', address: '' };
@@ -436,13 +446,22 @@
       DELIVERED: "bg-green-100 text-green-800",
       CANCELLED: "bg-red-100 text-red-800",
       REJECTED: "bg-red-100 text-red-800",
+      RECEIPT_PENDING: "bg-sky-100 text-sky-800",
     };
     function statusColorClass(st) { return STATUS_COLORS[st] || "bg-gray-100 text-gray-600"; }
     // 14-band: chek rad etilgan bo'lsa, orders.status o'zi o'zgarmagan (hali
     // "Yangi" bo'lishi mumkin) — lekin mijoz/adminga alohida "Rad etildi"
     // holati ko'rsatiladi, orders.status'ga hech qanday yangi qiymat
     // qo'shilmagan (mavjud update_order_status RPCga tegilmadi).
-    function orderDisplayStatus(o) { return o?.receiptReviewStatus === 'REJECTED' ? 'REJECTED' : o?.status; }
+    // 21-band: karta orqali to'langan, chek yuklangan, lekin admin hali
+    // ko'rib chiqmagan buyurtma uchun alohida "Chek tekshirilmoqda" pseudo-
+    // status — orders.status hamon "NEW" bo'lib qoladi (hech qanday yangi
+    // haqiqiy status qiymati kiritilmagan), faqat displeyda almashtiriladi.
+    function orderDisplayStatus(o) {
+      if (o?.receiptReviewStatus === 'REJECTED') return 'REJECTED';
+      if (o?.status === 'NEW' && o?.hasReceipt && (o?.receiptReviewStatus || 'PENDING') === 'PENDING') return 'RECEIPT_PENDING';
+      return o?.status;
+    }
 
     // ============ TIL (O'ZBEK / RUS) ============
     // Ilovaning tayyor matnlari uchun lug'at. Faqat shu yerda ro'yxatdagi
@@ -596,8 +615,8 @@
     function payMethodLabel(v) { return v === 'CASH' ? tr('Naqd pul','Наличные') : (v === 'CARD' ? tr('Karta','Карта') : (v || '')); }
 
     const STATUS_LABELS_BY_LANG = {
-      uz: { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan", REJECTED: "❌ Rad etildi" },
-      ru: { NEW: "Новый", PROCESSING: "В обработке", DELIVERED: "Доставлен", CANCELLED: "Отменён", REJECTED: "❌ Отклонён" },
+      uz: { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan", REJECTED: "❌ Rad etildi", RECEIPT_PENDING: "🧾 Chek tekshirilmoqda" },
+      ru: { NEW: "Новый", PROCESSING: "В обработке", DELIVERED: "Доставлен", CANCELLED: "Отменён", REJECTED: "❌ Отклонён", RECEIPT_PENDING: "🧾 Проверка чека" },
     };
     function statusLabel(st) { return (STATUS_LABELS_BY_LANG[uiLang] || STATUS_LABELS_BY_LANG.uz)[st] || st; }
 
@@ -754,8 +773,10 @@
       }
     }
 
-    // 16-band: qo'llab-quvvatlash — mijoz o'z murojaatlarini, admin barcha
-    // murojaatlarni lazy yuklaydi (boshqa lazy ro'yxatlar bilan bir xil pattern).
+    // 2-10-band (2026-08-17): qo'llab-quvvatlash — mijoz o'z murojaatlarini,
+    // admin barcha murojaatlarni lazy yuklaydi (boshqa lazy ro'yxatlar bilan
+    // bir xil pattern). Har ticket endi lastMessage/messageCount bilan keladi
+    // (backend attachTicketSummaries) — to'liq thread alohida lazy yuklanadi.
     async function loadMySupportTicketsLazy(force = false) {
       if (supportTicketsLoading || (supportTicketsLoaded && !force)) return;
       supportTicketsLoading = true;
@@ -784,54 +805,201 @@
         if (activePopupModal === 'ADMIN_SUPPORT' || currentTab === 'profile') render();
       }
     }
+    async function loadSupportMessages(ticketId, force = false) {
+      if (!force && openSupportTicketId === ticketId && supportMessages.length) return;
+      supportMessagesLoading = true;
+      render();
+      try {
+        const data = await callApi('get_support_messages', { ticketId });
+        supportMessages = data.messages || [];
+      } catch (e) {
+        console.error("Xabarlarni yuklashda xatolik:", e);
+        supportMessages = [];
+      } finally {
+        supportMessagesLoading = false;
+        render();
+      }
+    }
+    // 5-band: usersSummary allaqachon boshqa joyda (Mijozlar tab) yuklangan
+    // bo'lsa, shundan foydalanib aniq ism ko'rsatamiz — yangi so'rov qo'shmaymiz.
+    function supportUserLabel(tgId) {
+      const u = usersSummary.find(x => String(x.tgId) === String(tgId));
+      return u?.userName ? `${u.userName} (${tgId})` : String(tgId);
+    }
+    function supportNeedsAttention(t) {
+      return t.status === 'ANSWERED' && t.lastMessage?.sender === 'USER';
+    }
+
+    // ---- Mijoz tomon ----
     function openSupportModal(orderId) {
       supportTicketOrderId = orderId || null;
+      openSupportTicketId = null;
+      supportMessages = [];
+      supportReplyTarget = null;
       activePopupModal = 'SUPPORT';
       render();
-      loadMySupportTicketsLazy();
+      loadMySupportTicketsLazy().then(resolveActiveSupportTicket);
     }
-    async function submitSupportTicket() {
-      const message = document.getElementById('sup-message')?.value.trim() || '';
-      if (!message) return alert(tr("Murojaat matnini yozing.", "Напишите текст обращения."));
+    // Shu order (yoki umumiy) uchun yopilmagan ticket bo'lsa, to'g'ridan-
+    // to'g'ri o'sha chatni ochadi — bo'lmasa yangi xabar yozish ko'rinishi qoladi.
+    function resolveActiveSupportTicket() {
+      const active = supportTickets.find(t => t.status !== 'CLOSED' && (t.orderId || null) === supportTicketOrderId);
+      if (active) { openSupportTicketId = active.id; loadSupportMessages(active.id); }
+      else render();
+    }
+    function openMySupportChat(ticketId) {
+      openSupportTicketId = ticketId;
+      supportReplyTarget = null;
+      render();
+      loadSupportMessages(ticketId);
+    }
+    function backToMySupportList() {
+      openSupportTicketId = null;
+      supportReplyTarget = null;
+      render();
+    }
+    async function submitSupportComposer() {
+      const textareaId = openSupportTicketId ? 'sup-chat-message' : 'sup-message';
+      const body = document.getElementById(textareaId)?.value.trim() || '';
+      if (!body) return alert(tr("Murojaat matnini yozing.", "Напишите текст обращения."));
       showActionToast(tr("⏳ Yuborilmoqda...", "⏳ Отправка..."), 'saving');
       try {
-        const data = await callApi('create_support_ticket', { message, orderId: supportTicketOrderId });
-        supportTickets = [data.ticket, ...supportTickets];
-        supportTicketOrderId = null;
+        if (openSupportTicketId) {
+          const data = await callApi('send_support_message', { ticketId: openSupportTicketId, body, replyToMessageId: supportReplyTarget?.id || null });
+          supportMessages = [...supportMessages, data.message];
+          const idx = supportTickets.findIndex(t => t.id === openSupportTicketId);
+          if (idx >= 0) supportTickets[idx] = { ...supportTickets[idx], ...data.ticket, lastMessage: { sender: data.message.sender, body: data.message.body, createdAt: data.message.createdAt } };
+        } else {
+          const data = await callApi('create_support_ticket', { message: body, orderId: supportTicketOrderId });
+          supportTickets = [{ ...data.ticket, lastMessage: { sender: data.message.sender, body: data.message.body, createdAt: data.message.createdAt }, messageCount: 1 }, ...supportTickets];
+          openSupportTicketId = data.ticket.id;
+          supportMessages = [data.message];
+        }
+        supportReplyTarget = null;
         render();
-        showActionToast(tr("✅ Murojaat yuborildi", "✅ Обращение отправлено"), 'success', 1800);
+        showActionToast(tr("✅ Yuborildi", "✅ Отправлено"), 'success', 1500);
       } catch (e) {
         console.error(e);
         showActionToast(tr("❌ Yuborilmadi", "❌ Не отправлено"), 'error', 2000);
         alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
       }
     }
-    function openAdminSupportModal() {
-      activePopupModal = 'ADMIN_SUPPORT';
-      expandedAdminTicketId = null;
-      render();
-      loadAdminSupportTicketsLazy();
-    }
-    function toggleAdminTicketExpand(id) {
-      expandedAdminTicketId = expandedAdminTicketId === id ? null : id;
-      render();
-    }
-    async function submitTicketReply(id) {
-      const reply = document.getElementById(`sup-reply-${id}`)?.value.trim() || '';
-      if (!reply) return alert(tr("Javob matnini yozing.", "Напишите текст ответа."));
+    // 7-band: FAQAT mijoz o'zi murojaatni tugatadi.
+    async function closeSupportTicket(ticketId) {
+      if (!confirm(tr("Murojaatni tugatasizmi? Keyin shu ticketga yozib bo'lmaydi.", "Завершить обращение? После этого писать в этот тикет будет нельзя."))) return;
       showActionToast(tr("⏳ Saqlanmoqda...", "⏳ Сохранение..."), 'saving');
       try {
-        const data = await callApi('reply_support_ticket', { ticketId: id, reply });
-        const idx = adminSupportTickets.findIndex(t => t.id === id);
-        if (idx >= 0) adminSupportTickets[idx] = data.ticket;
-        expandedAdminTicketId = null;
+        const data = await callApi('close_support_ticket', { ticketId });
+        const idx = supportTickets.findIndex(t => t.id === ticketId);
+        if (idx >= 0) supportTickets[idx] = { ...supportTickets[idx], ...data.ticket };
         render();
-        showActionToast(tr("✅ Javob yuborildi", "✅ Ответ отправлен"), 'success', 1800);
+        showActionToast(tr("✅ Tugallandi", "✅ Завершено"), 'success', 1500);
       } catch (e) {
         console.error(e);
         showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 2000);
         alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
       }
+    }
+
+    // ---- Admin tomon: Support -> User -> Chatlar -> Chat ----
+    function openAdminSupportModal() {
+      activePopupModal = 'ADMIN_SUPPORT';
+      adminSupportSelectedUser = null;
+      adminSupportSelectedTicketId = null;
+      supportReplyTarget = null;
+      render();
+      loadAdminSupportTicketsLazy();
+    }
+    function groupAdminSupportTicketsByUser() {
+      const byUser = new Map();
+      for (const t of adminSupportTickets) {
+        if (!byUser.has(t.tgId)) byUser.set(t.tgId, []);
+        byUser.get(t.tgId).push(t);
+      }
+      return Array.from(byUser.entries()).map(([tgId, tickets]) => ({
+        tgId, tickets,
+        needsAttention: tickets.some(supportNeedsAttention),
+        hasOpen: tickets.some(t => t.status === 'OPEN'),
+        lastActivityAt: Math.max(...tickets.map(t => new Date(t.lastMessage?.createdAt || t.createdAt).getTime())),
+      })).sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    }
+    function selectAdminSupportUser(tgId) {
+      adminSupportSelectedUser = tgId;
+      adminSupportSelectedTicketId = null;
+      render();
+    }
+    function backToAdminSupportUsers() {
+      adminSupportSelectedUser = null;
+      adminSupportSelectedTicketId = null;
+      render();
+    }
+    function backToAdminSupportUserTickets() {
+      adminSupportSelectedTicketId = null;
+      supportReplyTarget = null;
+      render();
+    }
+    function openAdminSupportChat(ticketId) {
+      adminSupportSelectedTicketId = ticketId;
+      supportReplyTarget = null;
+      render();
+      loadSupportMessages(ticketId);
+    }
+    async function submitAdminSupportReply() {
+      const ticketId = adminSupportSelectedTicketId;
+      const body = document.getElementById('sup-admin-message')?.value.trim() || '';
+      if (!body) return alert(tr("Javob matnini yozing.", "Напишите текст ответа."));
+      showActionToast(tr("⏳ Yuborilmoqda...", "⏳ Отправка..."), 'saving');
+      try {
+        const data = await callApi('send_support_message', { ticketId, body, replyToMessageId: supportReplyTarget?.id || null });
+        supportMessages = [...supportMessages, data.message];
+        const idx = adminSupportTickets.findIndex(t => t.id === ticketId);
+        if (idx >= 0) adminSupportTickets[idx] = { ...adminSupportTickets[idx], ...data.ticket, lastMessage: { sender: data.message.sender, body: data.message.body, createdAt: data.message.createdAt } };
+        supportReplyTarget = null;
+        render();
+        showActionToast(tr("✅ Javob yuborildi", "✅ Ответ отправлен"), 'success', 1500);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr("❌ Yuborilmadi", "❌ Не отправлено"), 'error', 2000);
+        alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      }
+    }
+    function setSupportReplyTarget(id) {
+      const m = supportMessages.find(x => x.id === id);
+      if (!m) return;
+      supportReplyTarget = { id: m.id, body: m.body, sender: m.sender };
+      render();
+    }
+    function clearSupportReplyTarget() {
+      supportReplyTarget = null;
+      render();
+    }
+    // 6-band: xabarlar tarixini render qilish — mijoz va admin chat
+    // ko'rinishlari shu bitta funksiyani ishlatadi (ikkinchi tizim yo'q).
+    // viewerIsAdmin — hozirgi ko'ruvchi kim ekaniga qarab o'z xabarlari
+    // o'ngga (mine/blue), boshqa tomonniki chapga (theirs/gray) chiqadi.
+    function renderSupportThreadHtml(messages, viewerIsAdmin) {
+      const byId = new Map(messages.map(m => [m.id, m]));
+      return messages.map(m => {
+        const mine = viewerIsAdmin ? m.sender === 'ADMIN' : m.sender === 'USER';
+        const parent = m.replyToMessageId ? byId.get(m.replyToMessageId) : null;
+        return `
+          <div class="fitcore-msg-row ${mine ? 'mine' : ''}">
+            <div class="fitcore-msg-bubble ${mine ? 'mine' : 'theirs'}">
+              ${parent ? `<div class="fitcore-msg-reply-quote">${escapeHtml(parent.body.slice(0, 80))}</div>` : ''}
+              <div>${escapeHtml(m.body)}</div>
+              <div class="fitcore-msg-time">${new Date(m.createdAt).toLocaleString()}</div>
+              <span class="fitcore-msg-reply-btn" onclick="setSupportReplyTarget(${m.id})">↩ ${tr('Javob','Ответ')}</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+    function renderSupportReplyBarHtml() {
+      if (!supportReplyTarget) return '';
+      return `
+        <div class="fitcore-reply-bar">
+          <span>↩ ${tr('Javob','Ответ')}: ${escapeHtml(String(supportReplyTarget.body || '').slice(0, 60))}</span>
+          <button onclick="clearSupportReplyTarget()" class="font-bold">✕</button>
+        </div>`;
     }
 
     function switchTab(tab) {
@@ -1330,15 +1498,28 @@
     // 20-band: Profildagi katta "rejim almashtirish" tugmasi o'rniga headerdagi
     // odamcha icon — faqat admin huquqiga ega userlarga chiqadi, joriy rejimga
     // qarab bitta variant ko'rsatadi. toggleAdminRole() o'zgarmagan.
+    // 17-band: popover avval statik `right-4 top-14` bilan joylashtirilgan
+    // edi — bu odamcha iconning haqiqiy ekrandagi joyidan mustaqil taxmin
+    // bo'lib, real Telegram'da logo ustidan chiqib qolardi. Endi tugmaning
+    // haqiqiy joyi o'lchanadi va popover shunga aniq anchor qilinadi.
     function togglePersonMenu(event) {
       if (event) event.stopPropagation();
       const popover = document.getElementById('role-mode-popover');
-      if (!popover) return;
+      const personBtn = document.getElementById('header-person-btn');
+      if (!popover || !personBtn) return;
       const isOpen = !popover.classList.contains('hidden');
       if (isOpen) { popover.classList.add('hidden'); return; }
       const label = isAdminMode ? tr("👤 Userga o'tish", '👤 Перейти к пользователю') : tr("🛡️ Adminga o'tish", '🛡️ Перейти в админку');
       popover.innerHTML = `<button onclick="document.getElementById('role-mode-popover').classList.add('hidden'); toggleAdminRole();" class="block w-full text-left px-4 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 whitespace-nowrap">${label}</button>`;
       popover.classList.remove('hidden');
+      const rect = personBtn.getBoundingClientRect();
+      const popW = popover.offsetWidth || 200;
+      const margin = 8;
+      let left = rect.left + rect.width / 2 - popW / 2;
+      left = Math.max(margin, Math.min(left, window.innerWidth - popW - margin));
+      popover.style.top = `${rect.bottom + margin}px`;
+      popover.style.left = `${left}px`;
+      popover.style.right = 'auto';
     }
     document.addEventListener('click', (event) => {
       const popover = document.getElementById('role-mode-popover');
@@ -1466,7 +1647,7 @@
       const cardClick = bulkSelecting ? `toggleBulkProductSelection('${p.id}', event)` : `openProductDetailModal('${p.id}')`;
 
       return `
-        <div data-product-card-id="${escapeHtml(p.id)}" onclick="${cardClick}" class="bg-white rounded-2xl p-3 shadow-sm border ${bulkSelecting && bulkSelectedProductIds.has(String(p.id)) ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-100'} flex flex-col justify-between relative cursor-pointer hover:shadow-md transition-all">
+        <div data-product-card-id="${escapeHtml(p.id)}" onclick="${cardClick}" class="bg-white rounded-2xl p-3 shadow-sm border ${bulkSelecting && bulkSelectedProductIds.has(String(p.id)) ? 'fitcore-selected-card border-blue-500' : 'border-gray-100'} flex flex-col justify-between relative cursor-pointer hover:shadow-md transition-all">
           ${bulkSelecting ? `<div class="absolute top-2 left-2 z-10 w-7 h-7 rounded-full flex items-center justify-center font-black ${bulkSelectedProductIds.has(String(p.id)) ? 'bg-blue-600 text-white' : 'bg-white/95 text-gray-400 border'}">${bulkSelectedProductIds.has(String(p.id)) ? '✓' : '○'}</div>` : ''}
           <div>
             <div class="relative">
@@ -1564,13 +1745,15 @@
             </div>
 
             ${(isAdminMode && isUserAnAdmin) ? `
+              <!-- 23-band: Katalog/Tovar/Excel bitta ixcham qatorda, zamonaviy
+                   (Lucide) iconlar bilan — eski emoji emas. -->
               <div class="flex space-x-2 pt-1 border-t">
-                <button onclick="openAddCatModal()" class="flex-1 bg-blue-600 text-white font-bold py-1.5 rounded-xl text-xs">${tr("➕ Katalog qo'shish", "➕ Добавить каталог")}</button>
-                <button onclick="openAddProductModal()" class="flex-1 bg-emerald-600 text-white font-bold py-1.5 rounded-xl text-xs">${tr("➕ Tovar qo'shish", "➕ Добавить товар")}</button>
+                <button onclick="openAddCatModal()" class="flex-1 flex items-center justify-center gap-1 bg-blue-600 text-white font-bold py-1.5 rounded-xl text-xs"><i data-lucide="folder-plus" class="w-3.5 h-3.5"></i>${tr("Katalog", "Каталог")}</button>
+                <button onclick="openAddProductModal()" class="flex-1 flex items-center justify-center gap-1 bg-emerald-600 text-white font-bold py-1.5 rounded-xl text-xs"><i data-lucide="package-plus" class="w-3.5 h-3.5"></i>${tr("Tovar", "Товар")}</button>
+                <button onclick="openExcelImportModal()" class="flex-1 flex items-center justify-center gap-1 bg-slate-800 text-white font-bold py-1.5 rounded-xl text-xs"><i data-lucide="table" class="w-3.5 h-3.5"></i>Excel</button>
               </div>
               <div class="flex flex-wrap gap-1.5 pt-1">
                 <button onclick="openMissingImageQueue()" title="${tr('Rasmsiz','Без фото')} · ${globalMissingImageCount}" class="flex items-center gap-1 bg-amber-50 text-amber-900 border border-amber-200 font-bold px-2.5 py-1.5 rounded-xl text-[11px] shadow-sm">🖼️ ${globalMissingImageCount}</button>
-                <button onclick="openExcelImportModal()" title="${tr("Excel orqali ko'p tovar qo'shish", "Массовый импорт из Excel")}" class="flex items-center gap-1 bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-xl text-[11px]">📊</button>
                 <button onclick="openTrashModal()" title="${tr('Chiqindi (24 soat)','Корзина (24 часа)')}" class="flex items-center gap-1 bg-white border text-gray-600 font-bold px-2.5 py-1.5 rounded-xl text-[11px]">🗑️</button>
                 <button onclick="openDuplicateProductsModal()" title="${tr('Duplicate tovarlarni tekshirish','Проверить дубликаты товаров')}" class="flex items-center gap-1 bg-white border text-gray-600 font-bold px-2.5 py-1.5 rounded-xl text-[11px]">🧭</button>
                 <button onclick="toggleBulkProductSelectMode()" title="${bulkProductSelectMode ? tr('Tanlashni tugatish','Завершить выбор') : tr('Tovarlarni tanlash','Выбрать товары')}" class="flex items-center gap-1 ${bulkProductSelectMode ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'} font-bold px-2.5 py-1.5 rounded-xl text-[11px]">☑️</button>
@@ -1581,7 +1764,7 @@
           <!-- SUBCATEGORIES LIST -->
           <div class="space-y-2">
             ${subCats.map((sub, subIdx) => `
-              <div data-category-row-id="${sub.id}" onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="bg-white p-3.5 rounded-2xl border flex items-center justify-between shadow-sm cursor-pointer hover:bg-gray-50">
+              <div data-category-row-id="${sub.id}" onclick="adminCatParentId = '${sub.id}'; categoryPage=1; render();" class="fitcore-cat-row p-3.5 rounded-2xl border border-gray-100 flex items-center justify-between shadow-sm cursor-pointer">
                 <div class="flex items-center space-x-3">
                   ${sub.img && (sub.img.startsWith('http') || sub.img.startsWith('data:')) ?
                     `<img src="${escapeHtml(sub.img)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-8 h-8 object-cover rounded-lg" loading="lazy">` :
@@ -1594,9 +1777,9 @@
                 </div>
                 <div class="flex items-center space-x-1">
                   ${(isAdminMode && isUserAnAdmin) ? `
-                    <div class="flex flex-col gap-1">
-                      <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} class="w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${subIdx === 0 ? 'bg-gray-50 text-gray-200' : 'bg-slate-100 text-slate-600'}">▲</button>
-                      <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} class="w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${subIdx === subCats.length - 1 ? 'bg-gray-50 text-gray-200' : 'bg-slate-100 text-slate-600'}">▼</button>
+                    <div class="flex flex-col gap-2">
+                      <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} class="w-6 h-6 flex items-center justify-center rounded-lg text-xs font-bold ${subIdx === 0 ? 'bg-gray-50 text-gray-200' : 'bg-slate-100 text-slate-600'}">▲</button>
+                      <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} class="w-6 h-6 flex items-center justify-center rounded-lg text-xs font-bold ${subIdx === subCats.length - 1 ? 'bg-gray-50 text-gray-200' : 'bg-slate-100 text-slate-600'}">▼</button>
                     </div>
                     <button onclick="openMoveCategoryModal('${sub.id}', event)" title="${tr("Boshqa katalogga ko'chirish", "Переместить в другой каталог")}" class="p-1 bg-slate-100 text-slate-600 rounded text-xs font-bold">📁⇢</button>
                     <button onclick="openEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
@@ -2223,81 +2406,6 @@
         mimeType: prepared.type,
         fileName: prepared.name || 'payment-receipt.jpg',
       };
-    }
-
-    // 15-band: rad etilgan chekni qayta yuborish — mavjud rasm pipeline
-    // primitivlaridan (readBlobAsArrayBuffer/makeDetachedImageFile/
-    // compressImageToLimit/fileToBase64) checkout oqimidagi bilan bir xil
-    // tarzda foydalanadi, lekin alohida state/modal'da (checkout draft'ga
-    // aralashmaydi).
-    function openResubmitReceiptModal(orderId) {
-      resubmitOrderId = orderId;
-      resubmitReceiptFile = null;
-      resubmitReceiptPreparing = null;
-      resubmitReceiptPreviewUrl = null;
-      activePopupModal = 'RESUBMIT_RECEIPT';
-      render();
-    }
-    function closeResubmitReceiptModal() {
-      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
-      resubmitOrderId = null;
-      resubmitReceiptFile = null;
-      resubmitReceiptPreparing = null;
-      resubmitReceiptPreviewUrl = null;
-      activePopupModal = null;
-      render();
-    }
-    async function onResubmitReceiptPicked(event) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
-        event.target.value = '';
-        return alert(tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
-      }
-      const selectionVersion = ++resubmitReceiptSelectionVersion;
-      resubmitReceiptFile = file;
-      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
-      resubmitReceiptPreviewUrl = URL.createObjectURL(file);
-      resubmitReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => {
-        const detached = makeDetachedImageFile(bytes, file);
-        if (selectionVersion === resubmitReceiptSelectionVersion) {
-          try {
-            const stableUrl = URL.createObjectURL(detached);
-            const oldUrl = resubmitReceiptPreviewUrl;
-            resubmitReceiptPreviewUrl = stableUrl;
-            renderModalContainer();
-            if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
-          } catch (previewErr) {
-            imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
-          }
-        }
-        return detached;
-      }).then(detached => compressImageToLimit(detached, MAX_RECEIPT_BYTES, 1600, 0.85));
-      renderModalContainer();
-    }
-    async function submitResubmitReceipt() {
-      if (!resubmitOrderId || (!resubmitReceiptFile && !resubmitReceiptPreparing)) {
-        return alert(tr("Iltimos, chek rasmini tanlang.", "Пожалуйста, выберите изображение чека."));
-      }
-      const orderId = resubmitOrderId;
-      showActionToast(tr('⏳ Yuborilmoqda...', '⏳ Отправка...'), 'saving');
-      try {
-        const prepared = resubmitReceiptPreparing ? await resubmitReceiptPreparing : resubmitReceiptFile;
-        if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
-        const imageUpload = { base64: await fileToBase64(prepared), mimeType: prepared.type, fileName: prepared.name || 'payment-receipt.jpg' };
-        await callApi('upload_payment_receipt', { orderId, imageUpload });
-        const patch = { hasReceipt: true, receiptReviewStatus: 'PENDING', receiptRejectReason: null };
-        const idx = orders.findIndex(o => o.id === orderId);
-        if (idx >= 0) orders[idx] = { ...orders[idx], ...patch };
-        if (selectedOrderModal?.id === orderId) selectedOrderModal = { ...selectedOrderModal, ...patch };
-        closeResubmitReceiptModal();
-        showActionToast(tr('✅ Yangi chek yuborildi', '✅ Новый чек отправлен'), 'success', 2000);
-      } catch (e) {
-        console.error(e);
-        showActionToast(tr('❌ Yuborilmadi', '❌ Не отправлено'), 'error', 2200);
-        alert(tr('Xatolik: ', 'Ошибка: ') + (e.message || e));
-      }
     }
 
     let submittingOrder = false;
@@ -3267,10 +3375,12 @@
             </div>
           </div>
 
-          <button onclick="openSupportModal(null)" class="w-full bg-white text-slate-700 p-3 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-            <span>💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</span>
-            <span>›</span>
-          </button>
+          ${!(isUserAnAdmin && isAdminMode) ? `
+            <button onclick="openSupportModal(null)" class="w-full bg-white text-slate-700 p-3 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
+              <span>💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</span>
+              <span>›</span>
+            </button>
+          ` : ''}
 
           ${myStatus.isBlocked ? `
             <div class="bg-red-50 border border-red-300 p-4 rounded-2xl text-xs">
@@ -3291,9 +3401,9 @@
               <div class="flex items-center gap-2 min-w-0 flex-wrap">
                 <h3 class="font-bold text-sm text-gray-900 truncate">📍 ${escapeHtml(shopDisplayName())}</h3>
                 <div class="flex items-center gap-1.5 flex-shrink-0">
-                  ${instagramNick ? `<a href="https://instagram.com/${encodeURIComponent(instagramNick)}" target="_blank" title="Instagram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-xs">📸</a>` : ''}
-                  ${telegramNick ? `<a href="https://t.me/${encodeURIComponent(telegramNick)}" target="_blank" title="Telegram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-xs">✈️</a>` : ''}
-                  ${facebookNick ? `<a href="https://facebook.com/${encodeURIComponent(facebookNick)}" target="_blank" title="Facebook" class="w-6 h-6 flex items-center justify-center rounded-full bg-blue-600 text-white text-[10px] font-black">f</a>` : ''}
+                  ${instagramNick ? `<a href="https://instagram.com/${encodeURIComponent(instagramNick)}" target="_blank" title="Instagram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-gray-600"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg></a>` : ''}
+                  ${telegramNick ? `<a href="https://t.me/${encodeURIComponent(telegramNick)}" target="_blank" title="Telegram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-gray-600"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"></path><path d="M22 2 15 22 11 13 2 9z"></path></svg></a>` : ''}
+                  ${facebookNick ? `<a href="https://facebook.com/${encodeURIComponent(facebookNick)}" target="_blank" title="Facebook" class="w-6 h-6 flex items-center justify-center rounded-full bg-blue-600 text-white"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h2.6l.4-4H14V7a1 1 0 0 1 1-1h3z"></path></svg></a>` : ''}
                 </div>
                 ${(isUserAnAdmin && isAdminMode) ? `
                   <button onclick="activePopupModal='SHOP_INFO'; render();" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">✏️ ${tr("Tahrirlash", "Изменить")}</button>
@@ -3349,7 +3459,7 @@
               <span>›</span>
             </button>
             <button onclick="openAdminSupportModal()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-              <span>💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}${adminSupportTicketsLoaded && adminSupportTickets.some(t => t.status === 'OPEN') ? ` <span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">${adminSupportTickets.filter(t => t.status === 'OPEN').length}</span>` : ''}</span>
+              <span>💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}${adminSupportTicketsLoaded && adminSupportTickets.some(t => t.status === 'OPEN' || supportNeedsAttention(t)) ? ` <span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">${adminSupportTickets.filter(t => t.status === 'OPEN' || supportNeedsAttention(t)).length}</span>` : ''}</span>
               <span>›</span>
             </button>
           ` : ''}
@@ -4186,19 +4296,24 @@
                 </select>
               </div>
 
-              <div>
-                <label class="text-xs font-bold text-gray-600">${tr("Yetkazib berish usuli *", "Способ доставки *")}</label>
-                <div id="delivery-method-wrap" class="space-y-2 mt-1"></div>
-              </div>
-
-              <div id="delivery-notice" class="hidden bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[11px] text-amber-900"></div>
-
               <div id="chk-district-field">
                 <label class="text-xs font-bold text-gray-600">${tr("Tumanni tanlang *", "Выберите район *")}</label>
                 <select id="chk-district" onchange="saveCheckoutDraft()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
                   <option value="">${tr("— Tanlang —", "— Выберите —")}</option>
                 </select>
               </div>
+
+              <!-- 19-band: Yetkazib berish usuli endi Viloyat/Tuman'dan KEYIN,
+                   Manzil/Filial'dan OLDIN chiqadi (to'g'ri tartib: Viloyat →
+                   Tuman/Shahar → Usul → Filial). Ko'rsatish/yashirish JS
+                   logikasi (renderCheckoutOptions/renderPostDistrictField)
+                   o'zgarmagan — faqat statik joylashuv. -->
+              <div>
+                <label class="text-xs font-bold text-gray-600">${tr("Yetkazib berish usuli *", "Способ доставки *")}</label>
+                <div id="delivery-method-wrap" class="space-y-2 mt-1"></div>
+              </div>
+
+              <div id="delivery-notice" class="hidden bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[11px] text-amber-900"></div>
 
               <div id="chk-address-field">
                 <label id="chk-address-label" class="text-xs font-bold text-gray-600">${tr("Manzil *", "Адрес *")}</label>
@@ -4469,61 +4584,115 @@
 
       // 16-band: mijoz uchun qo'llab-quvvatlash — yangi murojaat yozish +
       // o'z murojaatlari/admin javoblari tarixi.
+      // 2-9-band: mijoz tomon — agar shu order/umumiy kontekst uchun ochiq
+      // ticket bo'lsa to'g'ridan-to'g'ri chat, bo'lmasa yangi xabar yozish
+      // ko'rinishi + o'zining oldingi murojaatlari ro'yxati.
       if (activePopupModal === 'SUPPORT') {
+        const openTicket = openSupportTicketId ? supportTickets.find(t => t.id === openSupportTicketId) : null;
         container.innerHTML = `
-          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; supportTicketOrderId=null; render();">
+          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; supportTicketOrderId=null; openSupportTicketId=null; render();">
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</h3>
-              ${supportTicketOrderId ? `<p class="text-[10px] text-gray-500">${tr('Buyurtma','Заказ')} #${supportTicketOrderId} ${tr('bo‘yicha murojaat','по этому заказу')}</p>` : ''}
-              <div>
-                <label class="font-bold text-gray-600">${tr('Murojaatingiz', 'Ваше обращение')}</label>
-                <textarea id="sup-message" rows="4" placeholder="${tr('Savolingiz yoki muammoingizni yozing...', 'Опишите ваш вопрос или проблему...')}" class="w-full mt-1 p-2.5 border rounded-xl"></textarea>
-                <button onclick="submitSupportTicket()" class="w-full mt-2 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
-              </div>
-              ${supportTicketsLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...','Загрузка...')}</p>` : ''}
-              ${(!supportTicketsLoading && supportTickets.length) ? `
-                <div class="border-t pt-2 space-y-2">
-                  <p class="font-bold text-gray-600">${tr('Oldingi murojaatlar', 'Предыдущие обращения')}</p>
-                  ${supportTickets.map(t => `
-                    <div class="bg-gray-50 border rounded-xl p-2.5 space-y-1">
-                      <p class="text-[10px] text-gray-400">${t.orderId ? `#${t.orderId} · ` : ''}${new Date(t.createdAt).toLocaleString()}</p>
-                      <p>${escapeHtml(t.message)}</p>
-                      ${t.adminReply ? `<div class="bg-blue-50 border border-blue-100 rounded-lg p-2 mt-1"><p class="text-[10px] font-bold text-blue-700">${tr('Javob','Ответ')}:</p><p>${escapeHtml(t.adminReply)}</p></div>` : `<p class="text-[10px] text-amber-600">${tr('Hali javob berilmagan','Пока нет ответа')}</p>`}
-                    </div>
-                  `).join('')}
+              ${openTicket ? `
+                <div class="flex items-center justify-between border-b pb-2">
+                  <button onclick="backToMySupportList()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
+                  <h3 class="font-bold text-sm text-gray-900">💬 ${openTicket.orderId ? `#${openTicket.orderId}` : tr('Murojaat','Обращение')}</h3>
+                  <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${openTicket.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (openTicket.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}</span>
                 </div>
-              ` : ''}
+                <div>
+                  ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...','Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, false)}
+                </div>
+                ${openTicket.status !== 'CLOSED' ? `
+                  ${renderSupportReplyBarHtml()}
+                  <textarea id="sup-chat-message" rows="2" placeholder="${tr('Xabar yozing...','Напишите сообщение...')}" class="w-full p-2.5 border rounded-xl"></textarea>
+                  <div class="flex gap-2">
+                    <button onclick="submitSupportComposer()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish','Отправить')}</button>
+                    <button onclick="closeSupportTicket(${openTicket.id})" class="bg-gray-100 text-gray-700 font-bold px-3 py-2.5 rounded-xl">${tr('Tugatish','Завершить')}</button>
+                  </div>
+                ` : `<p class="text-center text-gray-400 py-2">${tr('Bu murojaat tugallangan.','Это обращение завершено.')}</p>`}
+              ` : `
+                <h3 class="font-bold text-sm text-gray-900 border-b pb-2">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</h3>
+                ${supportTicketOrderId ? `<p class="text-[10px] text-gray-500">${tr('Buyurtma','Заказ')} #${supportTicketOrderId} ${tr('bo‘yicha murojaat','по этому заказу')}</p>` : ''}
+                <div>
+                  <label class="font-bold text-gray-600">${tr('Murojaatingiz', 'Ваше обращение')}</label>
+                  <textarea id="sup-message" rows="4" placeholder="${tr('Savolingiz yoki muammoingizni yozing...', 'Опишите ваш вопрос или проблему...')}" class="w-full mt-1 p-2.5 border rounded-xl"></textarea>
+                  <button onclick="submitSupportComposer()" class="w-full mt-2 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
+                </div>
+                ${supportTicketsLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...','Загрузка...')}</p>` : ''}
+                ${(!supportTicketsLoading && supportTickets.length) ? `
+                  <div class="border-t pt-2 space-y-2">
+                    <p class="font-bold text-gray-600">${tr('Oldingi murojaatlar', 'Предыдущие обращения')}</p>
+                    ${supportTickets.map(t => `
+                      <div class="bg-gray-50 border rounded-xl p-2.5 space-y-1 cursor-pointer" onclick="openMySupportChat(${t.id})">
+                        <div class="flex items-center justify-between">
+                          <span class="text-[10px] text-gray-400">${t.orderId ? `#${t.orderId} · ` : ''}${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</span>
+                          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${t.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (t.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}</span>
+                        </div>
+                        <p>${escapeHtml((t.lastMessage?.body || '').slice(0, 80))}</p>
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+              `}
             </div>
           </div>
         `;
         return;
       }
 
-      // 16-band: admin uchun kelgan murojaatlar ro'yxati + javob yozish.
+      // 2-band: admin uchun murojaatlar — endi Support -> User -> Chatlar
+      // -> Chat bosqichli, flat ro'yxat emas. Admin bu yerdan "yozib
+      // boshlay olmaydi" — faqat kelgan murojaatlarni ko'rib javob beradi.
       if (activePopupModal === 'ADMIN_SUPPORT') {
+        const grouped = groupAdminSupportTicketsByUser();
+        const selectedUserTickets = adminSupportSelectedUser ? adminSupportTickets.filter(t => t.tgId === adminSupportSelectedUser) : [];
+        const openTicket = adminSupportSelectedTicketId ? adminSupportTickets.find(t => t.id === adminSupportSelectedTicketId) : null;
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
             <div class="bg-white rounded-3xl p-5 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-2 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}</h3>
-              ${adminSupportTicketsLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...','Загрузка...')}</p>` : ''}
-              ${(!adminSupportTicketsLoading && !adminSupportTickets.length) ? `<p class="text-center text-gray-400 py-4">${tr('Murojaatlar yo‘q','Обращений нет')}</p>` : ''}
-              ${adminSupportTickets.map(t => `
-                <div class="border rounded-xl p-2.5 space-y-1.5">
-                  <div class="flex items-center justify-between cursor-pointer" onclick="toggleAdminTicketExpand(${t.id})">
-                    <span class="font-bold">${t.orderId ? `#${t.orderId} · ` : ''}${escapeHtml(t.tgId)}</span>
-                    <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}">${t.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено')}</span>
-                  </div>
-                  <p class="text-[10px] text-gray-400">${new Date(t.createdAt).toLocaleString()}</p>
-                  <p>${escapeHtml(t.message)}</p>
-                  ${t.adminReply ? `<div class="bg-blue-50 border border-blue-100 rounded-lg p-2"><p class="text-[10px] font-bold text-blue-700">${tr('Javob','Ответ')}:</p><p>${escapeHtml(t.adminReply)}</p></div>` : ''}
-                  ${expandedAdminTicketId === t.id ? `
-                    <div class="pt-1 space-y-1.5">
-                      <textarea id="sup-reply-${t.id}" rows="2" placeholder="${tr('Javob yozing...','Напишите ответ...')}" class="w-full p-2 border rounded-xl">${escapeHtml(t.adminReply || '')}</textarea>
-                      <button onclick="submitTicketReply(${t.id})" class="w-full bg-blue-600 text-white font-bold py-2 rounded-xl">✅ ${tr('Javobni yuborish','Отправить ответ')}</button>
-                    </div>
-                  ` : `<button onclick="toggleAdminTicketExpand(${t.id})" class="text-[10px] font-bold text-blue-600">${t.adminReply ? tr('Javobni tahrirlash','Изменить ответ') : tr('Javob yozish','Ответить')}</button>`}
+              ${openTicket ? `
+                <div class="flex items-center justify-between border-b pb-2">
+                  <button onclick="backToAdminSupportUserTickets()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
+                  <h3 class="font-bold text-sm text-gray-900">${openTicket.orderId ? `#${openTicket.orderId} · ` : ''}${escapeHtml(supportUserLabel(openTicket.tgId))}</h3>
+                  <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${openTicket.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (openTicket.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}</span>
                 </div>
-              `).join('')}
+                <div>
+                  ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...','Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, true)}
+                </div>
+                ${openTicket.status !== 'CLOSED' ? `
+                  ${renderSupportReplyBarHtml()}
+                  <textarea id="sup-admin-message" rows="2" placeholder="${tr('Javob yozing...','Напишите ответ...')}" class="w-full p-2.5 border rounded-xl"></textarea>
+                  <button onclick="submitAdminSupportReply()" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish','Отправить')}</button>
+                ` : `<p class="text-center text-gray-400 py-2">${tr('Mijoz bu murojaatni tugatgan.','Клиент завершил это обращение.')}</p>`}
+              ` : adminSupportSelectedUser ? `
+                <div class="flex items-center justify-between border-b pb-2">
+                  <button onclick="backToAdminSupportUsers()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
+                  <h3 class="font-bold text-sm text-gray-900">${escapeHtml(supportUserLabel(adminSupportSelectedUser))}</h3>
+                  <span></span>
+                </div>
+                ${selectedUserTickets.map(t => `
+                  <div class="border rounded-xl p-2.5 space-y-1 cursor-pointer" onclick="openAdminSupportChat(${t.id})">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold">${t.orderId ? `📦 #${t.orderId}` : tr('Umumiy','Общее')}</span>
+                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${t.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (t.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}${supportNeedsAttention(t) ? ' •' : ''}</span>
+                    </div>
+                    <p class="text-[10px] text-gray-400">${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</p>
+                    <p>${escapeHtml((t.lastMessage?.body || '').slice(0, 80))}</p>
+                  </div>
+                `).join('')}
+              ` : `
+                <h3 class="font-bold text-sm text-gray-900 border-b pb-2">💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}</h3>
+                ${adminSupportTicketsLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...','Загрузка...')}</p>` : ''}
+                ${(!adminSupportTicketsLoading && !grouped.length) ? `<p class="text-center text-gray-400 py-4">${tr('Murojaatlar yo‘q','Обращений нет')}</p>` : ''}
+                ${grouped.map(g => `
+                  <div class="border rounded-xl p-2.5 flex items-center justify-between cursor-pointer" onclick="selectAdminSupportUser('${g.tgId}')">
+                    <div>
+                      <p class="font-bold">${escapeHtml(supportUserLabel(g.tgId))}</p>
+                      <p class="text-[10px] text-gray-400">${g.tickets.length} ${tr('ta murojaat','обращений')}</p>
+                    </div>
+                    ${g.needsAttention || g.hasOpen ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">${tr('Yangi','Новое')}</span>` : ''}
+                  </div>
+                `).join('')}
+              `}
             </div>
           </div>
         `;
@@ -4536,8 +4705,9 @@
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="selectedOrderModal=null; render();">
             <div class="bg-white rounded-3xl p-5 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              <div class="border-b pb-2">
+              <div class="border-b pb-2 flex items-center justify-between gap-2">
                 <h3 class="font-black text-sm text-blue-600">${tr("Buyurtma", "Заказ")} #${o.id}</h3>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColorClass(orderDisplayStatus(o))}">${statusLabel(orderDisplayStatus(o))}</span>
               </div>
 
               <div class="space-y-1">
@@ -4567,6 +4737,7 @@
               </div>
 
               ${o.delivery?.warning ? `<div class="bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[11px] text-amber-900">ℹ️ ${escapeHtml(o.delivery.warning)}</div>` : ''}
+              ${o.delivery?.comment ? `<div class="bg-blue-50 border border-blue-200 p-2.5 rounded-xl text-[11px] text-blue-900">💬 ${escapeHtml(o.delivery.comment)}</div>` : ''}
 
               <div class="bg-slate-50 border rounded-xl p-2.5 space-y-1">
                 <p class="font-bold">🚚 ${tr('Jo‘natma holati','Статус отправления')}: ${escapeHtml(shipmentStatusLabel(o.shipment?.status))}</p>
@@ -4883,6 +5054,85 @@
         console.error(e);
         showActionToast(tr("❌ Saqlanmadi", "❌ Не сохранено"), 'error', 2000);
         alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      }
+    }
+
+    // 15-band: rad etilgan chekni qayta yuborish — mavjud rasm pipeline
+    // primitivlaridan (readBlobAsArrayBuffer/makeDetachedImageFile/
+    // compressImageToLimit/fileToBase64) checkout oqimidagi bilan bir xil
+    // tarzda foydalanadi, lekin alohida state/modal'da (checkout draft'ga
+    // aralashmaydi). Checkout'dagi prepareReceiptImageUpload'dan farqli
+    // o'laroq bu ALLAQACHON mavjud orderga bog'liq — shuning uchun o'z
+    // alohida callApi('upload_payment_receipt', ...) chaqiruviga ega
+    // (create_order bilan bitta so'rovda yuborilishi mumkin emas, chunki
+    // order allaqachon yaratilgan).
+    function openResubmitReceiptModal(orderId) {
+      resubmitOrderId = orderId;
+      resubmitReceiptFile = null;
+      resubmitReceiptPreparing = null;
+      resubmitReceiptPreviewUrl = null;
+      activePopupModal = 'RESUBMIT_RECEIPT';
+      render();
+    }
+    function closeResubmitReceiptModal() {
+      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
+      resubmitOrderId = null;
+      resubmitReceiptFile = null;
+      resubmitReceiptPreparing = null;
+      resubmitReceiptPreviewUrl = null;
+      activePopupModal = null;
+      render();
+    }
+    async function onResubmitReceiptPicked(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
+        event.target.value = '';
+        return alert(tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
+      }
+      const selectionVersion = ++resubmitReceiptSelectionVersion;
+      resubmitReceiptFile = file;
+      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
+      resubmitReceiptPreviewUrl = URL.createObjectURL(file);
+      resubmitReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => {
+        const detached = makeDetachedImageFile(bytes, file);
+        if (selectionVersion === resubmitReceiptSelectionVersion) {
+          try {
+            const stableUrl = URL.createObjectURL(detached);
+            const oldUrl = resubmitReceiptPreviewUrl;
+            resubmitReceiptPreviewUrl = stableUrl;
+            renderModalContainer();
+            if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
+          } catch (previewErr) {
+            imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
+          }
+        }
+        return detached;
+      }).then(detached => compressImageToLimit(detached, MAX_RECEIPT_BYTES, 1600, 0.85));
+      renderModalContainer();
+    }
+    async function submitResubmitReceipt() {
+      if (!resubmitOrderId || (!resubmitReceiptFile && !resubmitReceiptPreparing)) {
+        return alert(tr("Iltimos, chek rasmini tanlang.", "Пожалуйста, выберите изображение чека."));
+      }
+      const orderId = resubmitOrderId;
+      showActionToast(tr('⏳ Yuborilmoqda...', '⏳ Отправка...'), 'saving');
+      try {
+        const prepared = resubmitReceiptPreparing ? await resubmitReceiptPreparing : resubmitReceiptFile;
+        if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
+        const imageUpload = { base64: await fileToBase64(prepared), mimeType: prepared.type, fileName: prepared.name || 'payment-receipt.jpg' };
+        await callApi('upload_payment_receipt', { orderId, imageUpload });
+        const patch = { hasReceipt: true, receiptReviewStatus: 'PENDING', receiptRejectReason: null };
+        const idx = orders.findIndex(o => o.id === orderId);
+        if (idx >= 0) orders[idx] = { ...orders[idx], ...patch };
+        if (selectedOrderModal?.id === orderId) selectedOrderModal = { ...selectedOrderModal, ...patch };
+        closeResubmitReceiptModal();
+        showActionToast(tr('✅ Yangi chek yuborildi', '✅ Новый чек отправлен'), 'success', 2000);
+      } catch (e) {
+        console.error(e);
+        showActionToast(tr('❌ Yuborilmadi', '❌ Не отправлено'), 'error', 2200);
+        alert(tr('Xatolik: ', 'Ошибка: ') + (e.message || e));
       }
     }
 
@@ -5431,6 +5681,16 @@
       const other = siblings[swapIdx];
       const catOrder = cat.sortOrder || 0, otherOrder = other.sortOrder || 0;
       cat.sortOrder = otherOrder; other.sortOrder = catOrder;
+      // 12-band: boot paytidagi sekin loadCatalog() so'rovi shu optimistic
+      // o'zgarishdan KEYIN javob berishi mumkin — o'sha eski javob butun
+      // categories massivini qayta yozib, tartibni "bir necha soniyadan
+      // keyin" bekor qilib qo'yardi (real Telegram'da topilgan bug). Endi
+      // har bir lokal o'zgarish vaqti belgilanadi; loadCatalog() o'zidan
+      // OLDIN boshlangan so'rov javobini ANIQ shu ikki kategoriya uchun
+      // e'tiborsiz qoldiradi (branchRequestSeq'dagi kabi stale-response himoyasi).
+      const mutatedAt = Date.now();
+      categoryLocalMutationAt.set(String(cat.id), mutatedAt);
+      categoryLocalMutationAt.set(String(other.id), mutatedAt);
 
       // Vizual tartibni butun ilovani render qilmasdan shu ikki DOM qatori bilan
       // darhol almashtiramiz. Server yozuvi fon rejimida keladi.
@@ -5692,6 +5952,17 @@
         .on('broadcast', { event: 'admins_changed' }, async () => {
           if (isSuperAdmin && adminsLoaded) await loadAdminsLazy(true);
         })
+        // 10-band: yangi support xabari — mavjud kanalning o'zi kengaytirildi,
+        // yangi kanal/polling loop ochilmagan. Ro'yxat (agar yuklangan bo'lsa)
+        // va hozir ochiq chat (agar shu ticket bo'lsa) qayta yuklanadi.
+        .on('broadcast', { event: 'support_changed' }, async (msg) => {
+          const ticketId = msg?.payload?.ticketId;
+          if (isUserAnAdmin && adminSupportTicketsLoaded) await loadAdminSupportTicketsLazy(true);
+          if (supportTicketsLoaded) await loadMySupportTicketsLazy(true);
+          if (ticketId && (openSupportTicketId === ticketId || adminSupportSelectedTicketId === ticketId)) {
+            await loadSupportMessages(ticketId, true);
+          }
+        })
         .subscribe();
 
       startOrdersPolling();
@@ -5733,6 +6004,7 @@
     }
     async function loadCatalog() {
       const perfStarted = performance.now();
+      const fetchStartedAt = Date.now();
       catalogLoading = true;
       const [prodRes, catRes] = await Promise.all([
         sb.from('products').select('id,sku,name,name_ru,price,old_price,stock,category_id,status,img,description,description_ru,is_featured,sort_order,sizes,variants,sold_count,created_at,import_batch_id').neq('status', 'DELETED').order('sort_order', { ascending: true }),
@@ -5741,7 +6013,19 @@
       if (prodRes.error) throw prodRes.error;
       if (catRes.error) throw catRes.error;
       products = (prodRes.data || []).map(mapProductFromDB);
-      categories = (catRes.data || []).map(mapCategoryFromDB);
+      // 12-band: agar shu so'rov BOSHLANGANIDAN keyin foydalanuvchi ↑/↓ bilan
+      // biror kategoriyani optimistic o'zgartirgan bo'lsa, o'sha kategoriya(lar)
+      // uchun bu (stale) javobdagi sortOrder e'tiborsiz qoldiriladi — qolgan
+      // barcha maydonlar (rasm, nom va h.k.) baribir yangilanadi.
+      const freshCategories = (catRes.data || []).map(mapCategoryFromDB);
+      categories = freshCategories.map(fresh => {
+        const mutatedAt = categoryLocalMutationAt.get(String(fresh.id));
+        if (mutatedAt && mutatedAt > fetchStartedAt) {
+          const local = categories.find(c => String(c.id) === String(fresh.id));
+          if (local) return { ...fresh, sortOrder: local.sortOrder };
+        }
+        return fresh;
+      });
       saveCatalogCache();
       catalogLoading = false;
       const ms = Math.round(performance.now() - perfStarted);

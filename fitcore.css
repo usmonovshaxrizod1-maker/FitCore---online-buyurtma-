@@ -1378,6 +1378,14 @@ body { background: #f6f8fb; }
   border-color: #e5eaf1 !important;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.055);
 }
+/* 15-band: tanlangan tovar cardi — .bg-white.border yuqoridagi qoidasi HAR
+   QANDAY border-color/box-shadow utility'ni (masalan border-blue-500,
+   ring-2) !important bilan bosib ketardi, shu sabab "tanlangani ko'rinmasin"
+   bugi bor edi. Bu qoida 3 klass bilan (yuqoridagisidan aniqroq) shuni yengadi. */
+.bg-white.border.fitcore-selected-card {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18), 0 4px 16px rgba(15, 23, 42, 0.055) !important;
+}
 .bg-white .border-b,
 .bg-white .border-t,
 .bg-white .divide-y > :not(:last-child) {
@@ -1496,6 +1504,42 @@ body { background: var(--fitcore-page-bg) !important; color: var(--fitcore-text)
 /* Header/bottom nav ranglari card-bg'dan mustaqil — o'zining rolига ega. */
 .fitcore-topbar.bg-white { background-color: var(--fitcore-header-bg) !important; }
 .fitcore-bottom-nav.bg-white { background-color: var(--fitcore-bottomnav-bg) !important; }
+
+/* 2-10-band: qo'llab-quvvatlash chat UI — layout uchun bir nechta Tailwind
+   utility (justify-end, max-w-[80%], opacity-70, va h.k.) bu build'da yo'q
+   ekanligi aniqlandi (xuddi .inline-flex kabi), shuning uchun bu ehtiyoj
+   uchun mustaqil, ishonchli custom classlar yozildi. */
+.fitcore-msg-row { display: flex; margin-bottom: 8px; }
+.fitcore-msg-row.mine { justify-content: flex-end; }
+.fitcore-msg-bubble { max-width: 80%; border-radius: 14px; padding: 8px 10px; font-size: 12px; }
+.fitcore-msg-bubble.mine { background: #2563eb; color: #fff; }
+.fitcore-msg-bubble.theirs { background: #f1f5f9; color: #1e293b; }
+.fitcore-msg-time { font-size: 9px; opacity: .7; margin-top: 4px; }
+.fitcore-msg-reply-quote { border-left: 2px solid rgba(0,0,0,.2); padding-left: 6px; margin-bottom: 4px; font-size: 10px; opacity: .8; }
+.fitcore-msg-reply-btn { font-size: 9px; opacity: .7; margin-top: 4px; cursor: pointer; text-decoration: underline; display: inline-block; }
+.fitcore-reply-bar { background: #eef2ff; border-left: 3px solid #6366f1; border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; font-size: 10px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+
+/* 20-band: `.inline-flex` bu build'da UMUMAN compile qilinmagan edi (Tailwind
+   JIT faqat foydalanilgan classlarni chiqaradi, lekin bu build'ga kirmay
+   qolgan) — shu sabab "Chekni tanlash"/"Almashtirish"/"Rasm tanlash" kabi
+   tugmalar aslida hali ham `display: inline` bo'lib qolar, `mt-1` kabi
+   margin'lar inline elementda layout'ga ta'sir qilmas va label matn qatori
+   bilan vizual "overlap" qilib ko'rinardi (receipt picker UI overlap bugi —
+   real sabab shu edi, avvalgi mt-1 fixi yetarli emas edi). */
+.inline-flex { display: inline-flex; }
+
+/* 14-band: katalog ro'yxatidagi kategoriya cardlari — oddiy oq/xira o'rniga
+   sal jonliroq, lekin "selected" ko'k rangdan (breadcrumb/border-blue-500)
+   aniq farqlanadigan fon. Bu .bg-white'dan mustaqil (u shop temasi bilan
+   !important almashtiriladi) — shuning uchun alohida custom class. */
+.fitcore-cat-row {
+  background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%);
+  border-left: 3px solid #a5b4fc;
+  transition: background 0.15s ease;
+}
+.fitcore-cat-row:active, .fitcore-cat-row:hover {
+  background: linear-gradient(135deg, #e0e7ff 0%, #f1f5f9 100%);
+}
 
 /* FITCORE v2.6 — barcha modal/overlaylar kichik Telegram WebView ichida boshqariladigan qolsin. */
 /* 10-band: tepada aniq tashqi joy qolsin — Telegram oynasining yuqori chetiga yopishib qolmasin. */
