@@ -474,7 +474,7 @@
       nav_cart: { uz: "Savatcha", ru: "Корзина" },
       nav_orders: { uz: "Buyurtmalar", ru: "Заказы" },
       nav_warehouse: { uz: "Ombor", ru: "Склад" },
-      nav_users: { uz: "Mijozlar", ru: "Клиенты" },
+      nav_users: { uz: "Qo'llab-quvvatlash", ru: "Поддержка" },
       nav_profile: { uz: "Profil", ru: "Профиль" },
       search_placeholder: { uz: "Nomi yoki ID (masalan: 111001) orqali qidirish...", ru: "Поиск по названию или ID (например: 111001)..." },
       add_to_cart: { uz: "Savatga qo'shish", ru: "Добавить в корзину" },
@@ -493,7 +493,7 @@
       all_orders: { uz: "Barcha buyurtmalar", ru: "Все заказы" },
       all_filter: { uz: "Barchasi", ru: "Все" },
       warehouse_title: { uz: "Ombor", ru: "Склад" },
-      users_title: { uz: "Mijozlar", ru: "Клиенты" },
+      users_title: { uz: "Qo'llab-quvvatlash", ru: "Поддержка" },
       total: { uz: "Jami", ru: "Итого" },
     };
     function t(key) {
@@ -514,6 +514,29 @@
     function productName(p) { return (uiLang === 'ru' && p.nameRu) ? p.nameRu : p.name; }
     function productDesc(p) { return (uiLang === 'ru' && p.descRu) ? p.descRu : (p.desc || ''); }
     function categoryName(c) { return (uiLang === 'ru' && c?.nameRu) ? c.nameRu : (c?.name || ''); }
+    function orderItemName(i) {
+      if (uiLang !== 'ru') return i?.name || '';
+      if (i?.nameRu) return i.nameRu;
+      const pid = i?.productId || i?.product_id;
+      const p = products.find(x => (pid && String(x.id) === String(pid)) || (i?.sku && String(x.sku) === String(i.sku)));
+      return p?.nameRu || i?.name || '';
+    }
+    function uzLatinToCyrillic(text) {
+      let s = String(text || '');
+      const pairs = [["o'",'ў'],["g'",'ғ'],['sh','ш'],['ch','ч'],['yo','ё'],['yu','ю'],['ya','я'],['ts','ц']];
+      for (const [a,b] of pairs) s=s.replace(new RegExp(a,'gi'), m => m[0]===m[0].toUpperCase()?b.toUpperCase():b);
+      const map={a:'а',b:'б',d:'д',e:'е',f:'ф',g:'г',h:'ҳ',i:'и',j:'ж',k:'к',l:'л',m:'м',n:'н',o:'о',p:'п',q:'қ',r:'р',s:'с',t:'т',u:'у',v:'в',x:'х',y:'й',z:'з'};
+      return s.replace(/[A-Za-z]/g,ch=>{const low=ch.toLowerCase(); const out=map[low]||ch; return ch===ch.toUpperCase()?out.toUpperCase():out;});
+    }
+    function localizeUzPlaceText(text) {
+      if (uiLang !== 'ru' || !text) return text || '';
+      let s=uzLatinToCyrillic(text);
+      s=s.replace(/\bшаҳри\b/gi,'г.').replace(/\bтумани\b/gi,'район').replace(/\bвилояти\b/gi,'область');
+      s=s.replace(/\bкўчаси\b/gi,'ул.').replace(/\bмаҳалласи\b/gi,'махалля').replace(/\bуй\b/gi,'дом');
+      return s;
+    }
+    function districtDisplayLabel(text) { return localizeUzPlaceText(text); }
+    function branchFieldLabel(text) { return localizeUzPlaceText(text); }
     // 6-band: admin do'kon nomini o'zgartirmagan bo'lsa standart "FITCORE"
     // qoladi — orqaga mos, hech kim majburan o'zgartirishga majbur emas.
     function shopDisplayName() { return (shopContact && shopContact.name) ? shopContact.name : 'FITCORE'; }
@@ -802,7 +825,7 @@
         console.error("Murojaatlarni yuklashda xatolik:", e);
       } finally {
         adminSupportTicketsLoading = false;
-        if (activePopupModal === 'ADMIN_SUPPORT' || currentTab === 'profile') render();
+        if (activePopupModal === 'ADMIN_SUPPORT' || currentTab === 'profile' || currentTab === 'users') render();
       }
     }
     async function loadSupportMessages(ticketId, force = false) {
@@ -1009,7 +1032,7 @@
       if (activeNav) activeNav.classList.add('text-blue-600', 'font-bold');
       render(); // tugma bosilishi darhol sezilsin
       if (tab === 'orders') loadOrdersLazy();
-      if (tab === 'users' && isUserAnAdmin) loadUsersLazy();
+      if (tab === 'users' && isUserAnAdmin) loadAdminSupportTicketsLazy();
       if (tab === 'profile' && isSuperAdmin) loadAdminsLazy();
       if (tab === 'profile' && isUserAnAdmin) loadAdminSupportTicketsLazy();
     }
@@ -2060,7 +2083,7 @@
       selectedPayMethod = checkoutDraft.paymentMethodId || selectedPayMethod;
       handleRegionChange(false);
       const districtEl = document.getElementById('chk-district');
-      if (districtEl && checkoutDraft.district) districtEl.value = checkoutDraft.district;
+      if (districtEl && checkoutDraft.district) { districtEl.value = checkoutDraft.district; checkoutPostDistrict = checkoutDraft.district; }
       const addressEl = document.getElementById('chk-address');
       if (addressEl) addressEl.value = checkoutDraft.address || '';
       renderCheckoutOptions();
@@ -2072,7 +2095,7 @@
       const previousDistrict = districtSelect?.value || '';
       const districts = regionKey === 'tashkent_city' ? TASHKENT_CITY_DISTRICTS : (UZ_REGIONS_BY_CODE[regionKey] || []);
       if (districtSelect) {
-        districtSelect.innerHTML = `<option value="">${tr('— Tanlang —', '— Выберите —')}</option>` + districts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+        districtSelect.innerHTML = `<option value="">${tr('— Tanlang —', '— Выберите —')}</option>` + districts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(districtDisplayLabel(d))}</option>`).join('');
         if (districts.includes(previousDistrict)) districtSelect.value = previousDistrict;
       }
       selectedDeliveryMethodId = null;
@@ -2091,6 +2114,17 @@
       loadCheckoutPostDistricts(regionKey);
       renderCheckoutOptions();
       if (shouldSave) saveCheckoutDraft();
+    }
+
+    function handleDistrictChange() {
+      const district = document.getElementById('chk-district')?.value || '';
+      checkoutPostDistrict = district || null;
+      checkoutSelectedBranch = null; checkoutBranches = []; checkoutBranchesLoadedFor = null; branchRequestSeq++;
+      saveCheckoutDraft(); renderCheckoutOptions();
+      if (checkoutPostDistrict && String(selectedDeliveryMethodId || '').startsWith('POST:')) {
+        const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
+        loadCheckoutBranches(regionKey, selectedDeliveryMethodId.slice(5), checkoutPostDistrict);
+      }
     }
 
     function handleViloyatChange() { handleRegionChange(); }
@@ -2120,22 +2154,7 @@
 
     function renderPostDistrictField() {
       const wrap = document.getElementById('chk-post-district-field');
-      const select = document.getElementById('chk-post-district');
-      if (!wrap || !select) return;
-      // 11-band: bu maydon endi "regionda POST bormi" emas, balki "hozir
-      // TANLANGAN usul aynan POST'mi" shartiga qarab ko'rinadi — shu tufayli
-      // umumiy "chk-district-field" bilan bir vaqtda ikkalasi ko'rinmaydi.
-      const isPostSelected = String(selectedDeliveryMethodId || '').startsWith('POST:');
-      wrap.classList.toggle('hidden', !isPostSelected);
-      if (!isPostSelected) return;
-      if (checkoutPostDistrictsLoading) {
-        select.innerHTML = `<option value="">${tr('Yuklanmoqda...', 'Загрузка...')}</option>`;
-        select.disabled = true;
-        return;
-      }
-      select.disabled = false;
-      select.innerHTML = `<option value="">${tr('— Avval tumanni tanlang —', '— Сначала выберите район —')}</option>` +
-        checkoutPostDistricts.map(d => `<option value="${escapeHtml(d)}" ${d === checkoutPostDistrict ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('');
+      if (wrap) wrap.classList.add('hidden');
     }
 
     function handlePostDistrictChange() {
@@ -2166,6 +2185,7 @@
       // umumiy maydon bilan bir vaqtda ko'rinib qolmasligi uchun bosqichlar
       // qayta tartiblandi.
       if (methodId !== selectedDeliveryMethodId) checkoutSelectedBranch = null;
+      checkoutPostDistrict = document.getElementById('chk-district')?.value || checkoutPostDistrict || null;
       selectedDeliveryMethodId = methodId;
       renderCheckoutOptions();
       saveCheckoutDraft();
@@ -2225,8 +2245,8 @@
       if (!filtered.length) return `<p class="p-3 text-center text-gray-400">${tr("Filial topilmadi.", 'Филиалы не найдены.')}</p>`;
       return filtered.map(b => `
         <button type="button" onclick="selectCheckoutBranch(${b.id})" class="w-full text-left p-2.5 ${checkoutSelectedBranch?.id === b.id ? 'bg-blue-50' : 'bg-white'}">
-          <p class="font-bold">${escapeHtml(b.branch_name)}</p>
-          <p class="text-[10px] text-gray-500">${escapeHtml(b.district_or_city || '')} — ${escapeHtml(b.full_address)}</p>
+          <p class="font-bold">${escapeHtml(branchFieldLabel(b.branch_name))}</p>
+          <p class="text-[10px] text-gray-500">${escapeHtml(branchFieldLabel(b.district_or_city || ''))} — ${escapeHtml(branchFieldLabel(b.full_address))}</p>
         </button>`).join('');
     }
 
@@ -2243,7 +2263,7 @@
       if (!el) return;
       if (!checkoutSelectedBranch) { el.classList.add('hidden'); el.innerHTML = ''; return; }
       el.classList.remove('hidden');
-      el.innerHTML = `<b>✅ ${escapeHtml(checkoutSelectedBranch.branch_name)}</b><br>${escapeHtml(checkoutSelectedBranch.district_or_city || '')} — ${escapeHtml(checkoutSelectedBranch.full_address)}`;
+      el.innerHTML = `<b>✅ ${escapeHtml(branchFieldLabel(checkoutSelectedBranch.branch_name))}</b><br>${escapeHtml(branchFieldLabel(checkoutSelectedBranch.district_or_city || ''))} — ${escapeHtml(branchFieldLabel(checkoutSelectedBranch.full_address))}`;
     }
 
     function selectCheckoutBranch(branchId) {
@@ -2283,7 +2303,7 @@
         // 5.6: provider tugmalari tuman tanlanmaguncha bosilmaydigan
         // ko'rinishda ko'rsatiladi — lekin onclick faol qoladi, shunda
         // bosilsa selectDelivery o'zi aniq ogohlantirish ko'rsatadi.
-        const disabledLook = option.kind === 'POST' && !checkoutPostDistrict;
+        const disabledLook = option.kind === 'POST' && !(document.getElementById('chk-district')?.value || checkoutPostDistrict);
         return `
         <button type="button" onclick="selectDelivery('${escapeHtml(option.id)}')" class="w-full text-left p-2.5 border rounded-xl font-bold text-xs ${option.id === selectedDeliveryMethodId ? 'border-blue-600 bg-blue-50 text-blue-700' : 'bg-white text-gray-700'} ${disabledLook ? 'opacity-40' : ''}">
           ${deliveryOptionLabel(option)}
@@ -2654,17 +2674,17 @@
             <div onclick="openOrderModal(${o.id})" class="bg-white rounded-2xl p-4 shadow-sm space-y-2 border cursor-pointer hover:bg-gray-50">
               <div class="flex justify-between items-center border-b pb-2">
                 <span class="font-black text-blue-600">#${o.id}</span>
-                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColorClass(orderDisplayStatus(o))}">${statusLabel(orderDisplayStatus(o))}</span>
+                ${orderDisplayStatus(o) === 'RECEIPT_PENDING' ? '' : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColorClass(orderDisplayStatus(o))}">${statusLabel(orderDisplayStatus(o))}</span>`}
               </div>
               <p class="text-xs text-gray-500">📅 ${escapeHtml(o.date)}</p>
-              <p class="text-xs text-gray-600">🚚 ${escapeHtml(deliverySnapshotLabel(o))} · <b>${escapeHtml(shipmentStatusLabel(o.shipment?.status))}</b></p>
+              <p class="text-xs text-gray-600">🚚 ${escapeHtml(deliverySnapshotLabel(o))} · <b>${escapeHtml(orderDisplayStatus(o) === 'RECEIPT_PENDING' ? statusLabel('RECEIPT_PENDING') : shipmentStatusLabel(o.shipment?.status))}</b></p>
               ${o.shipment?.kind === 'TAXI' && o.shipment?.carNumber ? `<div class="bg-blue-50 border border-blue-200 p-2 rounded-xl text-[11px]">🚕 ${tr('Mashina','Машина')}: <b>${escapeHtml(o.shipment.carNumber)}</b><br>${tr('Haydovchi','Водитель')}: ${escapeHtml(o.shipment.driverPhone || '')}${o.shipment.driverName ? ` · ${escapeHtml(o.shipment.driverName)}` : ''}</div>` : ''}
               ${o.shipment?.kind === 'POST' && o.shipment?.trackingNumber ? `<div class="bg-blue-50 border border-blue-200 p-2 rounded-xl text-[11px]">📦 ${escapeHtml(o.shipment.providerName || o.delivery?.providerName || '')}<br>${tr("Jo'natma raqami",'Трек-номер')}: <b>${escapeHtml(o.shipment.trackingNumber)}</b>${o.shipment.originBranch ? `<br>${tr('Filial','Филиал')}: ${escapeHtml(o.shipment.originBranch)}` : ''}</div>` : ''}
               <div class="text-xs space-y-1.5">
                 ${o.items.map(i => `
                   <div class="flex items-center gap-2">
                     ${i.img ? `<img src="${escapeHtml(i.img)}" onerror="this.style.display='none'" class="w-7 h-7 object-cover rounded-lg flex-shrink-0" loading="lazy">` : ''}
-                    <p class="font-medium">• ${escapeHtml(i.name)} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.color ? `<span class="text-gray-500">[${escapeHtml(i.color)}]</span>` : ''} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>
+                    <p class="font-medium">• ${escapeHtml(orderItemName(i))} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.color ? `<span class="text-gray-500">[${escapeHtml(i.color)}]</span>` : ''} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>
                   </div>
                 `).join('')}
               </div>
@@ -2765,30 +2785,34 @@
 
     // 5.5. FOYDALANUVCHILAR (MIJOZLAR) TAB — faqat admin ko'radi
     function renderUsers(container) {
+      const grouped = groupAdminSupportTicketsByUser();
+      const selectedUserTickets = adminSupportSelectedUser ? adminSupportTickets.filter(t => t.tgId === adminSupportSelectedUser) : [];
+      const openTicket = adminSupportSelectedTicketId ? adminSupportTickets.find(t => t.id === adminSupportSelectedTicketId) : null;
       container.innerHTML = `
-        <div class="space-y-4">
-          <h2 class="text-lg font-bold text-slate-800">👥 ${t('users_title')}</h2>
-          <p class="text-[11px] text-gray-500">${tr("Mijozlar buyurtmalar soni bo'yicha tartiblangan.", "Клиенты отсортированы по количеству заказов.")}</p>
-          <div class="bg-white rounded-2xl border divide-y">
-            ${usersLoading ? `<p class="text-xs text-blue-500 p-4 text-center">${tr("⏳ Yuklanmoqda...", "⏳ Загрузка...")}</p>` : (usersSummary.length === 0 ? `<p class="text-xs text-gray-400 p-4 text-center">${tr("Hozircha mijozlar yo'q", "Клиентов пока нет")}</p>` : '')}
-            ${usersSummary.map(u => `
-              <div onclick="openUserModal('${u.tgId}')" class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50">
-                <div>
-                  <div class="flex items-center gap-1.5">
-                    <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
-                    ${u.isBlocked ? `<span class="text-[9px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded">${tr("🚫 BLOK", "🚫 БЛОК")}</span>` : (u.warned ? `<span class="text-[9px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded">${tr("⚠️ OGOH", "⚠️ ПРЕДУПР.")}</span>` : '')}
-                  </div>
-                  <p class="text-[10px] text-gray-400">${escapeHtml(u.phone || '')} · ID: ${escapeHtml(u.tgId)}</p>
-                </div>
-                <div class="text-right">
-                  <p class="font-black text-blue-600 text-sm">${u.totalOrders} ${tr("buyurtma", "заказов")}</p>
-                  <p class="text-[10px] text-gray-400">✅${u.delivered} ⏳${u.active} ❌${u.cancelled}</p>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `;
+        <div class="space-y-3">
+          ${openTicket ? `
+            <div class="flex items-center justify-between bg-white border rounded-2xl p-3">
+              <button onclick="backToAdminSupportUserTickets()" class="text-xs font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
+              <h2 class="font-bold text-sm">${openTicket.orderId ? `#${openTicket.orderId} · ` : ''}${escapeHtml(supportUserLabel(openTicket.tgId))}</h2>
+              <span class="text-[9px] font-bold px-2 py-1 rounded ${openTicket.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (openTicket.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}</span>
+            </div>
+            <div class="bg-white border rounded-2xl p-3 space-y-3 min-h-[45vh]">
+              ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...','Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, true)}
+              ${openTicket.status !== 'CLOSED' ? `${renderSupportReplyBarHtml()}<textarea id="sup-admin-message" rows="3" placeholder="${tr('Javob yozing...','Напишите ответ...')}" class="w-full p-3 border rounded-xl"></textarea><button onclick="submitAdminSupportReply()" class="w-full bg-blue-600 text-white font-bold py-3 rounded-xl">${tr('Yuborish','Отправить')}</button>` : `<p class="text-center text-gray-400 py-2">${tr('Mijoz bu murojaatni tugatgan.','Клиент завершил это обращение.')}</p>`}
+            </div>
+          ` : adminSupportSelectedUser ? `
+            <div class="flex items-center justify-between bg-white border rounded-2xl p-3">
+              <button onclick="backToAdminSupportUsers()" class="text-xs font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
+              <h2 class="font-bold text-sm">${escapeHtml(supportUserLabel(adminSupportSelectedUser))}</h2><span></span>
+            </div>
+            <div class="space-y-2">${selectedUserTickets.map(t => `<div class="bg-white border rounded-2xl p-3 cursor-pointer" onclick="openAdminSupportChat(${t.id})"><div class="flex justify-between"><b>${t.orderId ? `📦 #${t.orderId}` : tr('Umumiy','Общее')}</b><span class="text-[9px] font-bold px-2 py-1 rounded ${t.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${t.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (t.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}${supportNeedsAttention(t) ? ' •' : ''}</span></div><p class="text-[10px] text-gray-400 mt-1">${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</p><p class="text-xs mt-1">${escapeHtml((t.lastMessage?.body || '').slice(0,100))}</p></div>`).join('')}</div>
+          ` : `
+            <div class="flex items-center justify-between"><h2 class="text-lg font-bold text-slate-800">💬 ${tr("Qo'llab-quvvatlash",'Поддержка')}</h2>${adminSupportTicketsLoading ? `<span class="text-xs text-gray-400">${tr('Yuklanmoqda...','Загрузка...')}</span>` : ''}</div>
+            ${(!adminSupportTicketsLoading && !grouped.length) ? `<p class="text-xs text-gray-400 bg-white p-4 rounded-2xl border text-center">${tr('Murojaatlar yo‘q','Обращений нет')}</p>` : ''}
+            <div class="space-y-2">${grouped.map(g => `<div class="bg-white border rounded-2xl p-3 flex items-center justify-between cursor-pointer" onclick="selectAdminSupportUser('${g.tgId}')"><div><p class="font-bold text-sm">${escapeHtml(supportUserLabel(g.tgId))}</p><p class="text-[10px] text-gray-400">${g.tickets.length} ${tr('ta murojaat','обращений')}</p></div>${g.needsAttention || g.hasOpen ? `<span class="text-[9px] font-bold px-2 py-1 rounded bg-amber-100 text-amber-800">${tr('Yangi','Новое')}</span>` : ''}</div>`).join('')}</div>
+          `}
+        </div>`;
+      if (!adminSupportTicketsLoaded && !adminSupportTicketsLoading) loadAdminSupportTicketsLazy();
     }
 
     function openUserModal(tgId) {
@@ -3423,7 +3447,7 @@
             ${shopContact.address ? `
               <div class="flex items-start space-x-3">
                 <i data-lucide="map-pin" class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0"></i>
-                <p class="text-xs font-bold text-gray-800">${escapeHtml(shopContact.address)}</p>
+                <p class="text-xs font-bold text-gray-800">${escapeHtml(localizeUzPlaceText(shopContact.address))}</p>
               </div>
             ` : ''}
 
@@ -3456,10 +3480,6 @@
           ${(isUserAnAdmin && isAdminMode) ? `
             <button onclick="openShopParams()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
               <span>⚙️ ${tr("Do'kon sozlamalari", 'Настройки магазина')}</span>
-              <span>›</span>
-            </button>
-            <button onclick="openAdminSupportModal()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-              <span>💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}${adminSupportTicketsLoaded && adminSupportTickets.some(t => t.status === 'OPEN' || supportNeedsAttention(t)) ? ` <span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">${adminSupportTickets.filter(t => t.status === 'OPEN' || supportNeedsAttention(t)).length}</span>` : ''}</span>
               <span>›</span>
             </button>
           ` : ''}
@@ -4298,7 +4318,7 @@
 
               <div id="chk-district-field">
                 <label class="text-xs font-bold text-gray-600">${tr("Tumanni tanlang *", "Выберите район *")}</label>
-                <select id="chk-district" onchange="saveCheckoutDraft()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
+                <select id="chk-district" onchange="handleDistrictChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
                   <option value="">${tr("— Tanlang —", "— Выберите —")}</option>
                 </select>
               </div>
@@ -4713,7 +4733,7 @@
               <div class="space-y-1">
                 <p>👤 <b>${tr("Mijoz:", "Клиент:")}</b> ${escapeHtml(o.user)}</p>
                 <p>📞 <b>${tr("Tel:", "Тел:")}</b> ${escapeHtml(o.phone)}</p>
-                <p>📍 <b>${tr("Hudud:", "Регион:")}</b> ${escapeHtml(o.delivery?.regionLabel || regionLabel(o.region))} (${escapeHtml(o.district)})</p>
+                <p>📍 <b>${tr("Hudud:", "Регион:")}</b> ${escapeHtml(uiLang === 'ru' ? localizeUzPlaceText(o.delivery?.regionLabel || regionLabel(o.region)) : (o.delivery?.regionLabel || regionLabel(o.region)))} (${escapeHtml(districtDisplayLabel(o.district))})</p>
                 <p>🏠 <b>${tr("Manzil:", "Адрес:")}</b> ${escapeHtml(o.address)}</p>
                 <p>🚚 <b>${tr("Yetkazib berish:", "Доставка:")}</b> ${escapeHtml(deliverySnapshotLabel(o))}</p>
                 <p>💳 <b>${tr("To'lov:", "Оплата:")}</b> ${escapeHtml(o.payment?.label || payMethodLabel(o.payMethod))}</p>
@@ -4725,14 +4745,14 @@
                 ${o.items.map(i => `
                   <div class="flex items-center gap-2">
                     ${i.img ? `<img src="${escapeHtml(i.img)}" onerror="this.style.display='none'" class="w-7 h-7 object-cover rounded-lg flex-shrink-0" loading="lazy">` : ''}
-                    <p>• ${escapeHtml(i.name)} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.color ? `<span class="text-gray-500">[${escapeHtml(i.color)}]</span>` : ''} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${money(i.price * i.qty)}</p>
+                    <p>• ${escapeHtml(orderItemName(i))} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.color ? `<span class="text-gray-500">[${escapeHtml(i.color)}]</span>` : ''} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${money(i.price * i.qty)}</p>
                   </div>
                 `).join('')}
               </div>
 
               <div class="border-t pt-2 space-y-1">
                 <div class="flex justify-between"><span>${tr('Tovarlar summasi','Сумма товаров')}:</span><b>${money(o.subtotal ?? o.totalPrice)}</b></div>
-                <div class="flex justify-between"><span>${tr('Yetkazib berish','Доставка')}:</span><b>${Number(o.deliveryFee) > 0 ? money(o.deliveryFee) : money(0)}</b></div>
+                <div class="flex justify-between"><span>${tr('Yetkazib berish','Доставка')}:</span><b>${deliveryFeeDisplay(o)}</b></div>
                 <div class="flex justify-between font-black text-sm"><span>${tr("Hozir to'lanadigan jami",'Итого к оплате сейчас')}:</span><span class="text-green-600">${money(o.payableTotal ?? o.totalPrice)}</span></div>
               </div>
 
@@ -4925,6 +4945,13 @@
       if (delivery.kind === 'TAXI') return tr('Taksi orqali', 'На такси');
       if (delivery.kind === 'POST') return `${tr('Pochta orqali', 'Почтой')} · ${delivery.providerName || ''}`;
       return delivery.label || tr('Eski buyurtma yetkazishi', 'Доставка старого заказа');
+    }
+
+    function deliveryFeeDisplay(order) {
+      const fee = Number(order?.deliveryFee || 0);
+      if (fee > 0) return money(fee);
+      if (order?.delivery?.kind === 'FREE') return tr('Bepul','Бесплатно');
+      return tr("Mijoz to'laydi", 'Оплачивает клиент');
     }
 
     function shipmentStatusLabel(status) {
@@ -5680,6 +5707,7 @@
       if (swapIdx < 0 || swapIdx >= siblings.length) return;
       const other = siblings[swapIdx];
       const catOrder = cat.sortOrder || 0, otherOrder = other.sortOrder || 0;
+      catalogRequestSeq++; // reorderdan oldingi barcha loadCatalog javoblarini invalid qiladi
       cat.sortOrder = otherOrder; other.sortOrder = catOrder;
       // 12-band: boot paytidagi sekin loadCatalog() so'rovi shu optimistic
       // o'zgarishdan KEYIN javob berishi mumkin — o'sha eski javob butun
@@ -5706,6 +5734,8 @@
       }
       try {
         await callApi('reorder_categories', { items: [{ id: cat.id, sortOrder: cat.sortOrder }, { id: other.id, sortOrder: other.sortOrder }] });
+        await loadCatalog();
+        render();
         saveCatalogCache();
       } catch (err) {
         console.error(err);
@@ -5991,6 +6021,7 @@
     // ============ BOOT: TEZKOR / STALE-WHILE-REVALIDATE ============
     const CATALOG_CACHE_KEY = 'fitcore_catalog_cache_v2';
     let catalogLoading = false;
+    let catalogRequestSeq = 0;
     function hydrateCatalogCache() {
       try {
         const cached = JSON.parse(localStorage.getItem(CATALOG_CACHE_KEY) || 'null');
@@ -6005,6 +6036,7 @@
     async function loadCatalog() {
       const perfStarted = performance.now();
       const fetchStartedAt = Date.now();
+      const requestId = ++catalogRequestSeq;
       catalogLoading = true;
       const [prodRes, catRes] = await Promise.all([
         sb.from('products').select('id,sku,name,name_ru,price,old_price,stock,category_id,status,img,description,description_ru,is_featured,sort_order,sizes,variants,sold_count,created_at,import_batch_id').neq('status', 'DELETED').order('sort_order', { ascending: true }),
@@ -6012,6 +6044,7 @@
       ]);
       if (prodRes.error) throw prodRes.error;
       if (catRes.error) throw catRes.error;
+      if (requestId !== catalogRequestSeq) return false;
       products = (prodRes.data || []).map(mapProductFromDB);
       // 12-band: agar shu so'rov BOSHLANGANIDAN keyin foydalanuvchi ↑/↓ bilan
       // biror kategoriyani optimistic o'zgartirgan bo'lsa, o'sha kategoriya(lar)
