@@ -117,6 +117,130 @@
       tashkent_region: ["Angren shahri","Bekobod shahri","Bekobod tumani","Bo'ka","Bo'stonliq","Chinoz","Chirchiq shahri","Ohangaron shahri","Ohangaron tumani","Olmaliq shahri","Oqqo'rg'on","Parkent","Piskent","Qibray","Quyichirchiq","Toshkent tumani","O'rtachirchiq","Yangiyo'l shahri","Yangiyo'l tumani","Yuqorichirchiq","Zangiota"],
     };
 
+    // 5-band: tuman/shahar nomlarining haqiqiy ruscha tarjimasi — qo'lda
+    // yozilgan (Azure emas, chunki bu ro'yxat qat'iy va bir martalik).
+    // Transliteratsiya EMAS — masalan "Farg'ona tumani" -> "Ферганский
+    // район", harf-ma-harf o'girilgan variant emas. Kalitlar UZ_REGIONS_BY_CODE/
+    // TASHKENT_CITY_DISTRICTS'dagi qiymatlar bilan aynan bir xil (select
+    // value shu o'zbekcha qiymat bo'lib qoladi — faqat ko'rsatiladigan matn
+    // almashadi). Qarang: districtNameRu().
+    const TASHKENT_CITY_DISTRICTS_RU = {
+      "Bektemir": "Бектемирский район", "Chilonzor": "Чиланзарский район", "Mirobod": "Мирабадский район",
+      "Mirzo Ulug'bek": "Мирзо-Улугбекский район", "Olmazor": "Алмазарский район", "Sergeli": "Сергелийский район",
+      "Shayxontohur": "Шайхантахурский район", "Uchtepa": "Учтепинский район", "Yakkasaroy": "Яккасарайский район",
+      "Yashnobod": "Яшнабадский район", "Yunusobod": "Юнусабадский район",
+    };
+    const DISTRICT_RU_BY_REGION = {
+      andijan: {
+        "Andijon shahri": "город Андижан", "Andijon tumani": "Андижанский район", "Asaka": "Асакинский район",
+        "Baliqchi": "Баликчинский район", "Bo'z": "Бозский район", "Buloqboshi": "Булакбашинский район",
+        "Izboskan": "Избасканский район", "Jalaquduq": "Джалакудукский район", "Marhamat": "Мархаматский район",
+        "Oltinko'l": "Алтынкульский район", "Paxtaobod": "Пахтаабадский район", "Qo'rg'ontepa": "Кургантепинский район",
+        "Shahrixon": "Шахриханский район", "Ulug'nor": "Улугнорский район", "Xo'jaobod": "Ходжаабадский район",
+        "Xonobod shahri": "город Ханабад",
+      },
+      bukhara: {
+        "Buxoro shahri": "город Бухара", "Buxoro tumani": "Бухарский район", "G'ijduvon": "Гиждуванский район",
+        "Jondor": "Жондорский район", "Kogon shahri": "город Каган", "Kogon tumani": "Каганский район",
+        "Olot": "Алатский район", "Peshku": "Пешкунский район", "Qorako'l": "Каракульский район",
+        "Qorovulbozor": "Караулбазарский район", "Romitan": "Ромитанский район", "Shofirkon": "Шафирканский район",
+        "Vobkent": "Вабкентский район",
+      },
+      fergana: {
+        "Farg'ona shahri": "город Фергана", "Marg'ilon shahri": "город Маргилан", "Qo'qon shahri": "город Коканд",
+        "Farg'ona tumani": "Ферганский район", "Bag'dod": "Багдадский район", "Beshariq": "Бешарыкский район",
+        "Buvayda": "Бувайдинский район", "Dang'ara": "Дангаринский район", "Furqat": "Фуркатский район",
+        "Oltiariq": "Алтыарыкский район", "O'zbekiston": "Узбекистанский район", "Quva": "Кувинский район",
+        "Qo'shtepa": "Куштепинский район", "Rishton": "Риштанский район", "So'x": "Сохский район",
+        "Toshloq": "Ташлакский район", "Uchko'prik": "Учкуприкский район", "Yozyovon": "Язъяванский район",
+      },
+      jizzakh: {
+        "Jizzax shahri": "город Джизак", "Jizzax tumani": "Джизакский район", "Arnasoy": "Арнасайский район",
+        "Baxmal": "Бахмальский район", "Do'stlik": "Дустликский район", "Forish": "Фаришский район",
+        "G'allaorol": "Галляаральский район", "Mirzacho'l": "Мирзачульский район", "Paxtakor": "Пахтакорский район",
+        "Sh.Rashidov tumani": "район Шарофа Рашидова", "Yangiobod": "Янгиабадский район", "Zafarobod": "Зафарабадский район",
+        "Zarbdor": "Зарбдарский район", "Zomin": "Зааминский район",
+      },
+      khorezm: {
+        "Urganch shahri": "город Ургенч", "Urganch tumani": "Ургенчский район", "Bog'ot": "Багатский район",
+        "Gurlan": "Гурланский район", "Hazorasp": "Хазараспский район", "Xiva": "Хивинский район",
+        "Xonqa": "Ханкинский район", "Qo'shko'pir": "Кошкупырский район", "Shovot": "Шаватский район",
+        "Yangiariq": "Янгиарыкский район", "Yangibozor": "Янгибазарский район",
+      },
+      namangan: {
+        "Namangan shahri": "город Наманган", "Namangan tumani": "Наманганский район", "Chortoq": "Чартакский район",
+        "Chust": "Чустский район", "Kosonsoy": "Касансайский район", "Mingbuloq": "Мингбулакский район",
+        "Norin": "Наринский район", "Pop": "Папский район", "To'raqo'rg'on": "Туракурганский район",
+        "Uchqo'rg'on": "Учкурганский район", "Uychi": "Уйчинский район", "Yangiqo'rg'on": "Янгикурганский район",
+      },
+      navoi: {
+        "Navoiy shahri": "город Навои", "Zarafshon shahri": "город Зарафшан", "Karmana": "Карманинский район",
+        "Konimex": "Канимехский район", "Navbahor": "Навбахорский район", "Nurota": "Нуратинский район",
+        "Qiziltepa": "Кызылтепинский район", "Tomdi": "Тамдынский район", "Uchquduq": "Учкудукский район",
+        "Xatirchi": "Хатырчинский район",
+      },
+      qashqadaryo: {
+        "Qarshi shahri": "город Карши", "Shahrisabz shahri": "город Шахрисабз", "Qarshi tumani": "Каршинский район",
+        "Shahrisabz tumani": "Шахрисабзский район", "Chiroqchi": "Чиракчинский район", "Dehqonobod": "Дехканабадский район",
+        "G'uzor": "Гузарский район", "Kasbi": "Касбийский район", "Kitob": "Китабский район",
+        "Koson": "Касанский район", "Mirishkor": "Миришкорский район", "Muborak": "Мубарекский район",
+        "Nishon": "Нишанский район", "Qamashi": "Камашинский район", "Yakkabog'": "Яккабагский район",
+      },
+      karakalpakstan: {
+        "Nukus shahri": "город Нукус", "Nukus tumani": "Нукусский район", "Amudaryo": "Амударьинский район",
+        "Beruniy": "Берунийский район", "Chimboy": "Чимбайский район", "Ellikqal'a": "Элликкалинский район",
+        "Kegeyli": "Кегейлийский район", "Mo'ynoq": "Муйнакский район", "Qanliko'l": "Канлыкульский район",
+        "Qorao'zak": "Караузякский район", "Qo'ng'irot": "Кунградский район", "Shumanay": "Шуманайский район",
+        "Taxtako'pir": "Тахтакупырский район", "To'rtko'l": "Турткульский район", "Xo'jayli": "Ходжейлийский район",
+      },
+      samarkand: {
+        "Samarqand shahri": "город Самарканд", "Samarqand tumani": "Самаркандский район", "Bulung'ur": "Булунгурский район",
+        "Ishtixon": "Иштыханский район", "Jomboy": "Джамбайский район", "Kattaqo'rg'on": "Каттакурганский район",
+        "Narpay": "Нарпайский район", "Nurobod": "Нурабадский район", "Oqdaryo": "Акдарьинский район",
+        "Pastdarg'om": "Пастдаргомский район", "Paxtachi": "Пахтачийский район", "Payariq": "Пайарыкский район",
+        "Qo'shrabot": "Кошрабадский район", "Toyloq": "Тайлакский район", "Urgut": "Ургутский район",
+      },
+      sirdaryo: {
+        "Guliston shahri": "город Гулистан", "Guliston tumani": "Гулистанский район", "Yangiyer shahri": "город Янгиер",
+        "Boyovut": "Баяутский район", "Mirzaobod": "Мирзаабадский район", "Oqoltin": "Акалтынский район",
+        "Sardoba": "Сардобинский район", "Sayxunobod": "Сайхунабадский район", "Sirdaryo tumani": "Сырдарьинский район",
+        "Xovos": "Хавастский район",
+      },
+      surxondaryo: {
+        "Termiz shahri": "город Термез", "Termiz tumani": "Термезский район", "Angor": "Ангорский район",
+        "Bandixon": "Бандиханский район", "Boysun": "Байсунский район", "Denov": "Денауский район",
+        "Jarqo'rg'on": "Джаркурганский район", "Muzrabot": "Музрабадский район", "Oltinsoy": "Алтынсайский район",
+        "Qiziriq": "Кызирикский район", "Qumqo'rg'on": "Кумкурганский район", "Sariosiyo": "Сариасийский район",
+        "Sherobod": "Шерабадский район", "Sho'rchi": "Шурчинский район", "Uzun": "Узунский район",
+      },
+      tashkent_region: {
+        "Angren shahri": "город Ангрен", "Bekobod shahri": "город Бекабад", "Bekobod tumani": "Бекабадский район",
+        "Bo'ka": "Букинский район", "Bo'stonliq": "Бостанлыкский район", "Chinoz": "Чиназский район",
+        "Chirchiq shahri": "город Чирчик", "Ohangaron shahri": "город Ахангаран", "Ohangaron tumani": "Ахангаранский район",
+        "Olmaliq shahri": "город Алмалык", "Oqqo'rg'on": "Аккурганский район", "Parkent": "Паркентский район",
+        "Piskent": "Пскентский район", "Qibray": "Кибрайский район", "Quyichirchiq": "Нижнечирчикский район",
+        "Toshkent tumani": "Ташкентский район", "O'rtachirchiq": "Среднечирчикский район", "Yangiyo'l shahri": "город Янгиюль",
+        "Yangiyo'l tumani": "Янгиюльский район", "Yuqorichirchiq": "Верхнечирчикский район", "Zangiota": "Зангиатинский район",
+      },
+    };
+    // Barcha regionlar bo'yicha bitta tekis lug'at (aniq mos kelish uchun tez qidiruv).
+    const DISTRICT_RU_FLAT = Object.assign({}, TASHKENT_CITY_DISTRICTS_RU, ...Object.values(DISTRICT_RU_BY_REGION));
+    // Haqiqiy filial ma'lumotidan (get_delivery_districts) kelgan yorliq har
+    // doim ham lug'at kaliti bilan harfma-harf mos kelmasligi mumkin — shu
+    // sabab "tumani"/"shahri" so'zini olib tashlab, bazaviy nom bo'yicha ham
+    // qidiriladi. Topilmasa (5-band talabiga ko'ra) o'zbekcha qiymat qoladi.
+    function districtNameRu(uzLabel) {
+      if (!uzLabel) return uzLabel;
+      if (DISTRICT_RU_FLAT[uzLabel]) return DISTRICT_RU_FLAT[uzLabel];
+      const strip = (s) => String(s).replace(/\s*(tumani|shahri)\s*$/i, '').trim().toLowerCase();
+      const target = strip(uzLabel);
+      for (const [uzKey, ruVal] of Object.entries(DISTRICT_RU_FLAT)) {
+        if (strip(uzKey) === target) return ruVal;
+      }
+      return uzLabel;
+    }
+    function districtLabelForUi(uzLabel) { return uiLang === 'ru' ? districtNameRu(uzLabel) : uzLabel; }
+
     const TOP_LEVEL_REGIONS = REGION_DEFS.map(r => ({ id: r.code, nameUz: r.nameUz, nameRu: r.nameRu }));
     const TOP_LEVEL_REGION_IDS = TOP_LEVEL_REGIONS.map(region => region.id);
     const imageIO = window.FitcoreImageIO;
@@ -137,6 +261,27 @@
         throw new Error('image_too_large');
       }
       return true;
+    }
+    // 6-band: accept="image/*" endi telefon galereyasidagi ko'proq formatni
+    // (shu jumladan HEIC/HEIF) tanlashga imkon beradi, lekin brauzer HEIC'ni
+    // canvas orqali ishonchli dekodlay olmaydi va serverda ham xavfsiz
+    // normalizatsiya yo'q (Deno'da ishonchli HEIC decoder yo'q) — shu sabab
+    // HEIC/HEIF hali ham rad etiladi, faqat aniqroq xabar bilan (kengaytmaga
+    // ishonib qolmasdan, extensiyasiz fayllar uchun ham MIME orqali aniqlash
+    // urinib ko'riladi).
+    function isLikelyHeicFile(file) {
+      const mime = String(file?.type || '').toLowerCase();
+      const name = String(file?.name || '').toLowerCase();
+      return mime === 'image/heic' || mime === 'image/heif' || /\.(heic|heif)$/.test(name);
+    }
+    function pickedImageErrorMessage(err, file) {
+      const code = String(err?.message || err || '');
+      if (code === 'invalid_image_type') {
+        return isLikelyHeicFile(file)
+          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. iPhone: Sozlamalar > Kamera > Formatlar > \"Eng mos\"ni tanlang, yoki rasmni avval JPG/PNG'ga o'tkazing.", "⚠️ Формат HEIC/HEIF пока не поддерживается. iPhone: Настройки > Камера > Форматы > «Наиболее совместимые», либо сначала преобразуйте фото в JPG/PNG.")
+          : tr('⚠️ Faqat JPG/JPEG, PNG yoki WebP rasm tanlang!', '⚠️ Выберите JPG/JPEG, PNG или WebP!');
+      }
+      return tr('⚠️ Original rasm hajmi 15MB dan oshmasligi kerak!', '⚠️ Исходное изображение не должно превышать 15 МБ!');
     }
 
     const tg = window.Telegram?.WebApp;
@@ -258,11 +403,6 @@
     // STATE VARIABLES (bo'sh boshlanadi, Supabase/Edge Function'dan yuklanadi)
     let products = [];
     let categories = [];
-    // 12-band: category id -> vaqt (ms), moveCategoryOrder() optimistic
-    // o'zgartirgan har bir kategoriya uchun. loadCatalog() shu bilan
-    // solishtirib, o'zidan oldin boshlangan (demak stale) javob kelganda
-    // sortOrder'ni qayta yozmaydi. Qarang: loadCatalog(), moveCategoryOrder().
-    let categoryLocalMutationAt = new Map();
     let adminsList = [];
     let orders = [];
     let ordersLoaded = false, ordersLoading = false;
@@ -321,7 +461,7 @@
     let usersSummary = [];
     let shopLogoUrl = null;
     let botUsername = null; // 1.10: "Telegramda ko'rish" uchun — hardcode emas, boot() javobidan
-    let shopContact = { name: null, address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null, facebook: null, startMessage: null };
+    let shopContact = { name: null, address: null, addressRu: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null, facebook: null, startMessage: null };
     let fulfillmentConfig = commerce.defaultConfig(TOP_LEVEL_REGION_IDS);
     let fulfillmentDraft = null;
 
@@ -362,10 +502,13 @@
     let branchRequestSeq = 0;
     // 5.6: POST (BTS/EMU) oqimi uchun tuman/shahar bosqichi — provider bu
     // tanlanmaguncha tanlanmaydi (avtomatik tanlanmaydi).
-    let checkoutPostDistrict = null;
-    let checkoutPostDistricts = [];
-    let checkoutPostDistrictsLoading = false;
-    let checkoutPostDistrictsLoadedFor = null; // regionKey
+    // 2-band: bitta tuman state — #chk-district har doim yagona manba.
+    // checkoutDistrictOptions haqiqiy delivery_branches ma'lumotidan olingan
+    // ro'yxat (BTS/EMU filtrlashga to'g'ri mos keladi); bo'sh bo'lsa hardcoded
+    // UZ_REGIONS_BY_CODE/TASHKENT_CITY_DISTRICTS'ga fallback qilinadi.
+    let checkoutDistrictOptions = [];
+    let checkoutDistrictOptionsLoading = false;
+    let checkoutDistrictOptionsLoadedFor = null; // regionKey
     let activePopupModal = null;
     let editingFieldData = null;
     let missingImageQueueIndex = 0;
@@ -446,21 +589,35 @@
       DELIVERED: "bg-green-100 text-green-800",
       CANCELLED: "bg-red-100 text-red-800",
       REJECTED: "bg-red-100 text-red-800",
-      RECEIPT_PENDING: "bg-sky-100 text-sky-800",
     };
     function statusColorClass(st) { return STATUS_COLORS[st] || "bg-gray-100 text-gray-600"; }
     // 14-band: chek rad etilgan bo'lsa, orders.status o'zi o'zgarmagan (hali
     // "Yangi" bo'lishi mumkin) — lekin mijoz/adminga alohida "Rad etildi"
     // holati ko'rsatiladi, orders.status'ga hech qanday yangi qiymat
     // qo'shilmagan (mavjud update_order_status RPCga tegilmadi).
-    // 21-band: karta orqali to'langan, chek yuklangan, lekin admin hali
-    // ko'rib chiqmagan buyurtma uchun alohida "Chek tekshirilmoqda" pseudo-
-    // status — orders.status hamon "NEW" bo'lib qoladi (hech qanday yangi
-    // haqiqiy status qiymati kiritilmagan), faqat displeyda almashtiriladi.
+    // 3-band: "Chek tekshirilmoqda" endi tepadagi badge'da EMAS — faqat
+    // effectiveShipmentStatusLabel() orqali "Jo'natma holati" qatorida
+    // ko'rsatiladi (ikkita alohida ko'rsatkich birlashtirildi). Tepadagi
+    // badge endi buyurtmaning haqiqiy o.status qiymatini ko'rsatadi.
     function orderDisplayStatus(o) {
       if (o?.receiptReviewStatus === 'REJECTED') return 'REJECTED';
-      if (o?.status === 'NEW' && o?.hasReceipt && (o?.receiptReviewStatus || 'PENDING') === 'PENDING') return 'RECEIPT_PENDING';
       return o?.status;
+    }
+
+    // Karta orqali to'langan, chek yuklangan, lekin admin hali ko'rib
+    // chiqmagan buyurtma — orders.status hamon "NEW" bo'lib qoladi (hech
+    // qanday yangi haqiqiy status qiymati kiritilmagan), faqat displeyda
+    // almashtiriladi.
+    function isReceiptPendingReview(o) {
+      return o?.status === 'NEW' && o?.hasReceipt && (o?.receiptReviewStatus || 'PENDING') === 'PENDING';
+    }
+    // 3-band: avval mustaqil tepadagi badge ("Chek tekshirilmoqda") va
+    // pastdagi "Jo'natma holati: Tayyorlanmoqda" qatori bir vaqtda ko'rinardi.
+    // Endi bitta manba — chek ko'rib chiqilayotgan bo'lsa shipment qatorining
+    // o'zi "Chek tekshirilmoqda" deydi, aks holda oddiy shipment holati.
+    function effectiveShipmentStatusLabel(o) {
+      if (isReceiptPendingReview(o)) return tr('🧾 Chek tekshirilmoqda', '🧾 Проверка чека');
+      return shipmentStatusLabel(o?.shipment?.status);
     }
 
     // ============ TIL (O'ZBEK / RUS) ============
@@ -474,9 +631,13 @@
       nav_cart: { uz: "Savatcha", ru: "Корзина" },
       nav_orders: { uz: "Buyurtmalar", ru: "Заказы" },
       nav_warehouse: { uz: "Ombor", ru: "Склад" },
-      nav_users: { uz: "Qo'llab-quvvatlash", ru: "Поддержка" },
+      nav_users: { uz: "Mijozlar", ru: "Клиенты" },
       nav_profile: { uz: "Profil", ru: "Профиль" },
+      // 14-band: oddiy mijozga ID orqali qidirish mumkinligini reklama qilmaydi
+      // — texnik SKU/ID tushunchasi faqat admin uchun. Qidiruv FUNKSIYASI (ID
+      // bo'yicha ham topish) o'zgarmagan, faqat matn shartli. Qarang: searchPlaceholderText().
       search_placeholder: { uz: "Nomi yoki ID (masalan: 111001) orqali qidirish...", ru: "Поиск по названию или ID (например: 111001)..." },
+      search_placeholder_user: { uz: "Mahsulot qidiring...", ru: "Поиск товара..." },
       add_to_cart: { uz: "Savatga qo'shish", ru: "Добавить в корзину" },
       add_to_cart_short: { uz: "Savatga", ru: "В корзину" },
       out_of_stock: { uz: "Tugagan", ru: "Нет в наличии" },
@@ -493,7 +654,7 @@
       all_orders: { uz: "Barcha buyurtmalar", ru: "Все заказы" },
       all_filter: { uz: "Barchasi", ru: "Все" },
       warehouse_title: { uz: "Ombor", ru: "Склад" },
-      users_title: { uz: "Qo'llab-quvvatlash", ru: "Поддержка" },
+      users_title: { uz: "Mijozlar", ru: "Клиенты" },
       total: { uz: "Jami", ru: "Итого" },
     };
     function t(key) {
@@ -502,6 +663,9 @@
       return entry[uiLang] || entry.uz;
     }
     function tr(uz, ru) { return uiLang === 'ru' ? ru : uz; }
+    // 14-band: admin ID/SKU bo'yicha qidirishni bilishi va ishlatishi davom
+    // etadi; oddiy mijozga esa bu texnik tafsilot ko'rsatilmaydi.
+    function searchPlaceholderText() { return (isAdminMode && isUserAnAdmin) ? t('search_placeholder') : t('search_placeholder_user'); }
     window.fitcoreGetLang = () => uiLang;
     function toggleUiLang() {
       uiLang = uiLang === 'uz' ? 'ru' : 'uz';
@@ -512,31 +676,18 @@
     // Admin kiritgan tovar nomi/tavsifi — ruscha tarjimasi bo'lsa va til
     // ruscha tanlangan bo'lsa o'shani, aks holda o'zbekchasini ko'rsatadi.
     function productName(p) { return (uiLang === 'ru' && p.nameRu) ? p.nameRu : p.name; }
+    // 5-band: buyurtma ichidagi item — order yaratilganda snapshot qilingan
+    // nameRu (create_order action) bo'lsa o'shani, bo'lmasa (eski buyurtmalar)
+    // o'zbekchasini ko'rsatadi.
+    function orderItemName(i) { return (uiLang === 'ru' && i?.nameRu) ? i.nameRu : (i?.name || ''); }
     function productDesc(p) { return (uiLang === 'ru' && p.descRu) ? p.descRu : (p.desc || ''); }
     function categoryName(c) { return (uiLang === 'ru' && c?.nameRu) ? c.nameRu : (c?.name || ''); }
-    function orderItemName(i) {
-      if (uiLang !== 'ru') return i?.name || '';
-      if (i?.nameRu) return i.nameRu;
-      const pid = i?.productId || i?.product_id;
-      const p = products.find(x => (pid && String(x.id) === String(pid)) || (i?.sku && String(x.sku) === String(i.sku)));
-      return p?.nameRu || i?.name || '';
-    }
-    function uzLatinToCyrillic(text) {
-      let s = String(text || '');
-      const pairs = [["o'",'ў'],["g'",'ғ'],['sh','ш'],['ch','ч'],['yo','ё'],['yu','ю'],['ya','я'],['ts','ц']];
-      for (const [a,b] of pairs) s=s.replace(new RegExp(a,'gi'), m => m[0]===m[0].toUpperCase()?b.toUpperCase():b);
-      const map={a:'а',b:'б',d:'д',e:'е',f:'ф',g:'г',h:'ҳ',i:'и',j:'ж',k:'к',l:'л',m:'м',n:'н',o:'о',p:'п',q:'қ',r:'р',s:'с',t:'т',u:'у',v:'в',x:'х',y:'й',z:'з'};
-      return s.replace(/[A-Za-z]/g,ch=>{const low=ch.toLowerCase(); const out=map[low]||ch; return ch===ch.toUpperCase()?out.toUpperCase():out;});
-    }
-    function localizeUzPlaceText(text) {
-      if (uiLang !== 'ru' || !text) return text || '';
-      let s=uzLatinToCyrillic(text);
-      s=s.replace(/\bшаҳри\b/gi,'г.').replace(/\bтумани\b/gi,'район').replace(/\bвилояти\b/gi,'область');
-      s=s.replace(/\bкўчаси\b/gi,'ул.').replace(/\bмаҳалласи\b/gi,'махалля').replace(/\bуй\b/gi,'дом');
-      return s;
-    }
-    function districtDisplayLabel(text) { return localizeUzPlaceText(text); }
-    function branchFieldLabel(text) { return localizeUzPlaceText(text); }
+    // 5-band: BTS/EMU filiali — translate_delivery_branches_batch orqali RU
+    // maydon to'ldirilgan bo'lsa o'shani, bo'lmasa (production'da hali
+    // ishga tushirilmagan bo'lishi mumkin) o'zbekchasini ko'rsatadi.
+    function branchNameLabel(b) { return (uiLang === 'ru' && b?.branch_name_ru) ? b.branch_name_ru : (b?.branch_name || ''); }
+    function branchDistrictLabel(b) { return (uiLang === 'ru' && b?.district_or_city_ru) ? b.district_or_city_ru : (b?.district_or_city || ''); }
+    function branchAddressLabel(b) { return (uiLang === 'ru' && b?.full_address_ru) ? b.full_address_ru : (b?.full_address || ''); }
     // 6-band: admin do'kon nomini o'zgartirmagan bo'lsa standart "FITCORE"
     // qoladi — orqaga mos, hech kim majburan o'zgartirishga majbur emas.
     function shopDisplayName() { return (shopContact && shopContact.name) ? shopContact.name : 'FITCORE'; }
@@ -638,8 +789,8 @@
     function payMethodLabel(v) { return v === 'CASH' ? tr('Naqd pul','Наличные') : (v === 'CARD' ? tr('Karta','Карта') : (v || '')); }
 
     const STATUS_LABELS_BY_LANG = {
-      uz: { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan", REJECTED: "❌ Rad etildi", RECEIPT_PENDING: "🧾 Chek tekshirilmoqda" },
-      ru: { NEW: "Новый", PROCESSING: "В обработке", DELIVERED: "Доставлен", CANCELLED: "Отменён", REJECTED: "❌ Отклонён", RECEIPT_PENDING: "🧾 Проверка чека" },
+      uz: { NEW: "Yangi", PROCESSING: "Jarayonda", DELIVERED: "Yetkazib berilgan", CANCELLED: "Bekor qilingan", REJECTED: "❌ Rad etildi" },
+      ru: { NEW: "Новый", PROCESSING: "В обработке", DELIVERED: "Доставлен", CANCELLED: "Отменён", REJECTED: "❌ Отклонён" },
     };
     function statusLabel(st) { return (STATUS_LABELS_BY_LANG[uiLang] || STATUS_LABELS_BY_LANG.uz)[st] || st; }
 
@@ -825,7 +976,7 @@
         console.error("Murojaatlarni yuklashda xatolik:", e);
       } finally {
         adminSupportTicketsLoading = false;
-        if (activePopupModal === 'ADMIN_SUPPORT' || currentTab === 'profile' || currentTab === 'users') render();
+        if (activePopupModal === 'ADMIN_SUPPORT' || currentTab === 'profile') render();
       }
     }
     async function loadSupportMessages(ticketId, force = false) {
@@ -1032,7 +1183,7 @@
       if (activeNav) activeNav.classList.add('text-blue-600', 'font-bold');
       render(); // tugma bosilishi darhol sezilsin
       if (tab === 'orders') loadOrdersLazy();
-      if (tab === 'users' && isUserAnAdmin) loadAdminSupportTicketsLazy();
+      if (tab === 'users' && isUserAnAdmin) loadUsersLazy();
       if (tab === 'profile' && isSuperAdmin) loadAdminsLazy();
       if (tab === 'profile' && isUserAnAdmin) loadAdminSupportTicketsLazy();
     }
@@ -1240,6 +1391,58 @@
       return best;
     }
 
+    // ============ IMAGE PIPELINE V2 ============
+    // Markazlashtirilgan rasm tayyorlash — mahsulot/kategoriya/logotip
+    // (onImagePicked), chek (onCheckoutReceiptPicked) va chekni qayta
+    // yuborish (onResubmitReceiptPicked) barchasi shundan foydalanadi.
+    //
+    // ESKI (V1) muammo: fayl tanlangan ZAHOTI original File'ni
+    // readBlobAsArrayBuffer (FileReader.readAsArrayBuffer, keyin
+    // blob.arrayBuffer() fallback) orqali TO'LIQ o'qib, keyin detached
+    // nusxaga o'girardi — bu Telegram WebView'da (ayniqsa Android
+    // content:// orqali tanlangan rasmlarda) ba'zida abadiy osilib qolardi
+    // ("10 ta rasmdan 2 tasi o'qiladi" — production'da kuzatilgan bug).
+    //
+    // YANGI (V2): FileReader/ArrayBuffer orqali oldindan o'qish UMUMAN olib
+    // tashlangan. compressImageToLimit -> compressImage -> decodeImageSource
+    // ICHKARIDA createImageBitmap(file)'ni TO'G'RIDAN-TO'G'RI original
+    // File'dan chaqiradi (FileReader kerak emas) — bu yo'l WebView'dagi
+    // hang muammosiga umuman duch kelmaydi. Muvaffaqiyatli bo'lsa natija
+    // ALLAQACHON canvas'dan yaratilgan yangi (detached) fayl — qo'shimcha
+    // tashqi detach qadamiga hojat yo'q.
+    //
+    // FALLBACK (o'chirilmagan, faqat ikkinchi darajaga tushirilgan): agar
+    // ICHKI dekod (createImageBitmap VA <img> fallback) IKKALASI HAM
+    // muvaffaqiyatsiz bo'lsa (compressed === file, o'zgarishsiz qaytgan
+    // bo'lsa), eski FileReader/ArrayBuffer + makeDetachedImageFile zanjiri
+    // qayta urinib ko'radi. Bu ham ishlamasa — funksiya xato TASHLAMAYDI,
+    // original faylni o'zgarishsiz qaytaradi (signed-URL yuklash browser
+    // darajasida to'g'ridan-to'g'ri fetch bilan ishlaydi, JS'da qayta bayt
+    // o'qishni talab qilmaydi — shu sabab original native handle hali
+    // yaroqli bo'lsa, yuklash baribir muvaffaqiyatli bo'lishi mumkin).
+    //
+    // onPrepared(file) — mustaqil nusxa tayyor bo'lgan zahoti (preview'ni
+    // barqaror manzilga o'tkazish uchun) chaqiriladi; ixtiyoriy.
+    async function captureAndPrepareImageV2(file, maxBytes, maxDim, quality, onPrepared) {
+      const compressed = await compressImageToLimit(file, maxBytes, maxDim, quality);
+      if (compressed && compressed !== file) {
+        imageIO.logStage('IMAGE_V2_DIRECT_OK', { mime: file?.type, size: file?.size });
+        if (onPrepared) { try { onPrepared(compressed); } catch (_) {} }
+        return compressed;
+      }
+      imageIO.logStage('IMAGE_V2_FALLBACK_STARTED', { mime: file?.type, size: file?.size, level: 'warn' });
+      try {
+        const bytes = await readBlobAsArrayBuffer(file);
+        const detached = makeDetachedImageFile(bytes, file);
+        if (onPrepared) { try { onPrepared(detached); } catch (_) {} }
+        const recompressed = await compressImageToLimit(detached, maxBytes, maxDim, quality);
+        return recompressed || detached;
+      } catch (fallbackErr) {
+        imageIO.logStage('IMAGE_V2_FALLBACK_FAILED', { mime: file?.type, size: file?.size, message: fallbackErr?.message, level: 'error' });
+        return file;
+      }
+    }
+
     function validateExternalImageUrl(value) {
       const raw = String(value || '').trim();
       if (!raw) return null;
@@ -1308,16 +1511,12 @@
       try { validatePickedImageFile(file); }
       catch (e) {
         event.target.value = '';
-        const msg = String(e?.message || e) === 'invalid_image_type'
-          ? tr('⚠️ Faqat JPG/JPEG, PNG yoki WebP rasm tanlang!', '⚠️ Выберите JPG/JPEG, PNG или WebP!')
-          : tr('⚠️ Original rasm hajmi 15MB dan oshmasligi kerak!', '⚠️ Исходное изображение не должно превышать 15 МБ!');
-        alert(msg);
+        alert(pickedImageErrorMessage(e, file));
         return;
       }
 
-      // Preview upload'dan mustaqil: object URL darhol ko'rsatiladi. Shu bilan birga
-      // File baytlari hoziroq detached Blob'ga olinadi — Save paytigacha native handle
-      // yaroqsiz bo'lib qolsa ham rasm o'qilishi davom etadi.
+      // Preview upload'dan mustaqil: object URL darhol ko'rsatiladi (V2:
+      // to'g'ridan-to'g'ri ORIGINAL File'dan — o'qishni talab qilmaydi).
       const selectionVersion = ++tempImageSelectionVersion;
       if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
         try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
@@ -1339,38 +1538,22 @@
       const pickerButton = buttonId ? document.getElementById(buttonId) : null;
       if (pickerButton) pickerButton.textContent = `🖼 ${tr('Rasmni almashtirish', 'Заменить фото')}`;
 
-      let preparing;
-      preparing = readBlobAsArrayBuffer(file).then(bytes => {
-        let detached;
+      const preparing = captureAndPrepareImageV2(file, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8, (updated) => {
+        // 8-bo'lim: preview yangilanishi kosmetik — muvaffaqiyatsiz bo'lsa
+        // ham bu READ xatosi sifatida yuqoriga chiqmasin.
+        if (selectionVersion !== tempImageSelectionVersion || tempImagePreparingPromise !== preparing) return;
         try {
-          detached = makeDetachedImageFile(bytes, file);
-        } catch (detachErr) {
-          imageIO.logStage('DETACH_FAILED', { mime: file?.type, size: file?.size, message: detachErr?.message, level: 'error' });
-          throw imageIO.stageError('DETACH_FAILED', 'detach_failed', detachErr);
-        }
-        // 8-bo'lim: preview yangilanishi (URL.createObjectURL) kosmetik —
-        // muvaffaqiyatsiz bo'lsa ham bu READ xatosi sifatida yuqoriga
-        // chiqmasin, o'qish+siqish bosqichi baribir davom etadi.
-        if (selectionVersion === tempImageSelectionVersion && tempImagePreparingPromise === preparing) {
-          try {
-            tempImageFile = detached;
-            const stablePreviewUrl = URL.createObjectURL(detached);
-            const oldPreviewUrl = tempImagePreviewUrl;
-            tempImagePreviewUrl = stablePreviewUrl;
-            if (prev) { prev.src = stablePreviewUrl; prev.classList.remove('hidden'); }
-            if (oldPreviewUrl && oldPreviewUrl !== stablePreviewUrl && oldPreviewUrl.startsWith('blob:')) {
-              try { URL.revokeObjectURL(oldPreviewUrl); } catch (_) {}
-            }
-          } catch (previewErr) {
-            imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
+          tempImageFile = updated;
+          const stablePreviewUrl = URL.createObjectURL(updated);
+          const oldPreviewUrl = tempImagePreviewUrl;
+          tempImagePreviewUrl = stablePreviewUrl;
+          if (prev) { prev.src = stablePreviewUrl; prev.classList.remove('hidden'); }
+          if (oldPreviewUrl && oldPreviewUrl !== stablePreviewUrl && oldPreviewUrl.startsWith('blob:')) {
+            try { URL.revokeObjectURL(oldPreviewUrl); } catch (_) {}
           }
+        } catch (previewErr) {
+          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
         }
-        return compressImageToLimit(detached, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8);
-      }).catch(error => {
-        const wrapped = new Error(tr("Rasm faylini lokal o'qishda xato.", "Ошибка локального чтения изображения."));
-        wrapped.code = error?.code === 'DETACH_FAILED' ? 'DETACH_FAILED' : (error?.stage || 'READ_BOTH_FAILED');
-        wrapped.cause = error;
-        throw wrapped;
       });
       tempImagePreparingPromise = preparing;
       showActionToast(tr("🖼️ Rasm tanlandi", "🖼️ Фото выбрано"), 'success', 1200);
@@ -1443,11 +1626,33 @@
         return existingImg || null;
       }
 
-      // PRIMARY: prepared detached bytes -> authenticated app-api -> Storage.
-      // Bu browser/WebView'dan Supabase Storage endpoint'iga bevosita fetch'ni
-      // chetlab o'tadi va productionda kuzatilgan intermittent direct-upload
-      // xatosining asosiy transport yo'lini yo'q qiladi.
-      let serverErr = null;
+      // V2 PRIMARY: signed URL to'g'ridan-to'g'ri Supabase Storage'ga —
+      // Edge Function bayt ko'rmaydi (base64/JSON emas). Yuklangach
+      // finalize_image_upload orqali Storage'da haqiqatan mavjudligi
+      // tasdiqlanadi (finalize_payment_receipt bilan bir xil pattern:
+      // "yozildi" deb signed URL javobiga emas, haqiqiy Storage `.list()`
+      // natijasiga ishoniladi).
+      const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+      const ext = extByMime[mimeType] || 'jpg';
+      let signedErr = null;
+      const signedUploadStartedAt = Date.now();
+      try {
+        const { path, token } = await callApi('get_upload_url', { ext, size: prepared.size, mimeType });
+        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
+        if (upErr) throw upErr;
+        const finalized = await callApi('finalize_image_upload', { path });
+        if (!finalized?.url) throw new Error('image_public_url_failed');
+        imageIO.logStage('SIGNED_URL_UPLOAD_OK', { duration: Date.now() - signedUploadStartedAt, size: prepared.size });
+        return finalized.url;
+      } catch (e) {
+        signedErr = e;
+        console.warn('[image:SIGNED_URL_UPLOAD_FAILED]', e);
+        imageIO.logStage('SIGNED_URL_UPLOAD_FAILED', { duration: Date.now() - signedUploadStartedAt, name: e?.name, message: e?.message, level: 'warn' });
+      }
+
+      // FALLBACK (o'chirilmagan, ikkinchi darajali): signed URL vaqtincha
+      // ishlamasa (masalan Storage CORS/tarmoq muammosi), base64-in-JSON
+      // orqali app-api server upload — mustaqil ikkinchi yo'l.
       const serverUploadStartedAt = Date.now();
       try {
         const imageUpload = { mimeType, base64: await fileToBase64(prepared) };
@@ -1455,30 +1660,11 @@
         if (!result?.url) throw new Error('image_public_url_failed');
         imageIO.logStage('SERVER_UPLOAD_OK', { duration: Date.now() - serverUploadStartedAt, size: prepared.size });
         return result.url;
-      } catch (e) {
-        serverErr = e;
-        console.warn('[image:SERVER_UPLOAD_FAILED]', e);
-        imageIO.logStage('SERVER_UPLOAD_FAILED', { duration: Date.now() - serverUploadStartedAt, name: e?.name, message: e?.message, level: 'warn' });
-      }
-
-      // FALLBACK: server transport vaqtincha ishlamasa signed Storage URL.
-      // Bir xil transportni qayta urish emas — bu mustaqil ikkinchi yo'l.
-      const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-      const ext = extByMime[mimeType] || 'jpg';
-      const fallbackUploadStartedAt = Date.now();
-      try {
-        const { path, token } = await callApi('get_upload_url', { ext, size: prepared.size, mimeType });
-        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
-        if (upErr) throw upErr;
-        const { data: pub } = sb.storage.from(CONFIG.IMAGES_BUCKET).getPublicUrl(path);
-        if (!pub?.publicUrl) throw new Error('image_public_url_failed');
-        imageIO.logStage('SIGNED_URL_UPLOAD_OK', { duration: Date.now() - fallbackUploadStartedAt });
-        return pub.publicUrl;
       } catch (fallbackErr) {
-        console.error('[image:DIRECT_UPLOAD_FALLBACK_FAILED]', { serverErr, fallbackErr });
-        imageIO.logStage('SIGNED_URL_UPLOAD_FAILED', { duration: Date.now() - fallbackUploadStartedAt, name: fallbackErr?.name, message: fallbackErr?.message, level: 'error' });
+        console.error('[image:SERVER_UPLOAD_FALLBACK_FAILED]', { signedErr, fallbackErr });
+        imageIO.logStage('SERVER_UPLOAD_FAILED', { duration: Date.now() - serverUploadStartedAt, name: fallbackErr?.name, message: fallbackErr?.message, level: 'error' });
         imageIO.logStage('UPLOAD_ALL_FAILED', { duration: Date.now() - pipelineStartedAt, level: 'error' });
-        if (strict) throw serverErr || fallbackErr || new Error('image_upload_failed');
+        if (strict) throw signedErr || fallbackErr || new Error('image_upload_failed');
         return existingImg || null;
       }
     }
@@ -1608,7 +1794,7 @@
         <div class="space-y-4">
           <div class="flex items-center gap-2">
             <div class="relative flex-1">
-              <input type="text" id="search-input" oninput="handleSearchDebounced()" placeholder="${escapeHtml(t('search_placeholder'))}"
+              <input type="text" id="search-input" oninput="handleSearchDebounced()" placeholder="${escapeHtml(searchPlaceholderText())}"
                 class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
               <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
             </div>
@@ -1800,10 +1986,8 @@
                 </div>
                 <div class="flex items-center space-x-1">
                   ${(isAdminMode && isUserAnAdmin) ? `
-                    <div class="flex flex-col gap-2">
-                      <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} class="w-6 h-6 flex items-center justify-center rounded-lg text-xs font-bold ${subIdx === 0 ? 'bg-gray-50 text-gray-200' : 'bg-slate-100 text-slate-600'}">▲</button>
-                      <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} class="w-6 h-6 flex items-center justify-center rounded-lg text-xs font-bold ${subIdx === subCats.length - 1 ? 'bg-gray-50 text-gray-200' : 'bg-slate-100 text-slate-600'}">▼</button>
-                    </div>
+                    <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬆️</button>
+                    <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬇️</button>
                     <button onclick="openMoveCategoryModal('${sub.id}', event)" title="${tr("Boshqa katalogga ko'chirish", "Переместить в другой каталог")}" class="p-1 bg-slate-100 text-slate-600 rounded text-xs font-bold">📁⇢</button>
                     <button onclick="openEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
                     <button onclick="deleteCategory('${sub.id}', event)" class="p-1 bg-red-100 text-red-600 rounded text-xs font-bold">🗑️</button>
@@ -2022,7 +2206,7 @@
     // faqat custom tugma + tanlangach preview + "Almashtirish".
     function renderReceiptPicker(receiptRequired) {
       const label = `${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')} ${receiptRequired ? '*' : `(${tr('ixtiyoriy', 'необязательно')})`}`;
-      const pickerInput = `<input id="chk-receipt" type="file" accept="image/jpeg,image/png,image/webp" onchange="onCheckoutReceiptPicked(event)" class="hidden">`;
+      const pickerInput = `<input id="chk-receipt" type="file" accept="image/*" onchange="onCheckoutReceiptPicked(event)" class="hidden">`;
       if (checkoutReceiptPreviewUrl) {
         return `
           <label class="block font-bold">${label}</label>
@@ -2083,7 +2267,7 @@
       selectedPayMethod = checkoutDraft.paymentMethodId || selectedPayMethod;
       handleRegionChange(false);
       const districtEl = document.getElementById('chk-district');
-      if (districtEl && checkoutDraft.district) { districtEl.value = checkoutDraft.district; checkoutPostDistrict = checkoutDraft.district; }
+      if (districtEl && checkoutDraft.district) districtEl.value = checkoutDraft.district;
       const addressEl = document.getElementById('chk-address');
       if (addressEl) addressEl.value = checkoutDraft.address || '';
       renderCheckoutOptions();
@@ -2095,7 +2279,7 @@
       const previousDistrict = districtSelect?.value || '';
       const districts = regionKey === 'tashkent_city' ? TASHKENT_CITY_DISTRICTS : (UZ_REGIONS_BY_CODE[regionKey] || []);
       if (districtSelect) {
-        districtSelect.innerHTML = `<option value="">${tr('— Tanlang —', '— Выберите —')}</option>` + districts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(districtDisplayLabel(d))}</option>`).join('');
+        districtSelect.innerHTML = `<option value="">${tr('— Tanlang —', '— Выберите —')}</option>` + districts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(districtLabelForUi(d))}</option>`).join('');
         if (districts.includes(previousDistrict)) districtSelect.value = previousDistrict;
       }
       selectedDeliveryMethodId = null;
@@ -2106,92 +2290,86 @@
       checkoutBranchesLoadedFor = null;
       checkoutBranchesLoading = false;
       branchRequestSeq++; // 5.7: har qanday kutilayotgan eski so'rovni bekor qiladi
-      // 5.6: viloyat almashsa — tanlangan tuman/shahar va u orqali yuklangan
-      // filiallar ro'yxati ham to'liq reset qilinadi.
-      checkoutPostDistrict = null;
-      checkoutPostDistricts = [];
-      checkoutPostDistrictsLoadedFor = null;
-      loadCheckoutPostDistricts(regionKey);
+      // 2-band: viloyat almashsa — real (delivery_branches asosidagi) tuman
+      // ro'yxati ham reset qilinadi; #chk-district esa yuqorida hardcoded
+      // ro'yxat bilan darhol to'ldirildi (foydalanuvchi kutmasin), real
+      // ro'yxat orqadan kelib uni almashtiradi (yoki bo'sh bo'lsa — hardcoded
+      // shundayligicha qoladi).
+      checkoutDistrictOptions = [];
+      checkoutDistrictOptionsLoadedFor = null;
+      loadCheckoutDistrictOptions(regionKey);
       renderCheckoutOptions();
       if (shouldSave) saveCheckoutDraft();
     }
 
-    function handleDistrictChange() {
-      const district = document.getElementById('chk-district')?.value || '';
-      checkoutPostDistrict = district || null;
-      checkoutSelectedBranch = null; checkoutBranches = []; checkoutBranchesLoadedFor = null; branchRequestSeq++;
-      saveCheckoutDraft(); renderCheckoutOptions();
-      if (checkoutPostDistrict && String(selectedDeliveryMethodId || '').startsWith('POST:')) {
-        const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
-        loadCheckoutBranches(regionKey, selectedDeliveryMethodId.slice(5), checkoutPostDistrict);
-      }
-    }
-
     function handleViloyatChange() { handleRegionChange(); }
 
-    // 5.6: POST (BTS/EMU) oqimi uchun tuman/shahar ro'yxati — hardcoded
+    // 2-band: bitta #chk-district uchun real tuman/shahar ro'yxati — hardcoded
     // UZ_REGIONS_BY_CODE'dan EMAS (u haqiqiy filial ma'lumotlaridagi
-    // district_or_city qiymatlari bilan mos kelmaydi — masalan "Izboskan" vs
-    // "Izboskan tuman"), balki delivery_branches jadvalidagi haqiqiy distinct
-    // tumanlardan olinadi.
-    async function loadCheckoutPostDistricts(regionKey) {
-      if (checkoutPostDistrictsLoadedFor === regionKey) return;
-      checkoutPostDistrictsLoading = true;
-      renderPostDistrictField();
+    // district_or_city qiymatlari bilan mos kelmasligi mumkin — masalan
+    // "Izboskan" vs "Izboskan tuman"), balki delivery_branches jadvalidagi
+    // haqiqiy distinct tumanlardan olinadi. Natija bo'sh bo'lsa (regionda
+    // BTS/EMU umuman yo'q), hardcoded ro'yxat o'zgarishsiz qoladi.
+    async function loadCheckoutDistrictOptions(regionKey) {
+      if (checkoutDistrictOptionsLoadedFor === regionKey) return;
+      checkoutDistrictOptionsLoading = true;
       try {
         const result = await callApi('get_delivery_districts', { regionKey });
-        checkoutPostDistricts = result.districts || [];
-        checkoutPostDistrictsLoadedFor = regionKey;
+        checkoutDistrictOptions = result.districts || [];
+        checkoutDistrictOptionsLoadedFor = regionKey;
       } catch (e) {
         console.error('Tumanlar ro\'yxatini yuklashda xato:', e);
-        checkoutPostDistricts = [];
-        checkoutPostDistrictsLoadedFor = null;
+        checkoutDistrictOptions = [];
+        checkoutDistrictOptionsLoadedFor = null;
       } finally {
-        checkoutPostDistrictsLoading = false;
-        renderPostDistrictField();
+        checkoutDistrictOptionsLoading = false;
+        renderDistrictField();
       }
     }
 
-    function renderPostDistrictField() {
-      const wrap = document.getElementById('chk-post-district-field');
-      if (wrap) wrap.classList.add('hidden');
+    // Real ro'yxat kelganda (yoki reload orqali) #chk-district'ni yangilaydi,
+    // joriy tanlovni (agar yangi ro'yxatda ham mavjud bo'lsa) saqlab qoladi.
+    function renderDistrictField() {
+      if (!checkoutDistrictOptions.length) return;
+      const select = document.getElementById('chk-district');
+      if (!select) return;
+      const previousValue = select.value;
+      select.innerHTML = `<option value="">${tr('— Tanlang —', '— Выберите —')}</option>` +
+        checkoutDistrictOptions.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(districtLabelForUi(d))}</option>`).join('');
+      if (checkoutDistrictOptions.includes(previousValue)) select.value = previousValue;
     }
 
-    function handlePostDistrictChange() {
-      const value = document.getElementById('chk-post-district')?.value || '';
-      checkoutPostDistrict = value || null;
-      // Tuman almashsa, eski filiallar ro'yxati endi mos kelmaydi — tozalanadi.
-      // 11-band: provider tanlovi endi RESET qilinmaydi (avval qayta bosish
-      // talab qilinardi) — agar POST provider allaqachon tanlangan bo'lsa,
-      // shu yerning o'zida yangi tuman uchun filiallar qayta yuklanadi.
+    // Tuman/shahar o'zgarganda: draft saqlanadi, eski filial tanlovi bekor
+    // qilinadi, va agar hozir POST provider tanlangan bo'lsa — filiallar shu
+    // yangi tuman uchun qayta yuklanadi.
+    function handleDistrictChange() {
+      saveCheckoutDraft();
       checkoutSelectedBranch = null;
       checkoutBranches = [];
       checkoutBranchesLoadedFor = null;
-      renderCheckoutOptions();
-      saveCheckoutDraft();
-      if (checkoutPostDistrict && String(selectedDeliveryMethodId || '').startsWith('POST:')) {
+      const districtValue = document.getElementById('chk-district')?.value || '';
+      if (districtValue && String(selectedDeliveryMethodId || '').startsWith('POST:')) {
         const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
-        loadCheckoutBranches(regionKey, selectedDeliveryMethodId.slice(5), checkoutPostDistrict);
+        loadCheckoutBranches(regionKey, selectedDeliveryMethodId.slice(5), districtValue);
+      } else {
+        renderBranchPicker();
       }
     }
 
     function selectDelivery(methodId) {
-      // 11-band: POST provider endi tuman tanlanmasdan ham bosilishi mumkin —
-      // bosilgach "tuman/shahar (pochta uchun)" maydoni ko'rinadi (chunki
-      // renderPostDistrictField endi TANLANGAN usulga qarab ko'rsatiladi),
-      // foydalanuvchi o'sha yerda tumanni tanlaydi, keyin filiallar avtomatik
-      // yuklanadi (handlePostDistrictChange). Bu ketma-ketlik (viloyat →
-      // tuman/shahar → BTS/EMU → filial) o'zgarmaydi — faqat tuman-maydon
-      // umumiy maydon bilan bir vaqtda ko'rinib qolmasligi uchun bosqichlar
-      // qayta tartiblandi.
+      // 2-band: POST provider tuman-maydonini yashirmaydi/almashtirmaydi —
+      // bitta umumiy #chk-district har doim ko'rinadi. Agar tuman
+      // allaqachon tanlangan bo'lsa, provider bosilgach filiallar darhol
+      // shu tuman uchun yuklanadi (Viloyat → Tuman/Shahar → Usul → Filial
+      // ketma-ketligi o'zgarmaydi).
       if (methodId !== selectedDeliveryMethodId) checkoutSelectedBranch = null;
-      checkoutPostDistrict = document.getElementById('chk-district')?.value || checkoutPostDistrict || null;
       selectedDeliveryMethodId = methodId;
       renderCheckoutOptions();
       saveCheckoutDraft();
-      if (methodId?.startsWith('POST:') && checkoutPostDistrict) {
+      const districtValue = document.getElementById('chk-district')?.value || '';
+      if (methodId?.startsWith('POST:') && districtValue) {
         const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
-        loadCheckoutBranches(regionKey, methodId.slice(5), checkoutPostDistrict);
+        loadCheckoutBranches(regionKey, methodId.slice(5), districtValue);
       }
     }
 
@@ -2245,8 +2423,8 @@
       if (!filtered.length) return `<p class="p-3 text-center text-gray-400">${tr("Filial topilmadi.", 'Филиалы не найдены.')}</p>`;
       return filtered.map(b => `
         <button type="button" onclick="selectCheckoutBranch(${b.id})" class="w-full text-left p-2.5 ${checkoutSelectedBranch?.id === b.id ? 'bg-blue-50' : 'bg-white'}">
-          <p class="font-bold">${escapeHtml(branchFieldLabel(b.branch_name))}</p>
-          <p class="text-[10px] text-gray-500">${escapeHtml(branchFieldLabel(b.district_or_city || ''))} — ${escapeHtml(branchFieldLabel(b.full_address))}</p>
+          <p class="font-bold">${escapeHtml(branchNameLabel(b))}</p>
+          <p class="text-[10px] text-gray-500">${escapeHtml(branchDistrictLabel(b))} — ${escapeHtml(branchAddressLabel(b))}</p>
         </button>`).join('');
     }
 
@@ -2263,7 +2441,7 @@
       if (!el) return;
       if (!checkoutSelectedBranch) { el.classList.add('hidden'); el.innerHTML = ''; return; }
       el.classList.remove('hidden');
-      el.innerHTML = `<b>✅ ${escapeHtml(branchFieldLabel(checkoutSelectedBranch.branch_name))}</b><br>${escapeHtml(branchFieldLabel(checkoutSelectedBranch.district_or_city || ''))} — ${escapeHtml(branchFieldLabel(checkoutSelectedBranch.full_address))}`;
+      el.innerHTML = `<b>✅ ${escapeHtml(branchNameLabel(checkoutSelectedBranch))}</b><br>${escapeHtml(branchDistrictLabel(checkoutSelectedBranch))} — ${escapeHtml(branchAddressLabel(checkoutSelectedBranch))}`;
     }
 
     function selectCheckoutBranch(branchId) {
@@ -2297,13 +2475,13 @@
       const selectedPayment = paymentOptions.find(option => option.id === selectedPayMethod) || null;
       const totals = commerce.calculateTotals(checkoutSubtotal(), selectedDelivery);
 
-      renderPostDistrictField();
+      const districtValue = document.getElementById('chk-district')?.value || '';
       const deliveryWrap = document.getElementById('delivery-method-wrap');
       if (deliveryWrap) deliveryWrap.innerHTML = deliveryOptions.length ? deliveryOptions.map(option => {
         // 5.6: provider tugmalari tuman tanlanmaguncha bosilmaydigan
         // ko'rinishda ko'rsatiladi — lekin onclick faol qoladi, shunda
         // bosilsa selectDelivery o'zi aniq ogohlantirish ko'rsatadi.
-        const disabledLook = option.kind === 'POST' && !(document.getElementById('chk-district')?.value || checkoutPostDistrict);
+        const disabledLook = option.kind === 'POST' && !districtValue;
         return `
         <button type="button" onclick="selectDelivery('${escapeHtml(option.id)}')" class="w-full text-left p-2.5 border rounded-xl font-bold text-xs ${option.id === selectedDeliveryMethodId ? 'border-blue-600 bg-blue-50 text-blue-700' : 'bg-white text-gray-700'} ${disabledLook ? 'opacity-40' : ''}">
           ${deliveryOptionLabel(option)}
@@ -2319,12 +2497,11 @@
         notice.innerHTML = noticeText + comment;
         notice.classList.toggle('hidden', !selectedDelivery);
       }
-      // 1.13/1.14: POST (BTS/EMU) uchun tuman/manzil maydonlari yashiriladi —
-      // ularning o'rniga filial tanlash ro'yxati ko'rsatiladi.
+      // 2-band: POST (BTS/EMU) uchun faqat manzil maydoni yashiriladi (uning
+      // o'rniga filial tanlash ro'yxati ko'rsatiladi) — tuman maydoni endi
+      // BARCHA yetkazib berish usullari uchun umumiy va doim ko'rinadi.
       const isPost = selectedDelivery?.kind === 'POST';
-      const districtField = document.getElementById('chk-district-field');
       const addressField = document.getElementById('chk-address-field');
-      if (districtField) districtField.classList.toggle('hidden', isPost);
       if (addressField) addressField.classList.toggle('hidden', isPost);
       const branchWrap = document.getElementById('chk-branch-wrap');
       if (branchWrap) branchWrap.classList.toggle('hidden', !isPost);
@@ -2367,35 +2544,30 @@
       imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
         event.target.value = '';
-        return alert(tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
+        return alert(isLikelyHeicFile(file)
+          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. Chekni JPG/PNG formatida yuklang.", "⚠️ Формат HEIC/HEIF пока не поддерживается. Загрузите чек в формате JPG/PNG.")
+          : tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
       }
-      // 1.11: baytlar tanlangan zahoti mustaqil nusxalanadi — vaqtinchalik File
-      // obyektiga (event.target orqali) keyin ishonilmaydi.
+      // 1.11: preview tanlangan zahoti ORIGINAL File'dan ko'rsatiladi — V2:
+      // FileReader/ArrayBuffer orqali oldindan o'qish shart emas.
       const selectionVersion = ++checkoutReceiptSelectionVersion;
       checkoutReceiptFile = file;
       if (checkoutReceiptPreviewUrl) { try { URL.revokeObjectURL(checkoutReceiptPreviewUrl); } catch (_) {} }
       checkoutReceiptPreviewUrl = URL.createObjectURL(file);
-      checkoutReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => {
-        const detached = makeDetachedImageFile(bytes, file);
-        // 8-bo'lim: preview endi asl native File emas, mustaqil detached
-        // Blob'dan — Telegram WebView keyinroq asl handle'ni yaroqsiz qilib
-        // qo'ysa ham preview buzilib qolmaydi (bu chekda avval yo'q edi,
-        // boshqa barcha rasm oqimlarida allaqachon bor edi).
-        if (selectionVersion === checkoutReceiptSelectionVersion) {
-          try {
-            const stableUrl = URL.createObjectURL(detached);
-            const oldUrl = checkoutReceiptPreviewUrl;
-            checkoutReceiptPreviewUrl = stableUrl;
-            rerenderReceiptPicker();
-            if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) {
-              try { URL.revokeObjectURL(oldUrl); } catch (_) {}
-            }
-          } catch (previewErr) {
-            imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
+      checkoutReceiptPreparing = captureAndPrepareImageV2(file, MAX_RECEIPT_BYTES, 1600, 0.85, (updated) => {
+        if (selectionVersion !== checkoutReceiptSelectionVersion) return;
+        try {
+          const stableUrl = URL.createObjectURL(updated);
+          const oldUrl = checkoutReceiptPreviewUrl;
+          checkoutReceiptPreviewUrl = stableUrl;
+          rerenderReceiptPicker();
+          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) {
+            try { URL.revokeObjectURL(oldUrl); } catch (_) {}
           }
+        } catch (previewErr) {
+          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
         }
-        return detached;
-      }).then(detached => compressImageToLimit(detached, MAX_RECEIPT_BYTES, 1600, 0.85));
+      });
       rerenderReceiptPicker();
     }
 
@@ -2530,9 +2702,8 @@
         checkoutSelectedBranch = null;
         checkoutBranches = [];
         checkoutBranchesLoadedFor = null;
-        checkoutPostDistrict = null;
-        checkoutPostDistricts = [];
-        checkoutPostDistrictsLoadedFor = null;
+        checkoutDistrictOptions = [];
+        checkoutDistrictOptionsLoadedFor = null;
         openOrderSuccessCelebration(newOrder.id);
       } catch (e) {
         console.error(e);
@@ -2636,7 +2807,7 @@
                     </div>
                     <p class="font-bold text-xs text-gray-800 mt-1">${escapeHtml(o.user)} (${escapeHtml(o.phone)})</p>
                     <p class="text-[10px] text-gray-400">${escapeHtml(regionLabel(o.region))} | ${escapeHtml(payMethodLabel(o.payMethod))}</p>
-                    <p class="text-[10px] text-gray-500">${escapeHtml(deliverySnapshotLabel(o))} · ${escapeHtml(shipmentStatusLabel(o.shipment?.status))}</p>
+                    <p class="text-[10px] text-gray-500">${escapeHtml(deliverySnapshotLabel(o))} · ${escapeHtml(effectiveShipmentStatusLabel(o))}</p>
                   </div>
                   <span class="font-bold text-xs text-green-600">${money(o.totalPrice)}</span>
                 </div>
@@ -2674,17 +2845,17 @@
             <div onclick="openOrderModal(${o.id})" class="bg-white rounded-2xl p-4 shadow-sm space-y-2 border cursor-pointer hover:bg-gray-50">
               <div class="flex justify-between items-center border-b pb-2">
                 <span class="font-black text-blue-600">#${o.id}</span>
-                ${orderDisplayStatus(o) === 'RECEIPT_PENDING' ? '' : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColorClass(orderDisplayStatus(o))}">${statusLabel(orderDisplayStatus(o))}</span>`}
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColorClass(orderDisplayStatus(o))}">${statusLabel(orderDisplayStatus(o))}</span>
               </div>
               <p class="text-xs text-gray-500">📅 ${escapeHtml(o.date)}</p>
-              <p class="text-xs text-gray-600">🚚 ${escapeHtml(deliverySnapshotLabel(o))} · <b>${escapeHtml(orderDisplayStatus(o) === 'RECEIPT_PENDING' ? statusLabel('RECEIPT_PENDING') : shipmentStatusLabel(o.shipment?.status))}</b></p>
+              <p class="text-xs text-gray-600">🚚 ${escapeHtml(deliverySnapshotLabel(o))} · <b>${escapeHtml(effectiveShipmentStatusLabel(o))}</b></p>
               ${o.shipment?.kind === 'TAXI' && o.shipment?.carNumber ? `<div class="bg-blue-50 border border-blue-200 p-2 rounded-xl text-[11px]">🚕 ${tr('Mashina','Машина')}: <b>${escapeHtml(o.shipment.carNumber)}</b><br>${tr('Haydovchi','Водитель')}: ${escapeHtml(o.shipment.driverPhone || '')}${o.shipment.driverName ? ` · ${escapeHtml(o.shipment.driverName)}` : ''}</div>` : ''}
               ${o.shipment?.kind === 'POST' && o.shipment?.trackingNumber ? `<div class="bg-blue-50 border border-blue-200 p-2 rounded-xl text-[11px]">📦 ${escapeHtml(o.shipment.providerName || o.delivery?.providerName || '')}<br>${tr("Jo'natma raqami",'Трек-номер')}: <b>${escapeHtml(o.shipment.trackingNumber)}</b>${o.shipment.originBranch ? `<br>${tr('Filial','Филиал')}: ${escapeHtml(o.shipment.originBranch)}` : ''}</div>` : ''}
               <div class="text-xs space-y-1.5">
                 ${o.items.map(i => `
                   <div class="flex items-center gap-2">
                     ${i.img ? `<img src="${escapeHtml(i.img)}" onerror="this.style.display='none'" class="w-7 h-7 object-cover rounded-lg flex-shrink-0" loading="lazy">` : ''}
-                    <p class="font-medium">• ${escapeHtml(orderItemName(i))} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.color ? `<span class="text-gray-500">[${escapeHtml(i.color)}]</span>` : ''} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>
+                    <p class="font-medium">• ${escapeHtml(orderItemName(i))} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.color ? `<span class="text-gray-500">[${escapeHtml(i.color)}]</span>` : ''} ${(i.sku && isAdminMode && isUserAnAdmin) ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty}</p>
                   </div>
                 `).join('')}
               </div>
@@ -2785,34 +2956,30 @@
 
     // 5.5. FOYDALANUVCHILAR (MIJOZLAR) TAB — faqat admin ko'radi
     function renderUsers(container) {
-      const grouped = groupAdminSupportTicketsByUser();
-      const selectedUserTickets = adminSupportSelectedUser ? adminSupportTickets.filter(t => t.tgId === adminSupportSelectedUser) : [];
-      const openTicket = adminSupportSelectedTicketId ? adminSupportTickets.find(t => t.id === adminSupportSelectedTicketId) : null;
       container.innerHTML = `
-        <div class="space-y-3">
-          ${openTicket ? `
-            <div class="flex items-center justify-between bg-white border rounded-2xl p-3">
-              <button onclick="backToAdminSupportUserTickets()" class="text-xs font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
-              <h2 class="font-bold text-sm">${openTicket.orderId ? `#${openTicket.orderId} · ` : ''}${escapeHtml(supportUserLabel(openTicket.tgId))}</h2>
-              <span class="text-[9px] font-bold px-2 py-1 rounded ${openTicket.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (openTicket.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}</span>
-            </div>
-            <div class="bg-white border rounded-2xl p-3 space-y-3 min-h-[45vh]">
-              ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...','Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, true)}
-              ${openTicket.status !== 'CLOSED' ? `${renderSupportReplyBarHtml()}<textarea id="sup-admin-message" rows="3" placeholder="${tr('Javob yozing...','Напишите ответ...')}" class="w-full p-3 border rounded-xl"></textarea><button onclick="submitAdminSupportReply()" class="w-full bg-blue-600 text-white font-bold py-3 rounded-xl">${tr('Yuborish','Отправить')}</button>` : `<p class="text-center text-gray-400 py-2">${tr('Mijoz bu murojaatni tugatgan.','Клиент завершил это обращение.')}</p>`}
-            </div>
-          ` : adminSupportSelectedUser ? `
-            <div class="flex items-center justify-between bg-white border rounded-2xl p-3">
-              <button onclick="backToAdminSupportUsers()" class="text-xs font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
-              <h2 class="font-bold text-sm">${escapeHtml(supportUserLabel(adminSupportSelectedUser))}</h2><span></span>
-            </div>
-            <div class="space-y-2">${selectedUserTickets.map(t => `<div class="bg-white border rounded-2xl p-3 cursor-pointer" onclick="openAdminSupportChat(${t.id})"><div class="flex justify-between"><b>${t.orderId ? `📦 #${t.orderId}` : tr('Umumiy','Общее')}</b><span class="text-[9px] font-bold px-2 py-1 rounded ${t.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${t.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (t.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}${supportNeedsAttention(t) ? ' •' : ''}</span></div><p class="text-[10px] text-gray-400 mt-1">${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</p><p class="text-xs mt-1">${escapeHtml((t.lastMessage?.body || '').slice(0,100))}</p></div>`).join('')}</div>
-          ` : `
-            <div class="flex items-center justify-between"><h2 class="text-lg font-bold text-slate-800">💬 ${tr("Qo'llab-quvvatlash",'Поддержка')}</h2>${adminSupportTicketsLoading ? `<span class="text-xs text-gray-400">${tr('Yuklanmoqda...','Загрузка...')}</span>` : ''}</div>
-            ${(!adminSupportTicketsLoading && !grouped.length) ? `<p class="text-xs text-gray-400 bg-white p-4 rounded-2xl border text-center">${tr('Murojaatlar yo‘q','Обращений нет')}</p>` : ''}
-            <div class="space-y-2">${grouped.map(g => `<div class="bg-white border rounded-2xl p-3 flex items-center justify-between cursor-pointer" onclick="selectAdminSupportUser('${g.tgId}')"><div><p class="font-bold text-sm">${escapeHtml(supportUserLabel(g.tgId))}</p><p class="text-[10px] text-gray-400">${g.tickets.length} ${tr('ta murojaat','обращений')}</p></div>${g.needsAttention || g.hasOpen ? `<span class="text-[9px] font-bold px-2 py-1 rounded bg-amber-100 text-amber-800">${tr('Yangi','Новое')}</span>` : ''}</div>`).join('')}</div>
-          `}
-        </div>`;
-      if (!adminSupportTicketsLoaded && !adminSupportTicketsLoading) loadAdminSupportTicketsLazy();
+        <div class="space-y-4">
+          <h2 class="text-lg font-bold text-slate-800">👥 ${t('users_title')}</h2>
+          <p class="text-[11px] text-gray-500">${tr("Mijozlar buyurtmalar soni bo'yicha tartiblangan.", "Клиенты отсортированы по количеству заказов.")}</p>
+          <div class="bg-white rounded-2xl border divide-y">
+            ${usersLoading ? `<p class="text-xs text-blue-500 p-4 text-center">${tr("⏳ Yuklanmoqda...", "⏳ Загрузка...")}</p>` : (usersSummary.length === 0 ? `<p class="text-xs text-gray-400 p-4 text-center">${tr("Hozircha mijozlar yo'q", "Клиентов пока нет")}</p>` : '')}
+            ${usersSummary.map(u => `
+              <div onclick="openUserModal('${u.tgId}')" class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50">
+                <div>
+                  <div class="flex items-center gap-1.5">
+                    <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
+                    ${u.isBlocked ? `<span class="text-[9px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded">${tr("🚫 BLOK", "🚫 БЛОК")}</span>` : (u.warned ? `<span class="text-[9px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded">${tr("⚠️ OGOH", "⚠️ ПРЕДУПР.")}</span>` : '')}
+                  </div>
+                  <p class="text-[10px] text-gray-400">${escapeHtml(u.phone || '')} · ID: ${escapeHtml(u.tgId)}</p>
+                </div>
+                <div class="text-right">
+                  <p class="font-black text-blue-600 text-sm">${u.totalOrders} ${tr("buyurtma", "заказов")}</p>
+                  <p class="text-[10px] text-gray-400">✅${u.delivered} ⏳${u.active} ❌${u.cancelled}</p>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
     }
 
     function openUserModal(tgId) {
@@ -3438,7 +3605,7 @@
                 ${(isUserAnAdmin && isAdminMode) ? `
                   <label class="cursor-pointer text-[10px] font-bold px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200" title="${tr("Logotip qo'shish/almashtirish","Добавить/заменить логотип")}">
                     🖼️
-                    <input type="file" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="saveShopLogoFromPicker(event)">
+                    <input type="file" accept="image/*" class="hidden" onchange="saveShopLogoFromPicker(event)">
                   </label>
                 ` : ''}
               </div>
@@ -3447,7 +3614,7 @@
             ${shopContact.address ? `
               <div class="flex items-start space-x-3">
                 <i data-lucide="map-pin" class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0"></i>
-                <p class="text-xs font-bold text-gray-800">${escapeHtml(localizeUzPlaceText(shopContact.address))}</p>
+                <p class="text-xs font-bold text-gray-800">${escapeHtml((uiLang === 'ru' && shopContact.addressRu) ? shopContact.addressRu : shopContact.address)}</p>
               </div>
             ` : ''}
 
@@ -3480,6 +3647,10 @@
           ${(isUserAnAdmin && isAdminMode) ? `
             <button onclick="openShopParams()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
               <span>⚙️ ${tr("Do'kon sozlamalari", 'Настройки магазина')}</span>
+              <span>›</span>
+            </button>
+            <button onclick="openAdminSupportModal()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
+              <span>💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}${adminSupportTicketsLoaded && adminSupportTickets.some(t => t.status === 'OPEN' || supportNeedsAttention(t)) ? ` <span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">${adminSupportTickets.filter(t => t.status === 'OPEN' || supportNeedsAttention(t)).length}</span>` : ''}</span>
               <span>›</span>
             </button>
           ` : ''}
@@ -3522,6 +3693,7 @@
       const next = {
         name: document.getElementById('sc-name').value.trim() || null,
         address: document.getElementById('sc-address').value.trim() || null,
+        addressRu: document.getElementById('sc-address-ru').value.trim() || null,
         coordinates: document.getElementById('sc-coordinates').value.trim() || null,
         phone: document.getElementById('sc-phone1').value.trim() || null,
         phone2: document.getElementById('sc-phone2').value.trim() || null,
@@ -3552,14 +3724,6 @@
     // 1.11: boshqa rasm oqimlaridagi (yangi tovar/tahrirlash/Rasmsiz queue)
     // kabi bir xil barqaror pipeline: baytlar avval mustaqil nusxalanadi,
     // vaqtinchalik File obyektiga (upload tugagunicha) keyin ishonilmaydi.
-    async function uploadImageFileQuiet(file, existingUrl) {
-      validatePickedImageFile(file);
-      const bytes = await readBlobAsArrayBuffer(file);
-      const detached = makeDetachedImageFile(bytes, file);
-      const prepared = await compressImageToLimit(detached, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8);
-      return uploadImageSnapshot({ file: prepared, preparing: Promise.resolve(prepared), url: null }, existingUrl, true);
-    }
-
     async function saveShopLogoFromPicker(event) {
       const file = event.target.files?.[0];
       if (!file) return;
@@ -3567,32 +3731,30 @@
       try { validatePickedImageFile(file); }
       catch (e) {
         event.target.value = '';
-        return alert(String(e?.message || e) === 'invalid_image_type'
-          ? tr('⚠️ Faqat JPG/JPEG, PNG yoki WebP rasm tanlang!', '⚠️ Выберите JPG/JPEG, PNG или WebP!')
-          : tr('⚠️ Original rasm hajmi 15MB dan oshmasligi kerak!', '⚠️ Исходное изображение не должно превышать 15 МБ!'));
+        return alert(pickedImageErrorMessage(e, file));
       }
 
-      // 5.3 root cause: bu picker boshqa barcha rasm oqimlaridan farqli
-      // o'laroq, avval og'ir render()ni chaqirib, faqat keyin fayl baytlarini
-      // o'qirdi — render() <input type=file>ni DOM'dan qayta yaratishi mumkin,
-      // shu orada Telegram WebView native File handle'ni yaroqsiz qiladi.
-      // Endi boshqa oqimlar kabi: baytlar render()dan OLDIN mustaqil nusxalanadi.
+      // 5.3 root cause (hamon amal qiladi): bu picker render()ni chaqirishdan
+      // OLDIN mustaqil nusxa tayyorlaydi — render() <input type=file>ni
+      // DOM'dan qayta yaratishi mumkin, shu orada Telegram WebView native File
+      // handle'ni yaroqsiz qilib qo'yardi. V2: captureAndPrepareImageV2
+      // FileReader/ArrayBuffer orqali oldindan o'qishga hojatsiz — to'g'ridan-
+      // to'g'ri createImageBitmap(file) orqali xavfsiz dekodlaydi.
       const old = shopLogoUrl;
-      let detachedFile;
+      let prepared;
       try {
-        const bytes = await readBlobAsArrayBuffer(file);
-        detachedFile = makeDetachedImageFile(bytes, file);
+        prepared = await captureAndPrepareImageV2(file, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8);
       } catch (e) {
         console.error('[logo:READ_ORIGINAL_FAILED]', e);
         event.target.value = '';
         return alert(tr("Logotip faylini o'qib bo'lmadi. Qaytadan tanlab ko'ring.", "Не удалось прочитать файл логотипа. Попробуйте выбрать заново."));
       }
 
-      const localPreview = URL.createObjectURL(detachedFile);
+      const localPreview = URL.createObjectURL(prepared);
       shopLogoUrl = localPreview;
       render(); // darhol preview
       try {
-        const url = await uploadImageFileQuiet(detachedFile, old);
+        const url = await uploadImageSnapshot({ file: prepared, preparing: Promise.resolve(prepared), url: null }, old, true);
         await callApi('set_shop_logo', { logoUrl: url });
         shopLogoUrl = url;
         render();
@@ -3697,6 +3859,11 @@
               <div>
                 <label class="font-bold text-gray-600">${tr("Manzil", "Адрес")}</label>
                 <input type="text" id="sc-address" value="${escapeHtml(shopContact.address || '')}" placeholder="Sergeli tumani, ..." class="w-full mt-1 p-2 border rounded-xl">
+              </div>
+              <div>
+                <label class="font-bold text-gray-600">${tr("Manzil (ruscha, ixtiyoriy)", "Адрес (по-русски, необязательно)")}</label>
+                <input type="text" id="sc-address-ru" value="${escapeHtml(shopContact.addressRu || '')}" placeholder="Сергелийский район, ..." class="w-full mt-1 p-2 border rounded-xl">
+                <p class="text-[9px] text-gray-400 mt-1">${tr("Bo'sh qoldirilsa, ruscha rejimda ham o'zbekcha manzil ko'rsatiladi.", "Если оставить пустым, в русском режиме тоже отображается узбекский адрес.")}</p>
               </div>
               <div>
                 <label class="font-bold text-gray-600">${tr("Kordinata", "Координаты")}</label>
@@ -3853,7 +4020,7 @@
 
               <div>
                 <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
-                <input id="m-prod-image-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'm-prod-prev', 'm-prod-image-button', 'm-prod-image-url', 'm-prod-image-url-error')" class="hidden">
+                <input id="m-prod-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'm-prod-prev', 'm-prod-image-button', 'm-prod-image-url', 'm-prod-image-url-error')" class="hidden">
                 <button id="m-prod-image-button" type="button" onclick="document.getElementById('m-prod-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr("Rasm tanlash", "Выбрать фото")}</button>
                 <input id="m-prod-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-prod-prev', 'm-prod-image-url-error', 'm-prod-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full mt-2 p-2 border rounded-xl">
                 <p id="m-prod-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
@@ -3884,7 +4051,7 @@
                 <div class="flex items-center gap-3 mt-1">
                   <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl hidden border">
                   <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}
-                    <input type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'm-cat-prev')" class="hidden">
+                    <input type="file" accept="image/*" onchange="onImagePicked(event, 'm-cat-prev')" class="hidden">
                   </label>
                 </div>
               </div>
@@ -3913,7 +4080,7 @@
                 <div class="flex items-center gap-3 mt-1">
                   <img id="ec-img-prev" src="${escapeHtml((c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? c.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-16 h-16 object-cover rounded-xl ${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? '' : 'hidden'} border">
                   <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? `🔄 ${tr('Rasmni almashtirish', 'Заменить изображение')}` : `🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}`}
-                    <input type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'ec-img-prev')" class="hidden">
+                    <input type="file" accept="image/*" onchange="onImagePicked(event, 'ec-img-prev')" class="hidden">
                   </label>
                 </div>
               </div>
@@ -3951,7 +4118,7 @@
                   <img id="miq-img-prev" src="" class="hidden w-full h-48 object-contain rounded-xl bg-white">
                   <div id="miq-empty-preview" class="h-32 flex items-center justify-center text-center text-gray-400 font-bold">🖼<br>${tr('Rasm preview','Предпросмотр фото')}</div>
                 </div>
-                <input id="miq-image-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="document.getElementById('miq-empty-preview')?.classList.add('hidden'); onImagePicked(event, 'miq-img-prev', 'miq-image-button', 'miq-image-url', 'miq-image-url-error')" class="hidden">
+                <input id="miq-image-input" type="file" accept="image/*" onchange="document.getElementById('miq-empty-preview')?.classList.add('hidden'); onImagePicked(event, 'miq-img-prev', 'miq-image-button', 'miq-image-url', 'miq-image-url-error')" class="hidden">
                 <button id="miq-image-button" type="button" onclick="document.getElementById('miq-image-input').click()" class="w-full bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr('Rasm tanlash','Выбрать фото')}</button>
                 <input id="miq-image-url" type="url" inputmode="url" oninput="document.getElementById('miq-empty-preview')?.classList.toggle('hidden', !!this.value.trim()); onImageUrlInput(this.value, 'miq-img-prev', 'miq-image-url-error', 'miq-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full p-2.5 border rounded-xl">
                 <p id="miq-image-url-error" class="hidden text-[10px] text-red-600"></p>
@@ -4221,7 +4388,7 @@
 
               ${field === 'img' ? `
                 <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
-                <input id="ef-image-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="onImagePicked(event, 'ef-img-prev', 'ef-image-button', 'ef-image-url', 'ef-image-url-error')" class="hidden">
+                <input id="ef-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev', 'ef-image-button', 'ef-image-url', 'ef-image-url-error')" class="hidden">
                 <button id="ef-image-button" type="button" onclick="document.getElementById('ef-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${hasProductImage(p) ? tr("Rasmni almashtirish", "Заменить фото") : tr("Rasm tanlash", "Выбрать фото")}</button>
                 <input id="ef-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'ef-img-prev', 'ef-image-url-error', 'ef-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full mt-2 p-2 border rounded-xl">
                 <p id="ef-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
@@ -4309,13 +4476,6 @@
                 </select>
               </div>
 
-              <div id="chk-post-district-field" class="hidden">
-                <label class="text-xs font-bold text-gray-600">${tr("Tuman/shaharni tanlang (pochta uchun) *", "Выберите район/город (для почты) *")}</label>
-                <select id="chk-post-district" onchange="handlePostDistrictChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
-                  <option value="">${tr("— Avval tumanni tanlang —", "— Сначала выберите район —")}</option>
-                </select>
-              </div>
-
               <div id="chk-district-field">
                 <label class="text-xs font-bold text-gray-600">${tr("Tumanni tanlang *", "Выберите район *")}</label>
                 <select id="chk-district" onchange="handleDistrictChange()" class="w-full mt-1 p-2.5 border rounded-xl text-xs bg-gray-50 font-bold">
@@ -4325,9 +4485,9 @@
 
               <!-- 19-band: Yetkazib berish usuli endi Viloyat/Tuman'dan KEYIN,
                    Manzil/Filial'dan OLDIN chiqadi (to'g'ri tartib: Viloyat →
-                   Tuman/Shahar → Usul → Filial). Ko'rsatish/yashirish JS
-                   logikasi (renderCheckoutOptions/renderPostDistrictField)
-                   o'zgarmagan — faqat statik joylashuv. -->
+                   Tuman/Shahar → Usul → Filial). 2-band: #chk-district endi
+                   BARCHA usullar uchun bitta umumiy maydon — renderCheckoutOptions
+                   uni yashirmaydi, faqat manzil/filial maydonlari almashadi. -->
               <div>
                 <label class="text-xs font-bold text-gray-600">${tr("Yetkazib berish usuli *", "Способ доставки *")}</label>
                 <div id="delivery-method-wrap" class="space-y-2 mt-1"></div>
@@ -4391,7 +4551,7 @@
 
               <div>
                 <label class="font-bold text-gray-600">${tr("Tovar qidirish", "Поиск товара")}</label>
-                <input type="text" value="${escapeHtml(categoryFilter.search || '')}" oninput="categoryFilter.search=this.value; categoryPage=1;" placeholder="${escapeHtml(t('search_placeholder'))}" class="w-full mt-1 p-2.5 border rounded-xl">
+                <input type="text" value="${escapeHtml(categoryFilter.search || '')}" oninput="categoryFilter.search=this.value; categoryPage=1;" placeholder="${escapeHtml(searchPlaceholderText())}" class="w-full mt-1 p-2.5 border rounded-xl">
               </div>
 
               <div>
@@ -4586,10 +4746,10 @@
                 ${resubmitReceiptPreviewUrl ? `
                   <div class="flex items-center gap-3 mt-1">
                     <img src="${resubmitReceiptPreviewUrl}" class="h-16 w-16 object-cover rounded-xl border" alt="">
-                    <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}<input type="file" accept="image/jpeg,image/png,image/webp" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
+                    <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}<input type="file" accept="image/*" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
                   </div>
                 ` : `
-                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white mt-1">📎 ${tr('Chekni tanlash', 'Выбрать чек')}<input type="file" accept="image/jpeg,image/png,image/webp" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
+                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white mt-1">📎 ${tr('Chekni tanlash', 'Выбрать чек')}<input type="file" accept="image/*" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
                 `}
               </div>
               <div class="flex gap-2 pt-1">
@@ -4733,7 +4893,7 @@
               <div class="space-y-1">
                 <p>👤 <b>${tr("Mijoz:", "Клиент:")}</b> ${escapeHtml(o.user)}</p>
                 <p>📞 <b>${tr("Tel:", "Тел:")}</b> ${escapeHtml(o.phone)}</p>
-                <p>📍 <b>${tr("Hudud:", "Регион:")}</b> ${escapeHtml(uiLang === 'ru' ? localizeUzPlaceText(o.delivery?.regionLabel || regionLabel(o.region)) : (o.delivery?.regionLabel || regionLabel(o.region)))} (${escapeHtml(districtDisplayLabel(o.district))})</p>
+                <p>📍 <b>${tr("Hudud:", "Регион:")}</b> ${escapeHtml(o.delivery?.regionLabel || regionLabel(o.region))} (${escapeHtml(districtLabelForUi(o.district))})</p>
                 <p>🏠 <b>${tr("Manzil:", "Адрес:")}</b> ${escapeHtml(o.address)}</p>
                 <p>🚚 <b>${tr("Yetkazib berish:", "Доставка:")}</b> ${escapeHtml(deliverySnapshotLabel(o))}</p>
                 <p>💳 <b>${tr("To'lov:", "Оплата:")}</b> ${escapeHtml(o.payment?.label || payMethodLabel(o.payMethod))}</p>
@@ -4745,14 +4905,14 @@
                 ${o.items.map(i => `
                   <div class="flex items-center gap-2">
                     ${i.img ? `<img src="${escapeHtml(i.img)}" onerror="this.style.display='none'" class="w-7 h-7 object-cover rounded-lg flex-shrink-0" loading="lazy">` : ''}
-                    <p>• ${escapeHtml(orderItemName(i))} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.color ? `<span class="text-gray-500">[${escapeHtml(i.color)}]</span>` : ''} ${i.sku ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${money(i.price * i.qty)}</p>
+                    <p>• ${escapeHtml(orderItemName(i))} ${i.size ? `<span class="text-gray-500 font-mono">[${escapeHtml(i.size)}]</span>` : ''} ${i.color ? `<span class="text-gray-500">[${escapeHtml(i.color)}]</span>` : ''} ${(i.sku && isAdminMode && isUserAnAdmin) ? `<span class="text-gray-400 font-mono">(ID: ${escapeHtml(i.sku)})</span>` : ''} x ${i.qty} = ${money(i.price * i.qty)}</p>
                   </div>
                 `).join('')}
               </div>
 
               <div class="border-t pt-2 space-y-1">
                 <div class="flex justify-between"><span>${tr('Tovarlar summasi','Сумма товаров')}:</span><b>${money(o.subtotal ?? o.totalPrice)}</b></div>
-                <div class="flex justify-between"><span>${tr('Yetkazib berish','Доставка')}:</span><b>${deliveryFeeDisplay(o)}</b></div>
+                <div class="flex justify-between"><span>${tr('Yetkazib berish','Доставка')}:</span><b>${(o.delivery?.kind === 'TAXI' || (o.delivery?.kind === 'POST' && o.delivery?.payer === 'CUSTOMER')) ? tr("Mijoz to'laydi", 'Оплачивает клиент') : (Number(o.deliveryFee) > 0 ? money(o.deliveryFee) : money(0))}</b></div>
                 <div class="flex justify-between font-black text-sm"><span>${tr("Hozir to'lanadigan jami",'Итого к оплате сейчас')}:</span><span class="text-green-600">${money(o.payableTotal ?? o.totalPrice)}</span></div>
               </div>
 
@@ -4760,7 +4920,7 @@
               ${o.delivery?.comment ? `<div class="bg-blue-50 border border-blue-200 p-2.5 rounded-xl text-[11px] text-blue-900">💬 ${escapeHtml(o.delivery.comment)}</div>` : ''}
 
               <div class="bg-slate-50 border rounded-xl p-2.5 space-y-1">
-                <p class="font-bold">🚚 ${tr('Jo‘natma holati','Статус отправления')}: ${escapeHtml(shipmentStatusLabel(o.shipment?.status))}</p>
+                <p class="font-bold">🚚 ${tr('Jo‘natma holati','Статус отправления')}: ${escapeHtml(effectiveShipmentStatusLabel(o))}</p>
                 ${o.shipment?.kind === 'TAXI' && o.shipment?.carNumber ? `<p>${tr('Mashina','Машина')}: <b>${escapeHtml(o.shipment.carNumber)}</b></p><p>${tr('Haydovchi','Водитель')}: ${escapeHtml(o.shipment.driverPhone || '')}${o.shipment.driverName ? ` · ${escapeHtml(o.shipment.driverName)}` : ''}</p>` : ''}
                 ${o.shipment?.kind === 'POST' && o.shipment?.trackingNumber ? `<p>${tr("Jo'natma raqami",'Трек-номер')}: <b>${escapeHtml(o.shipment.trackingNumber)}</b></p>${o.shipment.originBranch ? `<p>${tr('Yuborilgan filial','Филиал отправки')}: ${escapeHtml(o.shipment.originBranch)}</p>` : ''}` : ''}
               </div>
@@ -4947,13 +5107,6 @@
       return delivery.label || tr('Eski buyurtma yetkazishi', 'Доставка старого заказа');
     }
 
-    function deliveryFeeDisplay(order) {
-      const fee = Number(order?.deliveryFee || 0);
-      if (fee > 0) return money(fee);
-      if (order?.delivery?.kind === 'FREE') return tr('Bepul','Бесплатно');
-      return tr("Mijoz to'laydi", 'Оплачивает клиент');
-    }
-
     function shipmentStatusLabel(status) {
       const labels = {
         READY: tr('Tayyorlanmoqda', 'Готовится'), TAXI_ASSIGNED: tr('Taksi biriktirildi', 'Такси назначено'),
@@ -5115,29 +5268,34 @@
       if (!file) return;
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
         event.target.value = '';
-        return alert(tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
+        return alert(isLikelyHeicFile(file)
+          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. Chekni JPG/PNG formatida yuklang.", "⚠️ Формат HEIC/HEIF пока не поддерживается. Загрузите чек в формате JPG/PNG.")
+          : tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
       }
       const selectionVersion = ++resubmitReceiptSelectionVersion;
       resubmitReceiptFile = file;
       if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
       resubmitReceiptPreviewUrl = URL.createObjectURL(file);
-      resubmitReceiptPreparing = readBlobAsArrayBuffer(file).then(bytes => {
-        const detached = makeDetachedImageFile(bytes, file);
-        if (selectionVersion === resubmitReceiptSelectionVersion) {
-          try {
-            const stableUrl = URL.createObjectURL(detached);
-            const oldUrl = resubmitReceiptPreviewUrl;
-            resubmitReceiptPreviewUrl = stableUrl;
-            renderModalContainer();
-            if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
-          } catch (previewErr) {
-            imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
-          }
+      resubmitReceiptPreparing = captureAndPrepareImageV2(file, MAX_RECEIPT_BYTES, 1600, 0.85, (updated) => {
+        if (selectionVersion !== resubmitReceiptSelectionVersion) return;
+        try {
+          const stableUrl = URL.createObjectURL(updated);
+          const oldUrl = resubmitReceiptPreviewUrl;
+          resubmitReceiptPreviewUrl = stableUrl;
+          renderModalContainer();
+          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
+        } catch (previewErr) {
+          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
         }
-        return detached;
-      }).then(detached => compressImageToLimit(detached, MAX_RECEIPT_BYTES, 1600, 0.85));
+      });
       renderModalContainer();
     }
+    // 5-band/13-band: chekni qayta yuborish — endi signed URL PRIMARY
+    // (get_payment_receipt_upload_url + finalize_payment_receipt, avval
+    // yozilgan-lekin-ishlatilmagan actionlar jonlantirildi), base64
+    // (upload_payment_receipt) ikkinchi darajali fallback sifatida saqlanadi.
+    // Receipt approve/reject/resubmit/order-association business logikasi
+    // (finalize_payment_receipt ichida) o'zgarishsiz qoladi — faqat transport.
     async function submitResubmitReceipt() {
       if (!resubmitOrderId || (!resubmitReceiptFile && !resubmitReceiptPreparing)) {
         return alert(tr("Iltimos, chek rasmini tanlang.", "Пожалуйста, выберите изображение чека."));
@@ -5148,8 +5306,23 @@
         const prepared = resubmitReceiptPreparing ? await resubmitReceiptPreparing : resubmitReceiptFile;
         if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
-        const imageUpload = { base64: await fileToBase64(prepared), mimeType: prepared.type, fileName: prepared.name || 'payment-receipt.jpg' };
-        await callApi('upload_payment_receipt', { orderId, imageUpload });
+
+        let signedOk = false;
+        try {
+          const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+          const ext = extByMime[prepared.type];
+          const { path, token } = await callApi('get_payment_receipt_upload_url', { orderId, mimeType: prepared.type, size: prepared.size });
+          const { error: upErr } = await sb.storage.from('payment-receipts').uploadToSignedUrl(path, token, prepared);
+          if (upErr) throw upErr;
+          await callApi('finalize_payment_receipt', { orderId, path });
+          signedOk = true;
+        } catch (signedErr) {
+          console.warn('[receipt:SIGNED_URL_RESUBMIT_FAILED]', signedErr);
+        }
+        if (!signedOk) {
+          const imageUpload = { base64: await fileToBase64(prepared), mimeType: prepared.type, fileName: prepared.name || 'payment-receipt.jpg' };
+          await callApi('upload_payment_receipt', { orderId, imageUpload });
+        }
         const patch = { hasReceipt: true, receiptReviewStatus: 'PENDING', receiptRejectReason: null };
         const idx = orders.findIndex(o => o.id === orderId);
         if (idx >= 0) orders[idx] = { ...orders[idx], ...patch };
@@ -5707,35 +5880,13 @@
       if (swapIdx < 0 || swapIdx >= siblings.length) return;
       const other = siblings[swapIdx];
       const catOrder = cat.sortOrder || 0, otherOrder = other.sortOrder || 0;
-      catalogRequestSeq++; // reorderdan oldingi barcha loadCatalog javoblarini invalid qiladi
       cat.sortOrder = otherOrder; other.sortOrder = catOrder;
-      // 12-band: boot paytidagi sekin loadCatalog() so'rovi shu optimistic
-      // o'zgarishdan KEYIN javob berishi mumkin — o'sha eski javob butun
-      // categories massivini qayta yozib, tartibni "bir necha soniyadan
-      // keyin" bekor qilib qo'yardi (real Telegram'da topilgan bug). Endi
-      // har bir lokal o'zgarish vaqti belgilanadi; loadCatalog() o'zidan
-      // OLDIN boshlangan so'rov javobini ANIQ shu ikki kategoriya uchun
-      // e'tiborsiz qoldiradi (branchRequestSeq'dagi kabi stale-response himoyasi).
-      const mutatedAt = Date.now();
-      categoryLocalMutationAt.set(String(cat.id), mutatedAt);
-      categoryLocalMutationAt.set(String(other.id), mutatedAt);
 
-      // Vizual tartibni butun ilovani render qilmasdan shu ikki DOM qatori bilan
-      // darhol almashtiramiz. Server yozuvi fon rejimida keladi.
-      const rows = Array.from(document.querySelectorAll('[data-category-row-id]'));
-      const rowA = rows.find(el => String(el.dataset.categoryRowId) === String(cat.id));
-      const rowB = rows.find(el => String(el.dataset.categoryRowId) === String(other.id));
-      if (rowA && rowB && rowA.parentNode === rowB.parentNode) {
-        const parent = rowA.parentNode;
-        if (direction < 0) parent.insertBefore(rowA, rowB);
-        else parent.insertBefore(rowB, rowA);
-      } else {
-        render();
-      }
+      // Optimistic: tugma darhol ishlaydi, server javobi fon rejimida keladi
+      // (moveProductSort bilan bir xil sodda pattern — qo'shimcha guard yo'q).
+      render();
       try {
         await callApi('reorder_categories', { items: [{ id: cat.id, sortOrder: cat.sortOrder }, { id: other.id, sortOrder: other.sortOrder }] });
-        await loadCatalog();
-        render();
         saveCatalogCache();
       } catch (err) {
         console.error(err);
@@ -6021,7 +6172,6 @@
     // ============ BOOT: TEZKOR / STALE-WHILE-REVALIDATE ============
     const CATALOG_CACHE_KEY = 'fitcore_catalog_cache_v2';
     let catalogLoading = false;
-    let catalogRequestSeq = 0;
     function hydrateCatalogCache() {
       try {
         const cached = JSON.parse(localStorage.getItem(CATALOG_CACHE_KEY) || 'null');
@@ -6035,8 +6185,6 @@
     }
     async function loadCatalog() {
       const perfStarted = performance.now();
-      const fetchStartedAt = Date.now();
-      const requestId = ++catalogRequestSeq;
       catalogLoading = true;
       const [prodRes, catRes] = await Promise.all([
         sb.from('products').select('id,sku,name,name_ru,price,old_price,stock,category_id,status,img,description,description_ru,is_featured,sort_order,sizes,variants,sold_count,created_at,import_batch_id').neq('status', 'DELETED').order('sort_order', { ascending: true }),
@@ -6044,21 +6192,8 @@
       ]);
       if (prodRes.error) throw prodRes.error;
       if (catRes.error) throw catRes.error;
-      if (requestId !== catalogRequestSeq) return false;
       products = (prodRes.data || []).map(mapProductFromDB);
-      // 12-band: agar shu so'rov BOSHLANGANIDAN keyin foydalanuvchi ↑/↓ bilan
-      // biror kategoriyani optimistic o'zgartirgan bo'lsa, o'sha kategoriya(lar)
-      // uchun bu (stale) javobdagi sortOrder e'tiborsiz qoldiriladi — qolgan
-      // barcha maydonlar (rasm, nom va h.k.) baribir yangilanadi.
-      const freshCategories = (catRes.data || []).map(mapCategoryFromDB);
-      categories = freshCategories.map(fresh => {
-        const mutatedAt = categoryLocalMutationAt.get(String(fresh.id));
-        if (mutatedAt && mutatedAt > fetchStartedAt) {
-          const local = categories.find(c => String(c.id) === String(fresh.id));
-          if (local) return { ...fresh, sortOrder: local.sortOrder };
-        }
-        return fresh;
-      });
+      categories = (catRes.data || []).map(mapCategoryFromDB);
       saveCatalogCache();
       catalogLoading = false;
       const ms = Math.round(performance.now() - perfStarted);
@@ -6099,7 +6234,7 @@
         };
         shopLogoUrl = bootData.logoUrl || null;
         botUsername = bootData.botUsername || null;
-        shopContact = bootData.shopContact || { name: null, address: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null, facebook: null, startMessage: null };
+        shopContact = bootData.shopContact || { name: null, address: null, addressRu: null, coordinates: null, phone: null, phone2: null, phone3: null, instagram: null, telegram: null, facebook: null, startMessage: null };
         fulfillmentConfig = commerce.normalizeConfig(bootData.fulfillmentConfig, TOP_LEVEL_REGION_IDS);
         designSettings = bootData.designSettings || { themeId: 'minimal', colors: {} };
         applyDesignColors(designSettings.colors);

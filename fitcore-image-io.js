@@ -1,4 +1,12 @@
 // Browser/WebView-safe local image byte handling.
+//
+// Image Pipeline V2 (2026-08 real-Telegram bug-fix round): bu moduldagi
+// readBlobAsArrayBuffer/makeDetachedImageFile FileReader/ArrayBuffer zanjiri
+// endi PRIMARY emas — fitcore-app.js'dagi captureAndPrepareImageV2() birinchi
+// navbatda createImageBitmap(file)'ni TO'G'RIDAN-TO'G'RI original File'dan
+// chaqiradi (bu yerga umuman kirmasdan). Bu funksiyalar faqat ikkinchi
+// darajali FALLBACK sifatida chaqiriladi — createImageBitmap ISHLAMASA yoki
+// mavjud bo'lmasa. O'chirilmagan, faqat rol o'zgargan.
 (function attachFitcoreImageIO(root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
