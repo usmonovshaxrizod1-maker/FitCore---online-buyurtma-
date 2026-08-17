@@ -55,7 +55,6 @@
     const CONFIG = {
       SUPABASE_URL: "https://mvgbqggrzhswjhmwqcyp.supabase.co",
       SUPABASE_KEY: "sb_publishable_f86Xiu8_yFR_kkZNU95P-g_inE5zCyA",
-      IMAGES_BUCKET: "images"
     };
 
     const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
@@ -243,47 +242,7 @@
 
     const TOP_LEVEL_REGIONS = REGION_DEFS.map(r => ({ id: r.code, nameUz: r.nameUz, nameRu: r.nameRu }));
     const TOP_LEVEL_REGION_IDS = TOP_LEVEL_REGIONS.map(region => region.id);
-    const imageIO = window.FitcoreImageIO;
     const commerce = window.FitcoreCommerce;
-    const SUPPORTED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
-    const MAX_ORIGINAL_IMAGE_BYTES = 15 * 1024 * 1024;
-    const MAX_STORED_IMAGE_BYTES = 5 * 1024 * 1024;
-    // Server-first upload Telegram WebView'da direct Storage fetch'ga qaraganda barqarorroq.
-    // Base64 request'ni kichik saqlash uchun local rasmlarni imkon qadar 2MB ostiga siqamiz.
-    const TARGET_PRODUCT_IMAGE_BYTES = 2 * 1024 * 1024;
-    const MAX_RECEIPT_BYTES = 6 * 1024 * 1024;
-
-    function validatePickedImageFile(file, maxOriginalBytes = MAX_ORIGINAL_IMAGE_BYTES) {
-      if (!file || !SUPPORTED_IMAGE_MIME.has(String(file.type || '').toLowerCase())) {
-        throw new Error('invalid_image_type');
-      }
-      if (!Number.isFinite(file.size) || file.size <= 0 || file.size > maxOriginalBytes) {
-        throw new Error('image_too_large');
-      }
-      return true;
-    }
-    // 6-band: accept="image/*" endi telefon galereyasidagi ko'proq formatni
-    // (shu jumladan HEIC/HEIF) tanlashga imkon beradi, lekin brauzer HEIC'ni
-    // canvas orqali ishonchli dekodlay olmaydi va serverda ham xavfsiz
-    // normalizatsiya yo'q (Deno'da ishonchli HEIC decoder yo'q) — shu sabab
-    // HEIC/HEIF hali ham rad etiladi, faqat aniqroq xabar bilan (kengaytmaga
-    // ishonib qolmasdan, extensiyasiz fayllar uchun ham MIME orqali aniqlash
-    // urinib ko'riladi).
-    function isLikelyHeicFile(file) {
-      const mime = String(file?.type || '').toLowerCase();
-      const name = String(file?.name || '').toLowerCase();
-      return mime === 'image/heic' || mime === 'image/heif' || /\.(heic|heif)$/.test(name);
-    }
-    function pickedImageErrorMessage(err, file) {
-      const code = String(err?.message || err || '');
-      if (code === 'invalid_image_type') {
-        return isLikelyHeicFile(file)
-          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. iPhone: Sozlamalar > Kamera > Formatlar > \"Eng mos\"ni tanlang, yoki rasmni avval JPG/PNG'ga o'tkazing.", "⚠️ Формат HEIC/HEIF пока не поддерживается. iPhone: Настройки > Камера > Форматы > «Наиболее совместимые», либо сначала преобразуйте фото в JPG/PNG.")
-          : tr('⚠️ Faqat JPG/JPEG, PNG yoki WebP rasm tanlang!', '⚠️ Выберите JPG/JPEG, PNG или WebP!');
-      }
-      return tr('⚠️ Original rasm hajmi 15MB dan oshmasligi kerak!', '⚠️ Исходное изображение не должно превышать 15 МБ!');
-    }
-
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
@@ -475,21 +434,9 @@
     let fulfillmentExpandedPayment = null; // CASH | CARD | null (faqat PAYMENTS bo'limida, 1.2: yonma-yon + inline ochilish)
     let selectedDeliveryMethodId = checkoutDraft.deliveryMethodId || null;
     let selectedPayMethod = checkoutDraft.paymentMethodId || null;
-    let checkoutReceiptFile = null;
-    let checkoutReceiptPreparing = null;
-    let checkoutReceiptPreviewUrl = null; // 1.8: local preview uchun object URL
     // 15-band: rad etilgan chekni qayta yuborish uchun alohida state —
     // checkout state'idan mustaqil (checkout draft bilan aralashib ketmasin).
     let resubmitOrderId = null;
-    let resubmitReceiptFile = null;
-    let resubmitReceiptPreparing = null;
-    let resubmitReceiptPreviewUrl = null;
-    let resubmitReceiptSelectionVersion = 0;
-    // 8-bo'lim: preview asl native File'dan uzoq yashaydigan object URL bo'lib
-    // qolmasligi uchun — capture muvaffaqiyatli bo'lgach detached Blob'dan
-    // yangilanadi. Bu versiya tez-tez qayta tanlashda eski (sekin) capture'ning
-    // yangi tanlovni bosib yubormasligini kafolatlaydi.
-    let checkoutReceiptSelectionVersion = 0;
     // 1.14: BTS/EMU filial tanlash — mijoz qo'lda manzil yozmaydi.
     let checkoutBranches = [];
     let checkoutBranchesLoading = false;
@@ -528,22 +475,11 @@
     let dashboardLiteData = null;
     let dashboardLiteLoading = false;
 
-    // Rasm yuklash uchun: haqiqiy fayl (Storage'ga yuklanadi) va preview (faqat ko'rsatish uchun)
-    let tempImageFile = null;
-    let tempImagePreviewUrl = null;
-    let tempImagePreparingPromise = null;
+    // Rasm: faqat URL matn maydoni orqali kiritiladi (lokal fayl yo'q).
     let tempImageUrl = null;
     let tempImageExistingUrl = null;
-    let tempImageSelectionVersion = 0;
 
     function clearTempImageSelection() {
-      tempImageSelectionVersion += 1;
-      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
-        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
-      }
-      tempImageFile = null;
-      tempImagePreviewUrl = null;
-      tempImagePreparingPromise = null;
       tempImageUrl = null;
       tempImageExistingUrl = null;
     }
@@ -552,25 +488,12 @@
       tempImageExistingUrl = hasProductImage({ img: existingUrl }) ? String(existingUrl).trim() : null;
     }
     function takeTempImageSnapshot() {
-      const snap = {
-        file: tempImageFile,
-        preview: tempImagePreviewUrl,
-        preparing: tempImagePreparingPromise,
-        url: tempImageUrl,
-      };
-      tempImageFile = null;
-      tempImagePreviewUrl = null;
-      tempImagePreparingPromise = null;
+      const snap = { url: tempImageUrl };
       tempImageUrl = null;
       tempImageExistingUrl = null;
-      tempImageSelectionVersion += 1;
       return snap;
     }
-    function releaseImageSnapshot(snap) {
-      if (snap?.preview && String(snap.preview).startsWith('blob:')) {
-        try { URL.revokeObjectURL(snap.preview); } catch (_) {}
-      }
-    }
+    function releaseImageSnapshot(_snap) {}
 
     // Joriy ko'rinib turgan mahsulotlar ro'yxati (⬆️⬇️ tugmalari shu ro'yxat ichida ishlashi uchun)
     let currentVisibleProductIds = [];
@@ -1292,157 +1215,16 @@
       }
     }
 
-    // ============ IMAGE UPLOAD (Supabase Storage, signed URL orqali) ============
-    // Telegram Desktop/WebView ayrim file-picker File handle'larini callback tugagach
-    // ishonchsiz holatga o'tkazadi. Baytlarni tanlash paytida darhol detached Blob'ga
-    // ko'chiramiz; preview va keyingi Save shu mustaqil nusxadan foydalanadi.
-    function readBlobAsArrayBuffer(blob) {
-      return imageIO.readBlobAsArrayBuffer(blob);
-    }
-
-    function makeDetachedImageFile(bytes, source) {
-      return imageIO.makeDetachedImageFile(bytes, source);
-    }
-
-    async function decodeImageSource(blob) {
-      if (typeof createImageBitmap === 'function') {
-        try {
-          const bitmap = await createImageBitmap(blob);
-          return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close?.() };
-        } catch (_) {}
-      }
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        const url = URL.createObjectURL(blob);
-        img.onload = () => resolve({ source: img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, close: () => URL.revokeObjectURL(url) });
-        img.onerror = () => {
-          URL.revokeObjectURL(url);
-          imageIO.logStage('DECODE_FAILED', { mime: blob?.type, size: blob?.size, level: 'warn' });
-          reject(new Error('image_decode_failed'));
-        };
-        img.src = url;
-      });
-    }
-
-    function canvasToBlob(canvas, mimeType, quality) {
-      return new Promise(resolve => canvas.toBlob(resolve, mimeType, quality));
-    }
-
-    // Rasmni serverga yuborishdan oldin kichraytirish: uzun tomoni maxDim px.
-    // PNG/WebP MIME turi saqlanadi; JPEG JPEG bo'lib qoladi.
-    //
-    // 1.11 pipeline talabi: compression urinishi HECH QACHON xato tashlamasin —
-    // decode/canvas/toBlob bosqichlarining birortasi kutilmagan tarzda
-    // yiqilsa ham (masalan WebView'ning noodatiy Canvas xatosi), funksiya
-    // shunchaki original (allaqachon mustaqil nusxalangan) faylni qaytaradi.
-    // Xato faqat "compression VA original ikkalasi ham ishlamasa" chiqishi
-    // kerak — bu yerda emas, chaqiruvchi tomonda (upload muvaffaqiyatsiz
-    // bo'lganda) yuz beradi. Bundan oldin bu funksiya faqat AYRIM bosqichlar
-    // uchun try/catch qilingandi (masalan canvas.toBlob xatosi tashqariga
-    // chiqib ketardi) — shu tirqish "Rasm faylini lokal o'qishda xato"
-    // xabarining haqiqiy sababi edi, garchi baytlar aslida muvaffaqiyatli
-    // o'qilgan bo'lsa ham.
-    async function compressImage(file, maxDim, quality) {
-      try {
-        let decoded;
-        try { decoded = await decodeImageSource(file); }
-        catch (_) { return file; }
-        try {
-          let width = decoded.width;
-          let height = decoded.height;
-          if (!width || !height) return file;
-          if (width > maxDim || height > maxDim) {
-            if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
-            else { width = Math.round(width * maxDim / height); height = maxDim; }
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return file;
-          ctx.drawImage(decoded.source, 0, 0, width, height);
-          const outputType = file.type === 'image/png' ? 'image/png' : (file.type === 'image/webp' ? 'image/webp' : 'image/jpeg');
-          const blob = await canvasToBlob(canvas, outputType, outputType === 'image/png' ? undefined : quality);
-          if (!blob) return file;
-          const extension = outputType === 'image/png' ? 'png' : (outputType === 'image/webp' ? 'webp' : 'jpg');
-          const name = String(file.name || 'product-image').replace(/\.[^.]+$/, '') + '.' + extension;
-          return makeDetachedImageFile(await readBlobAsArrayBuffer(blob), { name, type: outputType });
-        } finally {
-          decoded.close?.();
-        }
-      } catch (_) {
-        imageIO.logStage('COMPRESS_FAILED', { mime: file?.type, size: file?.size, message: _?.message, level: 'warn' });
-        return file;
-      }
-    }
-
-    async function compressImageToLimit(file, maxBytes, maxDim = 1000, quality = 0.8) {
-      if (!file) return file;
-      const dims = Array.from(new Set([maxDim, Math.min(maxDim, 1200), Math.min(maxDim, 900), Math.min(maxDim, 720), Math.min(maxDim, 600)]))
-        .filter((n) => Number(n) > 0)
-        .sort((a, b) => b - a);
-      const qualities = [quality, Math.min(quality, 0.75), 0.65, 0.55, 0.48];
-      let best = file;
-      for (let i = 0; i < dims.length; i++) {
-        const candidate = await compressImage(file, dims[i], qualities[Math.min(i, qualities.length - 1)]);
-        if (candidate && (!best || candidate.size < best.size)) best = candidate;
-        if (candidate && candidate.size <= maxBytes) return candidate;
-      }
-      return best;
-    }
-
-    // ============ IMAGE PIPELINE V2 ============
-    // Markazlashtirilgan rasm tayyorlash — mahsulot/kategoriya/logotip
-    // (onImagePicked), chek (onCheckoutReceiptPicked) va chekni qayta
-    // yuborish (onResubmitReceiptPicked) barchasi shundan foydalanadi.
-    //
-    // ESKI (V1) muammo: fayl tanlangan ZAHOTI original File'ni
-    // readBlobAsArrayBuffer (FileReader.readAsArrayBuffer, keyin
-    // blob.arrayBuffer() fallback) orqali TO'LIQ o'qib, keyin detached
-    // nusxaga o'girardi — bu Telegram WebView'da (ayniqsa Android
-    // content:// orqali tanlangan rasmlarda) ba'zida abadiy osilib qolardi
-    // ("10 ta rasmdan 2 tasi o'qiladi" — production'da kuzatilgan bug).
-    //
-    // YANGI (V2): FileReader/ArrayBuffer orqali oldindan o'qish UMUMAN olib
-    // tashlangan. compressImageToLimit -> compressImage -> decodeImageSource
-    // ICHKARIDA createImageBitmap(file)'ni TO'G'RIDAN-TO'G'RI original
-    // File'dan chaqiradi (FileReader kerak emas) — bu yo'l WebView'dagi
-    // hang muammosiga umuman duch kelmaydi. Muvaffaqiyatli bo'lsa natija
-    // ALLAQACHON canvas'dan yaratilgan yangi (detached) fayl — qo'shimcha
-    // tashqi detach qadamiga hojat yo'q.
-    //
-    // FALLBACK (o'chirilmagan, faqat ikkinchi darajaga tushirilgan): agar
-    // ICHKI dekod (createImageBitmap VA <img> fallback) IKKALASI HAM
-    // muvaffaqiyatsiz bo'lsa (compressed === file, o'zgarishsiz qaytgan
-    // bo'lsa), eski FileReader/ArrayBuffer + makeDetachedImageFile zanjiri
-    // qayta urinib ko'radi. Bu ham ishlamasa — funksiya xato TASHLAMAYDI,
-    // original faylni o'zgarishsiz qaytaradi (signed-URL yuklash browser
-    // darajasida to'g'ridan-to'g'ri fetch bilan ishlaydi, JS'da qayta bayt
-    // o'qishni talab qilmaydi — shu sabab original native handle hali
-    // yaroqli bo'lsa, yuklash baribir muvaffaqiyatli bo'lishi mumkin).
-    //
-    // onPrepared(file) — mustaqil nusxa tayyor bo'lgan zahoti (preview'ni
-    // barqaror manzilga o'tkazish uchun) chaqiriladi; ixtiyoriy.
-    async function captureAndPrepareImageV2(file, maxBytes, maxDim, quality, onPrepared) {
-      const compressed = await compressImageToLimit(file, maxBytes, maxDim, quality);
-      if (compressed && compressed !== file) {
-        imageIO.logStage('IMAGE_V2_DIRECT_OK', { mime: file?.type, size: file?.size });
-        if (onPrepared) { try { onPrepared(compressed); } catch (_) {} }
-        return compressed;
-      }
-      imageIO.logStage('IMAGE_V2_FALLBACK_STARTED', { mime: file?.type, size: file?.size, level: 'warn' });
-      try {
-        const bytes = await readBlobAsArrayBuffer(file);
-        const detached = makeDetachedImageFile(bytes, file);
-        if (onPrepared) { try { onPrepared(detached); } catch (_) {} }
-        const recompressed = await compressImageToLimit(detached, maxBytes, maxDim, quality);
-        return recompressed || detached;
-      } catch (fallbackErr) {
-        imageIO.logStage('IMAGE_V2_FALLBACK_FAILED', { mime: file?.type, size: file?.size, message: fallbackErr?.message, level: 'error' });
-        return file;
-      }
-    }
-
+    // ============ RASM: FAQAT URL ============
+    // Lokal fayldan yuklash (siqish, signed-URL/base64 yuklash, MIME/hajm
+    // tekshiruvi, Telegram WebView o'qish pipeline'i) butunlay olib
+    // tashlandi — ko'p round davomida real qurilmalarda beqaror ishladi
+    // (tasodifiy rad etish/hang, format va hajmga bog'liq bo'lmagan holda).
+    // Admin endi faqat tayyor (boshqa joyda joylashtirilgan) rasmning
+    // to'g'ridan-to'g'ri HTTPS URL manzilini kiritadi — yuklash/konvertatsiya
+    // shart emas, shuning uchun bu yo'lda "o'qish/yuklash xatosi" umuman
+    // bo'lishi mumkin emas. Rasm qo'shish keyingi bosqichda boshqa (hali
+    // belgilanmagan) yondashuv bilan qaytadan quriladi.
     function validateExternalImageUrl(value) {
       const raw = String(value || '').trim();
       if (!raw) return null;
@@ -1460,18 +1242,10 @@
       el.classList.toggle('hidden', !message);
     }
 
-    function onImageUrlInput(value, previewId, errorId, buttonId) {
+    function onImageUrlInput(value, previewId, errorId) {
       const raw = String(value || '').trim();
-      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
-        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
-      }
-      tempImageFile = null;
-      tempImagePreparingPromise = null;
-      tempImagePreviewUrl = null;
       tempImageUrl = raw || null;
       const preview = document.getElementById(previewId);
-      const pickerButton = buttonId ? document.getElementById(buttonId) : null;
-      if (pickerButton) pickerButton.textContent = `🖼 ${tr('Rasm tanlash', 'Выбрать фото')}`;
 
       if (!raw) {
         setImageUrlError(errorId, '');
@@ -1503,91 +1277,24 @@
 
     function xlImageText(uz, ru) { return tr(uz, ru); }
 
-    async function onImagePicked(event, previewId, buttonId, urlInputId, errorId) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
-
-      try { validatePickedImageFile(file); }
-      catch (e) {
-        event.target.value = '';
-        alert(pickedImageErrorMessage(e, file));
-        return;
-      }
-
-      // Preview upload'dan mustaqil: object URL darhol ko'rsatiladi (V2:
-      // to'g'ridan-to'g'ri ORIGINAL File'dan — o'qishni talab qilmaydi).
-      const selectionVersion = ++tempImageSelectionVersion;
-      if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
-        try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
-      }
-      tempImageFile = file;
-      try { tempImagePreviewUrl = URL.createObjectURL(file); }
-      catch (_) { tempImagePreviewUrl = null; }
-      tempImageUrl = null;
-      const urlInput = urlInputId ? document.getElementById(urlInputId) : null;
-      if (urlInput) urlInput.value = '';
-      if (errorId) setImageUrlError(errorId, '');
-      const prev = document.getElementById(previewId);
-      if (prev) {
-        if (tempImagePreviewUrl) {
-          prev.src = tempImagePreviewUrl;
-          prev.classList.remove('hidden');
-        }
-      }
-      const pickerButton = buttonId ? document.getElementById(buttonId) : null;
-      if (pickerButton) pickerButton.textContent = `🖼 ${tr('Rasmni almashtirish', 'Заменить фото')}`;
-
-      const preparing = captureAndPrepareImageV2(file, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8, (updated) => {
-        // 8-bo'lim: preview yangilanishi kosmetik — muvaffaqiyatsiz bo'lsa
-        // ham bu READ xatosi sifatida yuqoriga chiqmasin.
-        if (selectionVersion !== tempImageSelectionVersion || tempImagePreparingPromise !== preparing) return;
-        try {
-          tempImageFile = updated;
-          const stablePreviewUrl = URL.createObjectURL(updated);
-          const oldPreviewUrl = tempImagePreviewUrl;
-          tempImagePreviewUrl = stablePreviewUrl;
-          if (prev) { prev.src = stablePreviewUrl; prev.classList.remove('hidden'); }
-          if (oldPreviewUrl && oldPreviewUrl !== stablePreviewUrl && oldPreviewUrl.startsWith('blob:')) {
-            try { URL.revokeObjectURL(oldPreviewUrl); } catch (_) {}
-          }
-        } catch (previewErr) {
-          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
-        }
-      });
-      tempImagePreparingPromise = preparing;
-      showActionToast(tr("🖼️ Rasm tanlandi", "🖼️ Фото выбрано"), 'success', 1200);
+    // existingImg berilsa (tahrirlash) va URL maydoni bo'sh qoldirilsa —
+    // eski rasm o'zgarishsiz qoladi. Yangi qo'shishda existingImg=null.
+    function resolveImageUrlOrKeep(snapshot, existingImg = null) {
+      if (snapshot?.url) return validateExternalImageUrl(snapshot.url);
+      return existingImg || null;
     }
 
-    async function fileToBase64(file) {
-      return imageIO.blobToBase64(file);
-    }
-
-    // Mahsulot/kategoriya/logotip bitta pipeline'da: local baytlar darhol
-    // detached nusxaga olinadi va kichraytiriladi. Telegram WebView'da direct
-    // Storage fetch oldingi production testda beqaror bo'lgani uchun PRIMARY
-    // transport app-api server upload. U ishlamasa signed Storage URL fallback.
-    // Admin local rasm tanlagan bo'lsa requireImage=true ishlaydi:
-    // upload xatosi mahsulotni jim rasmsiz saqlab yubormaydi.
+    // Mahsulot rasmi (add/edit-field/rasmsiz-navbat) uchun umumiy: existing
+    // fallback yo'q — chaqiruvchilar allaqachon o'zlari (guard yoki
+    // requireImage) URL borligini ta'minlaydi.
     async function productImagePayloadFromSnapshot(snapshot, requireImage = false) {
-      if (snapshot?.file || snapshot?.preparing) {
-        const uploadedUrl = await uploadImageSnapshot(snapshot, null, requireImage);
-        if (!uploadedUrl && requireImage) {
-          throw new Error(tr("Rasm yuklanmadi.", "Изображение не загружено."));
-        }
-        return { imageUpload: null, img: uploadedUrl };
-      }
       if (snapshot?.url) return { imageUpload: null, img: validateExternalImageUrl(snapshot.url) };
-      if (requireImage) throw new Error(tr("Rasm faylini tanlang yoki HTTPS rasm URL kiriting.", "Выберите файл изображения или укажите HTTPS URL."));
+      if (requireImage) throw new Error(tr("Rasm URL kiriting (https://...).", "Укажите URL изображения (https://...)."));
       return { imageUpload: null, img: null };
     }
     function friendlyImageError(error) {
       const raw = String(error?.message || error || '');
-      if (/failed to fetch|networkerror|load failed/i.test(raw)) return tr("Internet yoki Telegram WebView tarmoq xatosi. Eski rasm o'zgarmadi; internetni tekshirib qayta urinib ko'ring.", "Ошибка сети или Telegram WebView. Старое изображение не изменено; проверьте интернет и повторите.");
       if (/invalid_image_url/i.test(raw)) return tr("Rasm URL noto'g'ri. To'liq HTTPS havola kiriting.", "Неверный URL изображения. Введите полный HTTPS-адрес.");
-      if (/invalid_image_upload|invalid_image_type/i.test(raw)) return tr("Rasm formati noto'g'ri. JPG, PNG yoki WebP fayl tanlang.", "Неверный формат изображения. Выберите JPG, PNG или WebP.");
-      if (/image_too_large/i.test(raw)) return tr("Rasm juda katta. Kichikroq rasm tanlang.", "Изображение слишком большое. Выберите файл меньшего размера.");
-      if (/image_upload_failed|image_public_url_failed/i.test(raw)) return tr("Rasm server xotirasiga yuklanmadi. Eski rasm saqlanib qoldi; qayta urinib ko'ring.", "Не удалось загрузить изображение в хранилище. Старое изображение сохранено; повторите попытку.");
       return raw || tr("Noma'lum rasm xatosi.", "Неизвестная ошибка изображения.");
     }
 
@@ -1595,85 +1302,6 @@
       clearTempImageSelection();
       activePopupModal = null;
       render();
-    }
-
-    async function uploadImageSnapshot(snapshot, existingImg, strict = false) {
-      if (!snapshot || (!snapshot.file && !snapshot.preparing)) return existingImg || null;
-      const pipelineStartedAt = Date.now();
-      let prepared;
-      try {
-        prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file;
-      } catch (e) {
-        console.error(`[image:${e?.code || 'DECODE_FAILED'}]`, e);
-        if (strict) throw e;
-        return existingImg || null;
-      }
-      if (!prepared) return existingImg || null;
-      imageIO.logStage('PREPARED_OK', { mime: prepared.type, size: prepared.size, duration: Date.now() - pipelineStartedAt });
-
-      showActionToast(tr("☁️ Rasm yuklanmoqda...", "☁️ Фото загружается..."), 'saving');
-      const mimeType = String(prepared.type || '').toLowerCase();
-      if (!SUPPORTED_IMAGE_MIME.has(mimeType)) {
-        const err = new Error('invalid_image_type');
-        imageIO.logStage('FINAL_SIZE_FAILED', { mime: mimeType, message: 'invalid_image_type', level: 'warn' });
-        if (strict) throw err;
-        return existingImg || null;
-      }
-      if (prepared.size > MAX_STORED_IMAGE_BYTES) {
-        const err = new Error('image_too_large');
-        imageIO.logStage('FINAL_SIZE_FAILED', { size: prepared.size, message: 'image_too_large', level: 'warn' });
-        if (strict) throw err;
-        return existingImg || null;
-      }
-
-      // V2 PRIMARY: signed URL to'g'ridan-to'g'ri Supabase Storage'ga —
-      // Edge Function bayt ko'rmaydi (base64/JSON emas). Yuklangach
-      // finalize_image_upload orqali Storage'da haqiqatan mavjudligi
-      // tasdiqlanadi (finalize_payment_receipt bilan bir xil pattern:
-      // "yozildi" deb signed URL javobiga emas, haqiqiy Storage `.list()`
-      // natijasiga ishoniladi).
-      const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-      const ext = extByMime[mimeType] || 'jpg';
-      let signedErr = null;
-      const signedUploadStartedAt = Date.now();
-      try {
-        const { path, token } = await callApi('get_upload_url', { ext, size: prepared.size, mimeType });
-        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
-        if (upErr) throw upErr;
-        const finalized = await callApi('finalize_image_upload', { path });
-        if (!finalized?.url) throw new Error('image_public_url_failed');
-        imageIO.logStage('SIGNED_URL_UPLOAD_OK', { duration: Date.now() - signedUploadStartedAt, size: prepared.size });
-        return finalized.url;
-      } catch (e) {
-        signedErr = e;
-        console.warn('[image:SIGNED_URL_UPLOAD_FAILED]', e);
-        imageIO.logStage('SIGNED_URL_UPLOAD_FAILED', { duration: Date.now() - signedUploadStartedAt, name: e?.name, message: e?.message, level: 'warn' });
-      }
-
-      // FALLBACK (o'chirilmagan, ikkinchi darajali): signed URL vaqtincha
-      // ishlamasa (masalan Storage CORS/tarmoq muammosi), base64-in-JSON
-      // orqali app-api server upload — mustaqil ikkinchi yo'l.
-      const serverUploadStartedAt = Date.now();
-      try {
-        const imageUpload = { mimeType, base64: await fileToBase64(prepared) };
-        const result = await callApi('upload_product_image', { imageUpload });
-        if (!result?.url) throw new Error('image_public_url_failed');
-        imageIO.logStage('SERVER_UPLOAD_OK', { duration: Date.now() - serverUploadStartedAt, size: prepared.size });
-        return result.url;
-      } catch (fallbackErr) {
-        console.error('[image:SERVER_UPLOAD_FALLBACK_FAILED]', { signedErr, fallbackErr });
-        imageIO.logStage('SERVER_UPLOAD_FAILED', { duration: Date.now() - serverUploadStartedAt, name: fallbackErr?.name, message: fallbackErr?.message, level: 'error' });
-        imageIO.logStage('UPLOAD_ALL_FAILED', { duration: Date.now() - pipelineStartedAt, level: 'error' });
-        if (strict) throw signedErr || fallbackErr || new Error('image_upload_failed');
-        return existingImg || null;
-      }
-    }
-
-    // Eski chaqiruvlar uchun wrapper.
-    async function uploadImageIfNeeded(existingImg) {
-      const snap = takeTempImageSnapshot();
-      try { return await uploadImageSnapshot(snap, existingImg, false); }
-      finally { releaseImageSnapshot(snap); }
     }
 
     // RENDER ROUTER
@@ -2194,38 +1822,20 @@
       return tr('Yetkazib berish narxi hozir to‘lanadigan jami summaga qo‘shiladi.', 'Стоимость доставки включена в итоговую сумму к оплате.');
     }
 
-    function clearCheckoutReceipt() {
-      checkoutReceiptSelectionVersion += 1;
-      if (checkoutReceiptPreviewUrl) URL.revokeObjectURL(checkoutReceiptPreviewUrl);
-      checkoutReceiptFile = null;
-      checkoutReceiptPreparing = null;
-      checkoutReceiptPreviewUrl = null;
-    }
+    // Chek yuklash funksiyasi vaqtincha olib tashlangan (rasm qo'shish
+    // pipeline'i qaytadan qurilguncha) — joy egallovchi matn qoladi.
+    function clearCheckoutReceipt() {}
 
-    // 1.8: native "Choose file / No file chosen" matni hech qachon ko'rinmasin —
-    // faqat custom tugma + tanlangach preview + "Almashtirish".
-    function renderReceiptPicker(receiptRequired) {
-      const label = `${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')} ${receiptRequired ? '*' : `(${tr('ixtiyoriy', 'необязательно')})`}`;
-      const pickerInput = `<input id="chk-receipt" type="file" accept="image/*" onchange="onCheckoutReceiptPicked(event)" class="hidden">`;
-      if (checkoutReceiptPreviewUrl) {
-        return `
-          <label class="block font-bold">${label}</label>
-          <div class="flex items-center gap-3 mt-1">
-            <img src="${checkoutReceiptPreviewUrl}" class="h-16 w-16 object-cover rounded-xl border" alt="">
-            <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}${pickerInput}</label>
-          </div>`;
-      }
+    function renderReceiptPicker() {
       return `
-        <label class="block font-bold">${label}</label>
-        <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white mt-1">📎 ${tr('Chekni tanlash', 'Выбрать чек')}${pickerInput}</label>`;
+        <label class="block font-bold">${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')}</label>
+        <p class="mt-1 text-gray-400 font-bold">rasm</p>`;
     }
 
     function rerenderReceiptPicker() {
       const wrap = document.getElementById('chk-receipt-wrap');
       if (!wrap) return;
-      const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
-      const selectedPayment = commerce.paymentOptions(fulfillmentConfig, regionKey).find(m => m.id === selectedPayMethod);
-      wrap.innerHTML = renderReceiptPicker(!!selectedPayment?.receiptRequired);
+      wrap.innerHTML = renderReceiptPicker();
     }
 
     function openCheckoutForm() {
@@ -2524,7 +2134,7 @@
               <p>${escapeHtml(selectedPayment.cardHolder || '')}</p>
               <p class="text-[10px] text-blue-700">${tr(`CVV, PIN, SMS kod yoki amal qilish muddatini hech kimga bermang — ${escapeHtml(shopDisplayName())} ularni so'ramaydi.`, `Никому не сообщайте CVV, PIN, SMS-код или срок действия — ${escapeHtml(shopDisplayName())} их не запрашивает.`)}</p>
             </div>
-            <div id="chk-receipt-wrap">${renderReceiptPicker(selectedPayment.receiptRequired)}</div>`;
+            <div id="chk-receipt-wrap">${renderReceiptPicker()}</div>`;
         } else {
           cardDetails.classList.add('hidden');
           cardDetails.innerHTML = '';
@@ -2536,68 +2146,6 @@
       if (subtotalEl) subtotalEl.textContent = money(totals.subtotal);
       if (deliveryFeeEl) deliveryFeeEl.textContent = selectedDelivery?.kind === 'FIXED' ? money(totals.deliveryFee) : (selectedDelivery?.kind === 'TAXI' ? tr('Alohida', 'Отдельно') : (selectedDelivery?.kind === 'POST' && selectedDelivery.payer === 'CUSTOMER' ? tr('Pochta tarifida', 'По тарифу почты') : money(0)));
       if (payableEl) payableEl.textContent = money(totals.payableTotal);
-    }
-
-    async function onCheckoutReceiptPicked(event) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
-        event.target.value = '';
-        return alert(isLikelyHeicFile(file)
-          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. Chekni JPG/PNG formatida yuklang.", "⚠️ Формат HEIC/HEIF пока не поддерживается. Загрузите чек в формате JPG/PNG.")
-          : tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
-      }
-      // 1.11: preview tanlangan zahoti ORIGINAL File'dan ko'rsatiladi — V2:
-      // FileReader/ArrayBuffer orqali oldindan o'qish shart emas.
-      const selectionVersion = ++checkoutReceiptSelectionVersion;
-      checkoutReceiptFile = file;
-      if (checkoutReceiptPreviewUrl) { try { URL.revokeObjectURL(checkoutReceiptPreviewUrl); } catch (_) {} }
-      checkoutReceiptPreviewUrl = URL.createObjectURL(file);
-      checkoutReceiptPreparing = captureAndPrepareImageV2(file, MAX_RECEIPT_BYTES, 1600, 0.85, (updated) => {
-        if (selectionVersion !== checkoutReceiptSelectionVersion) return;
-        try {
-          const stableUrl = URL.createObjectURL(updated);
-          const oldUrl = checkoutReceiptPreviewUrl;
-          checkoutReceiptPreviewUrl = stableUrl;
-          rerenderReceiptPicker();
-          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) {
-            try { URL.revokeObjectURL(oldUrl); } catch (_) {}
-          }
-        } catch (previewErr) {
-          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
-        }
-      });
-      rerenderReceiptPicker();
-    }
-
-    // 1.7: chek order bilan BIR VAQTDA, bitta create_order so'rovida yuboriladi
-    // (order avval yaratilib, chek keyin "ixtiyoriy qo'shimcha" sifatida
-    // yuborilmaydi) — shunday qilib order chekssiz "muvaffaqiyatli" holatda
-    // qolib ketmaydi. Product rasmlaridagi kabi Telegram WebView -> Storage
-    // cross-origin signed upload'ga tayanmaymiz; baytlar autentifikatsiyalangan
-    // app-api orqali yuboriladi.
-    async function prepareReceiptImageUpload() {
-      if (!checkoutReceiptFile && !checkoutReceiptPreparing) return null;
-      let prepared;
-      try {
-        prepared = checkoutReceiptPreparing ? await checkoutReceiptPreparing : checkoutReceiptFile;
-      } catch (e) {
-        console.error('[receipt:READ_ORIGINAL_FAILED]', e);
-        // 5.2: eski (allaqachon rad etilgan) promise qayta-qayta kutilib,
-        // "Yuborish" cheksiz bir xil xato bilan qaytmasligi uchun — chek
-        // holatini tozalaymiz, foydalanuvchi ochiq ko'rinishda qayta tanlaydi.
-        clearCheckoutReceipt();
-        rerenderReceiptPicker();
-        throw new Error('receipt_read_failed');
-      }
-      if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
-      return {
-        base64: await fileToBase64(prepared),
-        mimeType: prepared.type,
-        fileName: prepared.name || 'payment-receipt.jpg',
-      };
     }
 
     let submittingOrder = false;
@@ -2647,9 +2195,9 @@
       if (!selectedDelivery) return alert(tr('Bu hudud uchun yetkazib berish usulini tanlang.', 'Выберите доступный способ доставки.'));
       if (isPostDelivery && !checkoutSelectedBranch) return alert(tr('Iltimos, pochta filialini tanlang.', 'Пожалуйста, выберите отделение почты.'));
       if (!selectedPayment) return alert(tr("Bu hudud uchun to'lov usuli mavjud emas.", 'Для этого региона нет доступного способа оплаты.'));
-      if (selectedPayment.id === 'CARD' && selectedPayment.receiptRequired && !checkoutReceiptFile && !checkoutReceiptPreparing) {
-        return alert(tr("Buyurtmani yuborish uchun to'lov chekini yuklang.", 'Чтобы отправить заказ, загрузите чек оплаты.'));
-      }
+      // Chek yuklash funksiyasi vaqtincha olib tashlangan — "chek majburiy"
+      // tekshiruvi ham shu bilan olib tashlandi (aks holda CARD to'lov bilan
+      // buyurtma berish HECH KIM uchun ishlamay qolardi).
 
       // Savatdagi har bir variant bo'yicha tezkor tekshiruv. Yakuniy atomik tekshiruv serverda.
       for (const [key, itemData] of Object.entries(cart)) {
@@ -2674,21 +2222,13 @@
       }));
 
       try {
-        // 1.7: chek order bilan BIR so'rovda, atomik tarzda yuboriladi — order
-        // avval yaratilib, chek "keyinroq, ixtiyoriy" tarzda ulanmaydi.
-        let receiptImageUpload = null;
-        try { receiptImageUpload = await prepareReceiptImageUpload(); }
-        catch (prepError) {
-          if (String(prepError?.message) === 'receipt_read_failed') {
-            return alert(tr("Chek rasmini o'qib bo'lmadi. Iltimos, chek rasmini qaytadan tanlang.", "Не удалось прочитать фото чека. Пожалуйста, выберите фото чека заново."));
-          }
-          return alert(tr("Chek rasmi yaroqsiz yoki juda katta (JPG/PNG/WebP, 6MB gacha).", 'Файл чека повреждён или слишком большой (JPG/PNG/WebP, до 6 МБ).'));
-        }
-
+        // Chek yuklash funksiyasi vaqtincha olib tashlangan — order endi
+        // hech qachon chek bilan yuborilmaydi (backend ham buni talab
+        // qilmaydi, MUAMMO-fix: bu 2026-08 roundda birgalikda o'zgartirildi).
         const result = await callApi('create_order', {
           items: itemsPayload, fullname, phone, regionKey, district, address,
           deliveryMethodId: selectedDeliveryMethodId, paymentMethodId: selectedPayMethod,
-          receiptImageUpload, branchId: isPostDelivery ? checkoutSelectedBranch?.id : undefined,
+          receiptImageUpload: null, branchId: isPostDelivery ? checkoutSelectedBranch?.id : undefined,
         });
         const newOrder = formatOrderForUi(result.order);
         orders.unshift(newOrder);
@@ -3602,12 +3142,6 @@
               </div>
               <div class="flex items-center gap-2 flex-shrink-0">
                 ${shopLogoUrl ? `<img id="shop-about-logo" src="${escapeHtml(shopLogoUrl)}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border">` : `<div id="shop-about-logo-empty" class="h-10 min-w-10 px-2 rounded-lg bg-slate-50 border flex items-center justify-center text-[9px] font-bold text-slate-400">${escapeHtml(shopDisplayName())}</div>`}
-                ${(isUserAnAdmin && isAdminMode) ? `
-                  <label class="cursor-pointer text-[10px] font-bold px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200" title="${tr("Logotip qo'shish/almashtirish","Добавить/заменить логотип")}">
-                    🖼️
-                    <input type="file" accept="image/*" class="hidden" onchange="saveShopLogoFromPicker(event)">
-                  </label>
-                ` : ''}
               </div>
             </div>
 
@@ -3707,65 +3241,26 @@
         return alert(tr("Kordinatani '41.217408,69.211225' ko'rinishida yozing.", "Введите координаты в формате '41.217408,69.211225'."));
       }
 
+      let newLogoUrl;
+      try { newLogoUrl = validateExternalImageUrl(document.getElementById('sc-logo-url').value); }
+      catch (e) { return alert(e.message || String(e)); }
+      const logoChanged = newLogoUrl !== (shopLogoUrl || null);
+
       const old = { ...shopContact };
+      const oldLogo = shopLogoUrl;
       shopContact = { ...next, startMessage: shopContact.startMessage };
+      if (logoChanged) shopLogoUrl = newLogoUrl;
       activePopupModal = null;
       render(); // optimistic UI — darhol ko'rinadi
       try {
         await callApi('set_shop_contact', next);
+        if (logoChanged) await callApi('set_shop_logo', { logoUrl: newLogoUrl });
       } catch (e) {
         console.error(e);
         shopContact = old;
+        shopLogoUrl = oldLogo;
         render();
         alert(tr("❌ Do'kon ma'lumotlarini saqlab bo'lmadi: ", "❌ Не удалось сохранить данные магазина: ") + (e.message || e));
-      }
-    }
-
-    // 1.11: boshqa rasm oqimlaridagi (yangi tovar/tahrirlash/Rasmsiz queue)
-    // kabi bir xil barqaror pipeline: baytlar avval mustaqil nusxalanadi,
-    // vaqtinchalik File obyektiga (upload tugagunicha) keyin ishonilmaydi.
-    async function saveShopLogoFromPicker(event) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
-      try { validatePickedImageFile(file); }
-      catch (e) {
-        event.target.value = '';
-        return alert(pickedImageErrorMessage(e, file));
-      }
-
-      // 5.3 root cause (hamon amal qiladi): bu picker render()ni chaqirishdan
-      // OLDIN mustaqil nusxa tayyorlaydi — render() <input type=file>ni
-      // DOM'dan qayta yaratishi mumkin, shu orada Telegram WebView native File
-      // handle'ni yaroqsiz qilib qo'yardi. V2: captureAndPrepareImageV2
-      // FileReader/ArrayBuffer orqali oldindan o'qishga hojatsiz — to'g'ridan-
-      // to'g'ri createImageBitmap(file) orqali xavfsiz dekodlaydi.
-      const old = shopLogoUrl;
-      let prepared;
-      try {
-        prepared = await captureAndPrepareImageV2(file, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8);
-      } catch (e) {
-        console.error('[logo:READ_ORIGINAL_FAILED]', e);
-        event.target.value = '';
-        return alert(tr("Logotip faylini o'qib bo'lmadi. Qaytadan tanlab ko'ring.", "Не удалось прочитать файл логотипа. Попробуйте выбрать заново."));
-      }
-
-      const localPreview = URL.createObjectURL(prepared);
-      shopLogoUrl = localPreview;
-      render(); // darhol preview
-      try {
-        const url = await uploadImageSnapshot({ file: prepared, preparing: Promise.resolve(prepared), url: null }, old, true);
-        await callApi('set_shop_logo', { logoUrl: url });
-        shopLogoUrl = url;
-        render();
-      } catch (e) {
-        console.error(e);
-        shopLogoUrl = old;
-        render();
-        alert(tr("❌ Logotipni saqlab bo'lmadi: ", "❌ Не удалось сохранить логотип: ") + (e.message || e));
-      } finally {
-        URL.revokeObjectURL(localPreview);
-        event.target.value = '';
       }
     }
 
@@ -3851,6 +3346,13 @@
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-xl text-xs" onclick="event.stopPropagation()">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("✏️ Do'kon haqida", "✏️ О магазине")}</h3>
+              <div>
+                <label class="font-bold text-gray-600">${tr("Logotip (URL)", "Логотип (URL)")}</label>
+                <div class="flex items-center gap-3 mt-1">
+                  ${shopLogoUrl ? `<img src="${escapeHtml(shopLogoUrl)}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border">` : ''}
+                  <input type="url" inputmode="url" id="sc-logo-url" value="${escapeHtml(shopLogoUrl || '')}" placeholder="${tr('Logotip URL (https://...)','URL логотипа (https://...)')}" class="flex-1 p-2 border rounded-xl">
+                </div>
+              </div>
               <div>
                 <label class="font-bold text-gray-600">${tr("Do'kon nomi", "Название магазина")}</label>
                 <input type="text" id="sc-name" value="${escapeHtml(shopContact.name || '')}" placeholder="FITCORE" class="w-full mt-1 p-2 border rounded-xl">
@@ -4019,10 +3521,8 @@
               </div>
 
               <div>
-                <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
-                <input id="m-prod-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'm-prod-prev', 'm-prod-image-button', 'm-prod-image-url', 'm-prod-image-url-error')" class="hidden">
-                <button id="m-prod-image-button" type="button" onclick="document.getElementById('m-prod-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr("Rasm tanlash", "Выбрать фото")}</button>
-                <input id="m-prod-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-prod-prev', 'm-prod-image-url-error', 'm-prod-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full mt-2 p-2 border rounded-xl">
+                <label class="font-bold text-gray-600">${tr("Tovar rasmi (URL)", "Фото товара (URL)")}</label>
+                <input id="m-prod-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-prod-prev', 'm-prod-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="w-full mt-1 p-2 border rounded-xl">
                 <p id="m-prod-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
                 <img id="m-prod-prev" src="" class="w-24 h-24 object-cover rounded-xl mt-2 hidden border">
               </div>
@@ -4047,13 +3547,12 @@
                 <input type="text" id="m-cat-name" placeholder="${tr('Masalan: Proteinlar','Например: Протеины')}" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
-                <label class="font-bold text-gray-600">${tr("Katalog rasmi", "Изображение каталога")}</label>
+                <label class="font-bold text-gray-600">${tr("Katalog rasmi (URL)", "Изображение каталога (URL)")}</label>
                 <div class="flex items-center gap-3 mt-1">
                   <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl hidden border">
-                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}
-                    <input type="file" accept="image/*" onchange="onImagePicked(event, 'm-cat-prev')" class="hidden">
-                  </label>
+                  <input id="m-cat-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-cat-prev', 'm-cat-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="flex-1 p-2 border rounded-xl">
                 </div>
+                <p id="m-cat-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
               </div>
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveCategoryFromModal()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("Saqlash", "Сохранить")}</button>
@@ -4076,13 +3575,12 @@
                 <input type="text" id="ec-name" value="${escapeHtml(c.name)}" class="w-full mt-1 p-2 border rounded-xl">
               </div>
               <div>
-                <label class="font-bold text-gray-600">${tr("Katalog rasmi", "Изображение каталога")}</label>
+                <label class="font-bold text-gray-600">${tr("Katalog rasmi (URL)", "Изображение каталога (URL)")}</label>
                 <div class="flex items-center gap-3 mt-1">
                   <img id="ec-img-prev" src="${escapeHtml((c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? c.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-16 h-16 object-cover rounded-xl ${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? '' : 'hidden'} border">
-                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? `🔄 ${tr('Rasmni almashtirish', 'Заменить изображение')}` : `🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}`}
-                    <input type="file" accept="image/*" onchange="onImagePicked(event, 'ec-img-prev')" class="hidden">
-                  </label>
+                  <input id="ec-image-url" type="url" inputmode="url" value="${(c.img && c.img.startsWith('http')) ? escapeHtml(c.img) : ''}" oninput="onImageUrlInput(this.value, 'ec-img-prev', 'ec-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="flex-1 p-2 border rounded-xl">
                 </div>
+                <p id="ec-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
               </div>
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveCategoryEdit('${c.id}')" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("Saqlash", "Сохранить")}</button>
@@ -4118,9 +3616,7 @@
                   <img id="miq-img-prev" src="" class="hidden w-full h-48 object-contain rounded-xl bg-white">
                   <div id="miq-empty-preview" class="h-32 flex items-center justify-center text-center text-gray-400 font-bold">🖼<br>${tr('Rasm preview','Предпросмотр фото')}</div>
                 </div>
-                <input id="miq-image-input" type="file" accept="image/*" onchange="document.getElementById('miq-empty-preview')?.classList.add('hidden'); onImagePicked(event, 'miq-img-prev', 'miq-image-button', 'miq-image-url', 'miq-image-url-error')" class="hidden">
-                <button id="miq-image-button" type="button" onclick="document.getElementById('miq-image-input').click()" class="w-full bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr('Rasm tanlash','Выбрать фото')}</button>
-                <input id="miq-image-url" type="url" inputmode="url" oninput="document.getElementById('miq-empty-preview')?.classList.toggle('hidden', !!this.value.trim()); onImageUrlInput(this.value, 'miq-img-prev', 'miq-image-url-error', 'miq-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full p-2.5 border rounded-xl">
+                <input id="miq-image-url" type="url" inputmode="url" oninput="document.getElementById('miq-empty-preview')?.classList.toggle('hidden', !!this.value.trim()); onImageUrlInput(this.value, 'miq-img-prev', 'miq-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="w-full p-2.5 border rounded-xl">
                 <p id="miq-image-url-error" class="hidden text-[10px] text-red-600"></p>
                 <button onclick="saveMissingImageQueueItem('${p.id}')" ${missingImageQueueSaving ? 'disabled' : ''} class="w-full ${missingImageQueueSaving ? 'bg-gray-300 text-gray-500' : 'bg-emerald-600 text-white'} font-black py-3 rounded-xl">${missingImageQueueSaving ? tr('⏳ Saqlanmoqda…','⏳ Сохранение…') : tr('✅ Saqlash','✅ Сохранить')}</button>
                 <div class="grid grid-cols-2 gap-2 sticky bottom-0 bg-white pt-2">
@@ -4387,10 +3883,8 @@
               ` : ''}
 
               ${field === 'img' ? `
-                <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
-                <input id="ef-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev', 'ef-image-button', 'ef-image-url', 'ef-image-url-error')" class="hidden">
-                <button id="ef-image-button" type="button" onclick="document.getElementById('ef-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${hasProductImage(p) ? tr("Rasmni almashtirish", "Заменить фото") : tr("Rasm tanlash", "Выбрать фото")}</button>
-                <input id="ef-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'ef-img-prev', 'ef-image-url-error', 'ef-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full mt-2 p-2 border rounded-xl">
+                <label class="font-bold text-gray-600">${tr("Tovar rasmi (URL)", "Фото товара (URL)")}</label>
+                <input id="ef-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'ef-img-prev', 'ef-image-url-error')" placeholder="${tr('Rasm URL (https://...)','URL изображения (https://...)')}" class="w-full mt-1 p-2 border rounded-xl">
                 <p id="ef-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
                 <img id="ef-img-prev" src="${escapeHtml(hasProductImage(p) ? p.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border ${hasProductImage(p) ? '' : 'hidden'}">
               ` : ''}
@@ -4742,19 +4236,11 @@
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2">📎 ${tr('Yangi chek yuborish', 'Отправить новый чек')}</h3>
               <div>
-                <label class="block font-bold">${tr("To'lov cheki/skrinshoti *", 'Чек/скриншот оплаты *')}</label>
-                ${resubmitReceiptPreviewUrl ? `
-                  <div class="flex items-center gap-3 mt-1">
-                    <img src="${resubmitReceiptPreviewUrl}" class="h-16 w-16 object-cover rounded-xl border" alt="">
-                    <label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">🔄 ${tr('Almashtirish', 'Заменить')}<input type="file" accept="image/*" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
-                  </div>
-                ` : `
-                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white mt-1">📎 ${tr('Chekni tanlash', 'Выбрать чек')}<input type="file" accept="image/*" onchange="onResubmitReceiptPicked(event)" class="hidden"></label>
-                `}
+                <label class="block font-bold">${tr("To'lov cheki/skrinshoti", 'Чек/скриншот оплаты')}</label>
+                <p class="mt-1 text-gray-400 font-bold">rasm</p>
               </div>
               <div class="flex gap-2 pt-1">
-                <button onclick="submitResubmitReceipt()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
-                <button onclick="closeResubmitReceiptModal()" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr('Bekor qilish', 'Отмена')}</button>
+                <button onclick="closeResubmitReceiptModal()" class="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl">${tr('Yopish', 'Закрыть')}</button>
               </div>
             </div>
           </div>
@@ -5237,103 +4723,18 @@
       }
     }
 
-    // 15-band: rad etilgan chekni qayta yuborish — mavjud rasm pipeline
-    // primitivlaridan (readBlobAsArrayBuffer/makeDetachedImageFile/
-    // compressImageToLimit/fileToBase64) checkout oqimidagi bilan bir xil
-    // tarzda foydalanadi, lekin alohida state/modal'da (checkout draft'ga
-    // aralashmaydi). Checkout'dagi prepareReceiptImageUpload'dan farqli
-    // o'laroq bu ALLAQACHON mavjud orderga bog'liq — shuning uchun o'z
-    // alohida callApi('upload_payment_receipt', ...) chaqiruviga ega
-    // (create_order bilan bitta so'rovda yuborilishi mumkin emas, chunki
-    // order allaqachon yaratilgan).
+    // 15-band: rad etilgan chekni qayta yuborish oynasi. Chek yuklash
+    // funksiyasi vaqtincha olib tashlangan (rasm qo'shish pipeline'i
+    // qaytadan qurilguncha) — bu oyna endi faqat joy egallovchi.
     function openResubmitReceiptModal(orderId) {
       resubmitOrderId = orderId;
-      resubmitReceiptFile = null;
-      resubmitReceiptPreparing = null;
-      resubmitReceiptPreviewUrl = null;
       activePopupModal = 'RESUBMIT_RECEIPT';
       render();
     }
     function closeResubmitReceiptModal() {
-      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
       resubmitOrderId = null;
-      resubmitReceiptFile = null;
-      resubmitReceiptPreparing = null;
-      resubmitReceiptPreviewUrl = null;
       activePopupModal = null;
       render();
-    }
-    async function onResubmitReceiptPicked(event) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
-        event.target.value = '';
-        return alert(isLikelyHeicFile(file)
-          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. Chekni JPG/PNG formatida yuklang.", "⚠️ Формат HEIC/HEIF пока не поддерживается. Загрузите чек в формате JPG/PNG.")
-          : tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
-      }
-      const selectionVersion = ++resubmitReceiptSelectionVersion;
-      resubmitReceiptFile = file;
-      if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
-      resubmitReceiptPreviewUrl = URL.createObjectURL(file);
-      resubmitReceiptPreparing = captureAndPrepareImageV2(file, MAX_RECEIPT_BYTES, 1600, 0.85, (updated) => {
-        if (selectionVersion !== resubmitReceiptSelectionVersion) return;
-        try {
-          const stableUrl = URL.createObjectURL(updated);
-          const oldUrl = resubmitReceiptPreviewUrl;
-          resubmitReceiptPreviewUrl = stableUrl;
-          renderModalContainer();
-          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
-        } catch (previewErr) {
-          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
-        }
-      });
-      renderModalContainer();
-    }
-    // 5-band/13-band: chekni qayta yuborish — endi signed URL PRIMARY
-    // (get_payment_receipt_upload_url + finalize_payment_receipt, avval
-    // yozilgan-lekin-ishlatilmagan actionlar jonlantirildi), base64
-    // (upload_payment_receipt) ikkinchi darajali fallback sifatida saqlanadi.
-    // Receipt approve/reject/resubmit/order-association business logikasi
-    // (finalize_payment_receipt ichida) o'zgarishsiz qoladi — faqat transport.
-    async function submitResubmitReceipt() {
-      if (!resubmitOrderId || (!resubmitReceiptFile && !resubmitReceiptPreparing)) {
-        return alert(tr("Iltimos, chek rasmini tanlang.", "Пожалуйста, выберите изображение чека."));
-      }
-      const orderId = resubmitOrderId;
-      showActionToast(tr('⏳ Yuborilmoqda...', '⏳ Отправка...'), 'saving');
-      try {
-        const prepared = resubmitReceiptPreparing ? await resubmitReceiptPreparing : resubmitReceiptFile;
-        if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
-
-        let signedOk = false;
-        try {
-          const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-          const ext = extByMime[prepared.type];
-          const { path, token } = await callApi('get_payment_receipt_upload_url', { orderId, mimeType: prepared.type, size: prepared.size });
-          const { error: upErr } = await sb.storage.from('payment-receipts').uploadToSignedUrl(path, token, prepared);
-          if (upErr) throw upErr;
-          await callApi('finalize_payment_receipt', { orderId, path });
-          signedOk = true;
-        } catch (signedErr) {
-          console.warn('[receipt:SIGNED_URL_RESUBMIT_FAILED]', signedErr);
-        }
-        if (!signedOk) {
-          const imageUpload = { base64: await fileToBase64(prepared), mimeType: prepared.type, fileName: prepared.name || 'payment-receipt.jpg' };
-          await callApi('upload_payment_receipt', { orderId, imageUpload });
-        }
-        const patch = { hasReceipt: true, receiptReviewStatus: 'PENDING', receiptRejectReason: null };
-        const idx = orders.findIndex(o => o.id === orderId);
-        if (idx >= 0) orders[idx] = { ...orders[idx], ...patch };
-        if (selectedOrderModal?.id === orderId) selectedOrderModal = { ...selectedOrderModal, ...patch };
-        closeResubmitReceiptModal();
-        showActionToast(tr('✅ Yangi chek yuborildi', '✅ Новый чек отправлен'), 'success', 2000);
-      } catch (e) {
-        console.error(e);
-        showActionToast(tr('❌ Yuborilmadi', '❌ Не отправлено'), 'error', 2200);
-        alert(tr('Xatolik: ', 'Ошибка: ') + (e.message || e));
-      }
     }
 
     // MODAL SAVERS
@@ -5382,8 +4783,7 @@
       // name/price/stock/description yo'qolmasligi kerak.
       showActionToast(tr("⏳ Tovar saqlanmoqda...", "⏳ Товар сохраняется..."), 'saving');
       try {
-        const localImageWasSelected = !!(imageSnap?.file || imageSnap?.preparing);
-        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, localImageWasSelected);
+        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, false);
         const result = await callApi('add_product', {
           name, price, oldPrice,
           stock: isNaN(stock) ? 0 : stock,
@@ -5402,7 +4802,7 @@
           const limit = String(e.message).split(':')[1];
           alert(`${tr('⚠️ Tovar soni chegarasiga yetdingiz','⚠️ Достигнут лимит количества товаров')} (${limit}). ${tr("Ko'proq tovar qo'shish uchun tarifingizni oshiring.",'Чтобы добавить больше товаров, увеличьте тариф.')}`);
         } else {
-          alert(tr("❌ Tovarni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения товара: ") + ((imageSnap?.file || imageSnap?.preparing || imageSnap?.url) ? friendlyImageError(e) : (e.message || e)));
+          alert(tr("❌ Tovarni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения товара: ") + (imageSnap?.url ? friendlyImageError(e) : (e.message || e)));
         }
         // Input matnlari DOM'da qoladi. Rasm selection esa qayta tanlanishi uchun tozalanadi.
         clearTempImageSelection();
@@ -5419,7 +4819,7 @@
       render();
       showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
       try {
-        const imgUrl = await uploadImageSnapshot(imageSnap, null, false);
+        const imgUrl = resolveImageUrlOrKeep(imageSnap, null);
         const result = await callApi('add_category', { name, img: imgUrl, parentId });
         upsertLocalCategory(result.category);
         saveCatalogCache();
@@ -5483,9 +4883,9 @@
         p.desc = val;
       } else if (field === 'img') {
         imageSnap = takeTempImageSnapshot();
-        if (!imageSnap.file && !imageSnap.preparing && !imageSnap.url) { activePopupModal = null; render(); return; }
+        if (!imageSnap.url) { activePopupModal = null; render(); return; }
         // Tanlangan rasm kartochkada ham darhol ko'rinsin.
-        if (imageSnap.preview || imageSnap.url) p.img = imageSnap.preview || imageSnap.url;
+        p.img = imageSnap.url;
       } else if (field === 'sizes' || field === 'variants') {
         const sizeText = document.getElementById('ef-size-val').value;
         const colorText = document.getElementById('ef-color-val').value;
@@ -5635,13 +5035,13 @@
       const imageSnap = takeTempImageSnapshot();
 
       c.name = name;
-      if (imageSnap.preview) c.img = imageSnap.preview;
+      if (imageSnap.url) c.img = imageSnap.url;
       activePopupModal = null;
       render();
       showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
 
       try {
-        const newImg = await uploadImageSnapshot(imageSnap, old.img, !!(imageSnap.file || imageSnap.preparing));
+        const newImg = resolveImageUrlOrKeep(imageSnap, old.img);
         const result = await callApi('edit_category', { categoryId: id, name, img: newImg });
         const current = categories.find(cat => cat.id === id);
         if (current) Object.assign(current, mapCategoryFromDB(result.category));
@@ -6117,7 +5517,18 @@
           } else {
             const mapped = mapCategoryFromDB(payload.new);
             const idx = categories.findIndex(c => c.id === mapped.id);
-            if (idx >= 0) categories[idx] = mapped; else categories.push(mapped);
+            // MUAMMO 2 tuzatish: tartib (sortOrder) FAQAT ⬆️/⬇️ tugmasi
+            // (moveCategoryOrder) orqali o'zgaradi va u allaqachon o'zining
+            // optimistic+rollback tsikliga ega. Realtime orqali kelgan
+            // sortOrder'ga ishonib mahalliy qiymatni qoplab qo'yish — bir
+            // nechta bosishda (reorder yozuvining o'zi ham shu kanalga signal
+            // beradi) eski/kechikkan qiymat yangisini bosib, tartib "orqaga
+            // qaytib" ketardi. Shu sabab mavjud qatorlar uchun sortOrder
+            // e'tiborsiz qoldiriladi — faqat nom/rasm/boshqa maydonlar
+            // sinxronlanadi. Yangi (idx<0) qatorlar uchun serverdan kelgan
+            // sortOrder shart, chunki mahalliy optimistic qiymat yo'q.
+            if (idx >= 0) { mapped.sortOrder = categories[idx].sortOrder; categories[idx] = mapped; }
+            else categories.push(mapped);
           }
           saveCatalogCache();
           if (currentTab === 'categories' || currentTab === 'warehouse') render();
