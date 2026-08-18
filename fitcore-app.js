@@ -470,6 +470,9 @@
     let warehouseSummaryLoaded = false;
     let warehouseStockFilter = null; // 'LOW' | 'OUT' | null — Holat cardi bosilganda
     let warehouseStockFilterPage = 1;
+    let warehouseStockFilterSearch = '';
+    let quickStockUpdateSaving = false;
+    let warehouseKirimShowCatalog = false;
     // 15-16-band: Kirim (stock-in ADD) + harakatlar tarixi
     let warehouseKirimSearch = '';
     let warehouseKirimSelectedProduct = null;
@@ -482,6 +485,10 @@
     let warehouseMovementsPage = 1;
     let warehouseMovementsTotal = 0;
     let warehouseMovementsFilter = null; // 'KIRIM' | 'BUYURTMA' | 'MANUAL' | null
+    let warehouseMovementsSearch = '';
+    let warehouseMovementsDateRange = null; // 'today' | '7d' | '30d' | 'custom' | null (barchasi)
+    let warehouseMovementsDateFrom = '';
+    let warehouseMovementsDateTo = '';
     let warehouseImportedMissingImageOnly = false;
     let isAdminMode = false;
     let authReady = false;
@@ -584,6 +591,11 @@
     let dashboardLiteData = null;
     let dashboardLiteLoading = false;
     let dashboardCustomerPage = 1; // 9-band: Dashboard ichidagi Mijozlar bo'limi paginationi
+    // 49-51-band: Dashboard+Hisobot BITTA modul, ichki tablar + davr filtri.
+    let dashboardTab = 'UMUMIY'; // UMUMIY | BUYURTMALAR | SAVDO | MIJOZLAR | MAHSULOTLAR
+    let dashboardPeriod = 'all'; // 'today' | 'week' | 'month' | 'custom' | 'all'
+    let dashboardCustomFrom = '';
+    let dashboardCustomTo = '';
 
     // Rasm yuklash uchun: haqiqiy fayl (Storage'ga yuklanadi) va preview (faqat ko'rsatish uchun)
     let tempImageFile = null;
@@ -1254,6 +1266,14 @@
     function switchTab(tab) {
       currentTab = tab;
       activePage = null; // istalgan bottom-nav tugmasi bosilsa ochiq page (Support va h.k.) yopiladi
+      // 32-36-band: Support/Profile navigatsiya bugi — istalgan ochiq MODAL ham
+      // (activePopupModal) bottom-nav bosilganda albatta yopiladi. Eski tizimda
+      // Support modal edi va switchTab uni tozalamas edi, shuning uchun Profilga
+      // o'tilganda pastda Profil render bo'lsa-da, eski modal tepada ko'rinib
+      // qolardi. Support endi activePage (yuqorida tozalanadi), lekin bu bug
+      // klassi BOSHQA istalgan modal uchun ham amal qilishi mumkin edi — shu
+      // yerda umumiy mudofaa sifatida yopiladi.
+      activePopupModal = null;
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-blue-600', 'font-bold'));
       const activeNav = document.getElementById(`nav-${tab}`);
       if (activeNav) activeNav.classList.add('text-blue-600', 'font-bold');
@@ -1824,6 +1844,10 @@
       if (cartBtn) cartBtn.classList.toggle('hidden', isAdminMode && isUserAnAdmin);
       const personBtn = document.getElementById('header-person-btn');
       if (personBtn) personBtn.onclick = isUserAnAdmin ? togglePersonMenu : (() => switchTab('profile'));
+      // Sozlama (⚙️) tugmasi faqat admin uchun — oddiy userga bosilganda hech
+      // narsa qilmaydigan "o'lik" icon ko'rsatmaslik uchun.
+      const settingsBtn = document.getElementById('header-settings-btn');
+      if (settingsBtn) settingsBtn.classList.toggle('hidden', !(isAdminMode && isUserAnAdmin));
     }
 
     // 20-band: Profildagi katta "rejim almashtirish" tugmasi o'rniga headerdagi
@@ -3521,16 +3545,24 @@
     }
 
     // 5. WAREHOUSE TAB — 11-16-band: uch sub-bo'lim (Holat / Qoldiqni yangilash / Kirim).
+    // 9-band: Ombor — 4 ta aniq bo'lim: Holat / Qoldiq / Kirim / Harakatlar.
     function renderWarehouse(container) {
+      const tabs = [
+        { key: 'HOLAT', label: tr('Holat', 'Состояние') },
+        { key: 'QOLDIQ', label: tr('Qoldiq', 'Остаток') },
+        { key: 'KIRIM', label: tr('Kirim', 'Приход') },
+        { key: 'HARAKATLAR', label: tr('Harakatlar', 'Движения') },
+      ];
       container.innerHTML = `
         <div class="space-y-4">
           <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
-          <div class="flex gap-2">
-            <button onclick="switchWarehouseSubTab('HOLAT')" class="flex-1 py-2 rounded-xl text-xs font-bold ${warehouseSubTab === 'HOLAT' ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">${tr('Holat', 'Состояние')}</button>
-            <button onclick="switchWarehouseSubTab('UPDATE')" class="flex-1 py-2 rounded-xl text-xs font-bold ${warehouseSubTab === 'UPDATE' ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">${tr("Qoldiqni yangilash", 'Обновить остаток')}</button>
-            <button onclick="switchWarehouseSubTab('KIRIM')" class="flex-1 py-2 rounded-xl text-xs font-bold ${warehouseSubTab === 'KIRIM' ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">${tr("Kirim", 'Приход')}</button>
+          <div class="grid grid-cols-4 gap-1.5">
+            ${tabs.map(tb => `<button onclick="switchWarehouseSubTab('${tb.key}')" class="py-2 rounded-xl text-[11px] font-bold ${warehouseSubTab === tb.key ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">${tb.label}</button>`).join('')}
           </div>
-          ${warehouseSubTab === 'HOLAT' ? renderWarehouseHolatHtml() : warehouseSubTab === 'UPDATE' ? renderWarehouseUpdateHtml() : renderWarehouseKirimHtml()}
+          ${warehouseSubTab === 'HOLAT' ? renderWarehouseHolatHtml()
+            : warehouseSubTab === 'QOLDIQ' ? renderWarehouseUpdateHtml()
+            : warehouseSubTab === 'KIRIM' ? renderWarehouseKirimHtml()
+            : renderWarehouseHarakatlarHtml()}
         </div>
       `;
     }
@@ -3558,34 +3590,61 @@
       `;
     }
 
-    function renderWarehouseStockFilterListHtml() {
+    function warehouseStockFilterMatches() {
       const ids = new Set(warehouseStockFilter === 'LOW' ? (warehouseSummaryData?.lowStockIds || []) : (warehouseSummaryData?.outOfStockIds || []));
-      const list = products.filter(p => ids.has(p.id));
-      const pageData = paginate(list, warehouseStockFilterPage, 10);
+      let list = products.filter(p => ids.has(p.id));
+      const q = warehouseStockFilterSearch.trim().toLowerCase();
+      if (q) list = list.filter(p => productName(p).toLowerCase().includes(q) || String(p.sku || '').toLowerCase().includes(q) || String(p.id).toLowerCase().includes(q));
+      return list;
+    }
+    function renderWarehouseStockFilterListHtml() {
       const title = warehouseStockFilter === 'LOW' ? tr('Kam qolgan', 'Заканчивается') : tr('Tugagan', 'Нет в наличии');
       return `
         <div class="space-y-2">
           <button onclick="closeWarehouseStockFilter()" class="text-xs font-bold text-blue-600">‹ ${tr('Holatga qaytish', 'Назад к состоянию')}</button>
-          <h3 class="font-bold text-sm text-gray-800">${title} (${list.length})</h3>
-          ${list.length === 0 ? `
-            <div class="fc-empty-state"><i data-lucide="package-check" class="w-8 h-8"></i><p>${tr('Bu holatda mahsulot yo‘q.', 'Нет товаров с таким статусом.')}</p></div>
-          ` : `
-            <div class="space-y-2">${pageData.items.map(p => renderWarehouseStockProductCardHtml(p)).join('')}</div>
-            ${renderPagerHTML(pageData.page, pageData.totalPages, 'setWarehouseStockFilterPage')}
-          `}
+          <h3 class="font-bold text-sm text-gray-800">${title}</h3>
+          <input type="text" id="warehouse-stock-filter-search-input" value="${escapeHtml(warehouseStockFilterSearch)}" oninput="handleWarehouseStockFilterSearchDebounced()" placeholder="${tr('Nom / SKU / ID bo‘yicha qidirish', 'Поиск по названию / SKU / ID')}" class="w-full p-2.5 border rounded-xl text-xs">
+          <div id="warehouse-stock-filter-results">${renderWarehouseStockFilterResultsHtml()}</div>
         </div>
       `;
     }
+    function renderWarehouseStockFilterResultsHtml() {
+      const list = warehouseStockFilterMatches();
+      const pageData = paginate(list, warehouseStockFilterPage, 10);
+      if (list.length === 0) {
+        return `<div class="fc-empty-state"><i data-lucide="package-check" class="w-8 h-8"></i><p>${tr('Bu holatda mahsulot yo‘q.', 'Нет товаров с таким статусом.')}</p></div>`;
+      }
+      return `
+        <div class="space-y-2">${pageData.items.map(p => renderWarehouseStockProductCardHtml(p)).join('')}</div>
+        ${renderPagerHTML(pageData.page, pageData.totalPages, 'setWarehouseStockFilterPage')}
+      `;
+    }
+    let warehouseStockFilterSearchDebounceTimer = null;
+    function handleWarehouseStockFilterSearchDebounced() {
+      clearTimeout(warehouseStockFilterSearchDebounceTimer);
+      warehouseStockFilterSearchDebounceTimer = setTimeout(() => {
+        const input = document.getElementById('warehouse-stock-filter-search-input');
+        warehouseStockFilterSearch = input ? input.value : '';
+        warehouseStockFilterPage = 1;
+        const el = document.getElementById('warehouse-stock-filter-results');
+        if (el) { el.innerHTML = renderWarehouseStockFilterResultsHtml(); lucide.createIcons(); }
+      }, 250);
+    }
 
+    function productCategoryLabel(p) {
+      const cat = categories.find(c => String(c.id) === String(p.categoryId));
+      return cat ? categoryName(cat) : '';
+    }
     function renderWarehouseStockProductCardHtml(p) {
       const vars = productVariants(p);
       const variantSummary = vars.length ? vars.map(v => `${escapeHtml(variantLabel(v))}: ${v.qty}`).join(', ') : null;
+      const catLabel = productCategoryLabel(p);
       return `
         <div class="fc-card flex items-center gap-3">
           <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-12 h-12 object-cover rounded-xl flex-shrink-0">
           <div class="min-w-0 flex-1">
             <p class="font-bold text-xs text-gray-800 truncate">${escapeHtml(productName(p))}</p>
-            <p class="text-[10px] text-gray-400">ID: ${escapeHtml(p.sku)}</p>
+            <p class="text-[10px] text-gray-400">ID: ${escapeHtml(p.sku)}${catLabel ? ` · ${escapeHtml(catLabel)}` : ''}</p>
             ${variantSummary ? `<p class="text-[10px] text-gray-500 mt-0.5 truncate">${variantSummary}</p>` : `<p class="text-[10px] text-gray-500 mt-0.5">${tr('Qoldiq', 'Остаток')}: ${p.stock}</p>`}
           </div>
         </div>
@@ -3594,10 +3653,58 @@
 
     // 14-16-band: "Qoldiqni yangilash" — mavjud daraxt + tezkor SKU/ID
     // yangilash, O'ZGARISHSIZ saqlangan (faqat Holatdan alohida sub-tabga ko'chdi).
+    async function submitQuickStockUpdate() {
+      if (quickStockUpdateSaving) return;
+      const skuInput = document.getElementById('quick-stock-sku');
+      const valInput = document.getElementById('quick-stock-value');
+      const sku = (skuInput?.value || '').trim().toUpperCase();
+      const stock = Number.parseInt(valInput?.value, 10);
+      if (!sku) return alert(tr('SKU yoki ID kiriting.', 'Введите SKU или ID.'));
+      if (!Number.isInteger(stock) || stock < 0) return alert(tr("To'g'ri qoldiq son kiriting.", 'Введите корректное число остатка.'));
+      quickStockUpdateSaving = true;
+      render();
+      showActionToast(tr('⏳ Saqlanmoqda...', '⏳ Сохранение...'), 'saving');
+      try {
+        const result = await callApi('bulk_stock_update', { updates: [{ sku, stock }] });
+        (result.products || []).forEach(row => {
+          const mapped = mapProductFromDB(row);
+          const idx = products.findIndex(p => p.id === mapped.id);
+          if (idx >= 0) products[idx] = mapped;
+        });
+        const errs = result.errors || [];
+        quickStockUpdateSaving = false;
+        warehouseSummaryLoaded = false; // Holat keyingi tashrifda qayta hisoblansin
+        if (errs.length) {
+          render();
+          showActionToast(tr('❌ Yangilanmadi', '❌ Не обновлено'), 'error', 2000);
+          alert(tr('Xatolik: ', 'Ошибка: ') + (errs[0].error || tr('nomaʼlum xato', 'неизвестная ошибка')));
+        } else {
+          render();
+          showActionToast(tr('✅ Qoldiq yangilandi', '✅ Остаток обновлён'), 'success', 1500);
+        }
+      } catch (e) {
+        quickStockUpdateSaving = false;
+        render();
+        console.error(e);
+        showActionToast(tr('❌ Yangilanmadi', '❌ Не обновлено'), 'error', 2000);
+        alert(tr('Xatolik: ', 'Ошибка: ') + (e.message || e));
+      }
+    }
+
     function renderWarehouseUpdateHtml() {
       const topCats = categories.filter(c => !c.parentId);
       return `
         <div class="space-y-4">
+          <div class="fc-card space-y-2">
+            <h3 class="font-bold text-sm text-gray-800">⚡ ${tr('Tezkor qoldiq yangilash', 'Быстрое обновление остатка')}</h3>
+            <p class="text-[10px] text-gray-500">${tr("SKU/ID va YANGI (umumiy) qoldiqni kiriting — mavjud qiymat almashtiriladi.", "Введите SKU/ID и НОВЫЙ (общий) остаток — заменит текущее значение.")}</p>
+            <div class="flex gap-2">
+              <input type="text" id="quick-stock-sku" placeholder="${tr('SKU / ID', 'SKU / ID')}" class="flex-1 p-2.5 border rounded-xl text-xs">
+              <input type="number" id="quick-stock-value" min="0" placeholder="${tr('Yangi qoldiq', 'Новый остаток')}" class="w-28 p-2.5 border rounded-xl text-xs">
+            </div>
+            <button onclick="submitQuickStockUpdate()" ${quickStockUpdateSaving ? 'disabled' : ''} class="fc-btn fc-btn-primary w-full">${quickStockUpdateSaving ? tr('Saqlanmoqda...', 'Сохранение...') : tr('Yangilash', 'Обновить')}</button>
+          </div>
+
           <div class="flex items-center justify-end gap-2">
             <div class="flex gap-1"><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly ? 'bg-amber-500 text-white' : 'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz', 'Без фото')} (${getMissingImageProducts().length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly ? 'bg-blue-600 text-white' : 'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz', 'Импорт без фото')} (${products.filter(p => p.status !== 'DELETED' && !hasProductImage(p) && p.importBatchId).length})</button></div>
           </div>
@@ -3617,10 +3724,11 @@
       `;
     }
 
-    // 15-16-band: Kirim (stock-in ADD) + harakatlar tarixi.
+    // 15-16-band: Kirim (stock-in ADD). Harakatlar tarixi ALOHIDA HARAKATLAR
+    // tabiga ko'chirildi (renderWarehouseHarakatlarHtml). Qidiruv inputi HECH QACHON
+    // qayta render() qilinmaydi — faqat #kirim-search-results targeted yangilanadi,
+    // shu bilan fokus/klaviatura yopilib qolish bugi butunlay yo'qoladi.
     function renderWarehouseKirimHtml() {
-      const searchQ = warehouseKirimSearch.trim().toLowerCase();
-      const matches = searchQ ? products.filter(p => p.status !== 'DELETED' && (productName(p).toLowerCase().includes(searchQ) || String(p.sku).toLowerCase().includes(searchQ))).slice(0, 8) : [];
       const selected = warehouseKirimSelectedProduct;
       const vars = selected ? productVariants(selected) : [];
       const qtyNum = Number.parseInt(warehouseKirimQty, 10);
@@ -3630,12 +3738,16 @@
       const formHtml = !selected ? `
         <div class="fc-card space-y-2">
           <label class="font-bold text-xs text-gray-700">${tr('Mahsulot qidirish', 'Поиск товара')}</label>
-          <input type="text" value="${escapeHtml(warehouseKirimSearch)}" oninput="warehouseKirimSearch=this.value; render();" placeholder="${tr('Nomi yoki ID', 'Название или ID')}" class="w-full p-2.5 border rounded-xl text-xs">
-          ${matches.length ? `
-            <div class="divide-y border rounded-xl overflow-hidden">
-              ${matches.map(p => `<div onclick="pickKirimProduct('${p.id}')" class="p-2.5 text-xs cursor-pointer hover:bg-blue-50 flex justify-between gap-2"><span class="truncate">${escapeHtml(productName(p))}</span><span class="text-gray-400 shrink-0">ID: ${escapeHtml(p.sku)}</span></div>`).join('')}
-            </div>
-          ` : (searchQ ? `<p class="text-[11px] text-gray-400">${tr('Topilmadi', 'Не найдено')}</p>` : '')}
+          <input type="text" id="kirim-search-input" value="${escapeHtml(warehouseKirimSearch)}" oninput="handleKirimSearchDebounced()" placeholder="${tr('Nomi, SKU yoki ID', 'Название, SKU или ID')}" class="w-full p-2.5 border rounded-xl text-xs">
+          <div id="kirim-search-results">${renderKirimSearchResultsHtml()}</div>
+          <div class="pt-2 border-t">
+            <button onclick="warehouseKirimShowCatalog=!warehouseKirimShowCatalog; render();" class="text-[11px] font-bold text-blue-600">${warehouseKirimShowCatalog ? '▾' : '▸'} ${tr('Katalog orqali topish', 'Найти через каталог')}</button>
+            ${warehouseKirimShowCatalog ? `
+              <div class="mt-2 bg-gray-50 p-3 rounded-xl border space-y-3 font-mono text-xs max-h-64 overflow-y-auto">
+                ${categories.filter(c => !c.parentId).map(parent => renderCategoryTreeNodeHTML(parent, 0, true)).join('')}
+              </div>
+            ` : ''}
+          </div>
         </div>
       ` : `
         <div class="fc-card space-y-3">
@@ -3668,29 +3780,102 @@
         </div>
       `;
 
+      return `<div class="space-y-4">${formHtml}</div>`;
+    }
+
+    function renderKirimSearchResultsHtml() {
+      const q = warehouseKirimSearch.trim().toLowerCase();
+      if (!q) return '';
+      const matches = products.filter(p => p.status !== 'DELETED' && (productName(p).toLowerCase().includes(q) || String(p.sku || '').toLowerCase().includes(q) || String(p.id).toLowerCase().includes(q))).slice(0, 8);
+      if (!matches.length) return `<p class="text-[11px] text-gray-400 py-1">${tr('Topilmadi', 'Не найдено')}</p>`;
+      return `<div class="space-y-2">${matches.map(p => renderKirimResultCardHtml(p)).join('')}</div>`;
+    }
+
+    function renderKirimResultCardHtml(p) {
+      const catLabel = productCategoryLabel(p);
+      return `
+        <div onclick="pickKirimProduct('${p.id}')" class="fc-card flex items-center gap-3 cursor-pointer hover:bg-blue-50">
+          <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-12 h-12 object-cover rounded-xl flex-shrink-0">
+          <div class="min-w-0 flex-1">
+            <p class="font-bold text-xs text-gray-800 truncate">${escapeHtml(productName(p))}</p>
+            <p class="text-[10px] text-gray-400">ID: ${escapeHtml(p.sku)}${catLabel ? ` · ${escapeHtml(catLabel)}` : ''}</p>
+            <p class="text-[10px] text-gray-500 mt-0.5">${tr('Mavjud qoldiq', 'Текущий остаток')}: ${p.stock}</p>
+          </div>
+          <span class="fc-badge fc-badge-primary shrink-0">${tr('Kirim qilish', 'Приход')}</span>
+        </div>
+      `;
+    }
+
+    let warehouseKirimSearchDebounceTimer = null;
+    function handleKirimSearchDebounced() {
+      clearTimeout(warehouseKirimSearchDebounceTimer);
+      warehouseKirimSearchDebounceTimer = setTimeout(() => {
+        const input = document.getElementById('kirim-search-input');
+        warehouseKirimSearch = input ? input.value : '';
+        const el = document.getElementById('kirim-search-results');
+        if (el) { el.innerHTML = renderKirimSearchResultsHtml(); lucide.createIcons(); }
+      }, 250);
+    }
+
+    // 47-band: Harakatlar tarixi — Kirimdan ALOHIDA tab, o'z filtr/qidiruv/sana oralig'i bilan.
+    function renderWarehouseHarakatlarHtml() {
       const filterChips = [
         { key: 'null', label: tr('Barchasi', 'Все') },
         { key: 'KIRIM', label: tr('Kirim', 'Приход') },
         { key: 'BUYURTMA', label: tr('Buyurtma', 'Заказ') },
         { key: 'MANUAL', label: tr("Qo'lda", 'Вручную') },
       ];
-
+      const dateChips = [
+        { key: 'null', label: tr('Barchasi', 'Все') },
+        { key: 'today', label: tr('Bugun', 'Сегодня') },
+        { key: '7d', label: tr('7 kun', '7 дней') },
+        { key: '30d', label: tr('30 kun', '30 дней') },
+        { key: 'custom', label: tr('Oraliq', 'Период') },
+      ];
       return `
-        <div class="space-y-4">
-          ${formHtml}
-          <div>
-            <h3 class="font-bold text-sm text-gray-800 mb-2">${tr('Harakatlar tarixi', 'История движений')}</h3>
-            <div class="flex gap-1.5 mb-2 flex-wrap">
-              ${filterChips.map(c => `<button onclick="setWarehouseMovementsFilter(${c.key === 'null' ? 'null' : `'${c.key}'`})" class="fc-badge ${(warehouseMovementsFilter || 'null') === c.key ? 'fc-badge-primary' : 'fc-badge-muted'}">${c.label}</button>`).join('')}
-            </div>
-            ${warehouseMovementsLoading ? `<div class="fc-empty-state"><div class="fc-spinner"></div><p>${tr('Yuklanmoqda...', 'Загрузка...')}</p></div>` :
-              (!warehouseMovements.length ? `<div class="fc-empty-state"><i data-lucide="history" class="w-8 h-8"></i><p>${tr('Harakatlar yo‘q.', 'Движений пока нет.')}</p></div>` : `
-                <div class="space-y-1.5">${warehouseMovements.map(m => renderMovementRowHtml(m)).join('')}</div>
-                ${renderPagerHTML(warehouseMovementsPage, Math.max(1, Math.ceil(warehouseMovementsTotal / 20)), 'setWarehouseMovementsPage')}
-              `)}
+        <div class="space-y-3">
+          <input type="text" id="harakatlar-search-input" value="${escapeHtml(warehouseMovementsSearch)}" oninput="handleWarehouseMovementsSearchDebounced()" placeholder="${tr('Nom / SKU / ID bo‘yicha qidirish', 'Поиск по названию / SKU / ID')}" class="w-full p-2.5 border rounded-xl text-xs">
+          <div class="flex gap-1.5 flex-wrap">
+            ${filterChips.map(c => `<button onclick="setWarehouseMovementsFilter(${c.key === 'null' ? 'null' : `'${c.key}'`})" class="fc-badge ${(warehouseMovementsFilter || 'null') === c.key ? 'fc-badge-primary' : 'fc-badge-muted'}">${c.label}</button>`).join('')}
           </div>
+          <div class="flex gap-1.5 flex-wrap">
+            ${dateChips.map(c => `<button onclick="setWarehouseMovementsDateRange(${c.key === 'null' ? 'null' : `'${c.key}'`})" class="fc-badge ${(warehouseMovementsDateRange || 'null') === c.key ? 'fc-badge-primary' : 'fc-badge-muted'}">${c.label}</button>`).join('')}
+          </div>
+          ${warehouseMovementsDateRange === 'custom' ? `
+            <div class="flex gap-2 items-center">
+              <input type="date" value="${escapeHtml(warehouseMovementsDateFrom)}" onchange="warehouseMovementsDateFrom=this.value; loadWarehouseMovements(true);" class="flex-1 p-2 border rounded-xl text-xs">
+              <span class="text-gray-400 text-xs">—</span>
+              <input type="date" value="${escapeHtml(warehouseMovementsDateTo)}" onchange="warehouseMovementsDateTo=this.value; loadWarehouseMovements(true);" class="flex-1 p-2 border rounded-xl text-xs">
+            </div>
+          ` : ''}
+          <div id="harakatlar-results">${renderWarehouseHarakatlarResultsHtml()}</div>
         </div>
       `;
+    }
+    function renderWarehouseHarakatlarResultsHtml() {
+      if (warehouseMovementsLoading) return `<div class="fc-empty-state"><div class="fc-spinner"></div><p>${tr('Yuklanmoqda...', 'Загрузка...')}</p></div>`;
+      if (!warehouseMovements.length) return `<div class="fc-empty-state"><i data-lucide="history" class="w-8 h-8"></i><p>${tr('Harakatlar yo‘q.', 'Движений пока нет.')}</p></div>`;
+      return `
+        <div class="space-y-1.5">${warehouseMovements.map(m => renderMovementRowHtml(m)).join('')}</div>
+        ${renderPagerHTML(warehouseMovementsPage, Math.max(1, Math.ceil(warehouseMovementsTotal / 20)), 'setWarehouseMovementsPage')}
+      `;
+    }
+    let warehouseMovementsSearchDebounceTimer = null;
+    function handleWarehouseMovementsSearchDebounced() {
+      clearTimeout(warehouseMovementsSearchDebounceTimer);
+      warehouseMovementsSearchDebounceTimer = setTimeout(() => {
+        const input = document.getElementById('harakatlar-search-input');
+        warehouseMovementsSearch = input ? input.value : '';
+        warehouseMovementsPage = 1;
+        loadWarehouseMovements(true);
+      }, 250);
+    }
+    function setWarehouseMovementsDateRange(key) {
+      warehouseMovementsDateRange = key;
+      if (key !== 'custom') { warehouseMovementsDateFrom = ''; warehouseMovementsDateTo = ''; }
+      warehouseMovementsPage = 1;
+      render();
+      if (key !== 'custom') loadWarehouseMovements(true);
     }
 
     function renderMovementRowHtml(m) {
@@ -3715,12 +3900,14 @@
       warehouseKirimSelectedProduct = products.find(p => p.id === productId) || null;
       warehouseKirimSelectedVariantSku = null;
       warehouseKirimQty = '';
+      warehouseKirimShowCatalog = false;
       render();
     }
     function clearKirimSelection() {
       warehouseKirimSelectedProduct = null;
       warehouseKirimSelectedVariantSku = null;
       warehouseKirimQty = '';
+      warehouseKirimSearch = '';
       render();
     }
     async function submitKirim() {
@@ -3756,12 +3943,42 @@
       }
     }
 
+    function warehouseMovementsDateBounds() {
+      const now = new Date();
+      if (warehouseMovementsDateRange === 'today') {
+        return { dateFrom: new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString(), dateTo: undefined };
+      }
+      if (warehouseMovementsDateRange === '7d') {
+        return { dateFrom: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), dateTo: undefined };
+      }
+      if (warehouseMovementsDateRange === '30d') {
+        return { dateFrom: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(), dateTo: undefined };
+      }
+      if (warehouseMovementsDateRange === 'custom') {
+        return {
+          dateFrom: warehouseMovementsDateFrom ? new Date(warehouseMovementsDateFrom + 'T00:00:00').toISOString() : undefined,
+          dateTo: warehouseMovementsDateTo ? new Date(warehouseMovementsDateTo + 'T23:59:59').toISOString() : undefined,
+        };
+      }
+      return { dateFrom: undefined, dateTo: undefined };
+    }
+    // Qidiruv debounce'dan keyin ham input DOM node'ni yo'q qilmaslik uchun
+    // to'liq render() emas, faqat #harakatlar-results targeted yangilanadi.
+    function updateWarehouseMovementsUI() {
+      const el = document.getElementById('harakatlar-results');
+      if (el) { el.innerHTML = renderWarehouseHarakatlarResultsHtml(); lucide.createIcons(); }
+      else render();
+    }
     async function loadWarehouseMovements(force = false) {
       if (!isUserAnAdmin || warehouseMovementsLoading || (warehouseMovementsLoaded && !force)) return;
       warehouseMovementsLoading = true;
-      render();
+      updateWarehouseMovementsUI();
       try {
-        const data = await callApi('get_stock_movements', { type: warehouseMovementsFilter, page: warehouseMovementsPage });
+        const { dateFrom, dateTo } = warehouseMovementsDateBounds();
+        const data = await callApi('get_stock_movements', {
+          type: warehouseMovementsFilter, page: warehouseMovementsPage,
+          q: warehouseMovementsSearch.trim() || undefined, dateFrom, dateTo,
+        });
         warehouseMovements = data.movements || [];
         warehouseMovementsTotal = data.total || 0;
         warehouseMovementsLoaded = true;
@@ -3769,7 +3986,7 @@
         console.error('Harakatlar tarixini yuklashda xatolik:', e);
       } finally {
         warehouseMovementsLoading = false;
-        render();
+        updateWarehouseMovementsUI();
       }
     }
     function setWarehouseMovementsFilter(type) {
@@ -3800,15 +4017,17 @@
       warehouseSubTab = tabName;
       warehouseStockFilter = null;
       render();
-      if (tabName === 'KIRIM') loadWarehouseMovements();
+      if (tabName === 'HARAKATLAR') loadWarehouseMovements();
     }
     function openWarehouseStockFilter(kind) {
       warehouseStockFilter = kind;
       warehouseStockFilterPage = 1;
+      warehouseStockFilterSearch = '';
       render();
     }
     function closeWarehouseStockFilter() {
       warehouseStockFilter = null;
+      warehouseStockFilterSearch = '';
       render();
     }
     function setWarehouseStockFilterPage(p) {
@@ -3816,7 +4035,10 @@
       render();
     }
 
-    function renderCategoryTreeNodeHTML(cat, depth) {
+    // pickMode=false (default, o'zgarmagan): qator bosilsa tezkor tahrirlash
+    // oynasi ochiladi (Qoldiq tab). pickMode=true: qator bosilsa mahsulot
+    // Kirim uchun TANLANADI (pickKirimProduct) — tahrirlash oynasi ochilmaydi.
+    function renderCategoryTreeNodeHTML(cat, depth, pickMode = false) {
       const children = categories.filter(c => c.parentId === cat.id);
       const catProds = products.filter(p => p.categoryId === cat.id && p.status !== 'DELETED' && (!warehouseMissingImageOnly || !hasProductImage(p)) && (!warehouseImportedMissingImageOnly || (!hasProductImage(p) && p.importBatchId)));
       const indent = "&nbsp;&nbsp;".repeat(depth * 2);
@@ -3828,11 +4050,13 @@
           </div>
           ${catProds.map(p => {
             const vars = productVariants(p);
+            const rowClick = pickMode ? `pickKirimProduct('${p.id}')` : null;
             if (vars.length > 0) {
               // 14-band: variantli mahsulotning istalgan variant qatorini bosish
-              // to'liq mahsulot tahrirlash oynasini ochadi (variant qty'lari shu yerda).
+              // to'liq mahsulot tahrirlash oynasini ochadi (variant qty'lari shu yerda) —
+              // pickMode'da esa mahsulotni Kirim uchun tanlaydi.
               return vars.map(v => `
-                <div onclick="openProductDetailModal('${p.id}')" class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1 gap-2 cursor-pointer hover:bg-blue-50 -mx-1 px-1 rounded">
+                <div onclick="${rowClick || `openProductDetailModal('${p.id}')`}" class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1 gap-2 cursor-pointer hover:bg-blue-50 -mx-1 px-1 rounded">
                   <span>${indent}&nbsp;&nbsp;* [ID: ${escapeHtml(v.sku)}] ${escapeHtml(productName(p))} ${escapeHtml(variantLabel(v))}</span>
                   <b class="${v.qty > 0 ? 'text-green-600' : 'fc-text-danger'}">${v.qty} ${tr('ta','шт.')}</b>
                 </div>
@@ -3841,123 +4065,272 @@
             // 14-band: oddiy (variantsiz) mahsulot qatorini bosish to'g'ridan-to'g'ri
             // qoldiq (stock) tezkor tahrirlash oynasini ochadi — daraxt orqali topish.
             return `
-              <div onclick="openEditFieldModal('${p.id}','stock')" class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1 cursor-pointer hover:bg-blue-50 -mx-1 px-1 rounded">
+              <div onclick="${rowClick || `openEditFieldModal('${p.id}','stock')`}" class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1 cursor-pointer hover:bg-blue-50 -mx-1 px-1 rounded">
                 <span>${indent}&nbsp;&nbsp;* [ID: ${escapeHtml(p.sku)}] ${escapeHtml(productName(p))}</span>
                 <b class="${p.stock > 0 ? 'text-green-600' : 'fc-text-danger'}">${p.stock} ${tr('ta','шт.')}</b>
               </div>
             `;
           }).join('')}
-          ${children.map(child => renderCategoryTreeNodeHTML(child, depth + 1)).join('')}
+          ${children.map(child => renderCategoryTreeNodeHTML(child, depth + 1, pickMode)).join('')}
         </div>
       `;
     }
 
-    // ---- Dashboard sahifasi (POLISH ROUND 1-bosqich, 9-band) ----
-    // Eski renderUsers() (Mijozlar tab) tarkibi shu yerdagi "Mijozlar"
-    // bo'limiga ko'chirildi — foydalanuvchi qaroriga ko'ra to'liq mijozlar
-    // ro'yxati endi alohida nav o'rniga shu Dashboard sahifasida.
+    // ---- Dashboard/Hisobot sahifasi (49-52-band: BITTA modul, ichki tablar
+    // + davr filtri + bosiladigan kartalar boshqa modullarga deep-link qiladi) ----
+    function dashboardGoToOrders(status) {
+      adminOrderFilters = { status: status || 'ALL', region: 'ALL', payment: 'ALL', search: '' };
+      ordersPage = 1;
+      switchTab('orders');
+    }
+    function dashboardGoToWarehouseFilter(kind) {
+      switchTab('warehouse');
+      warehouseSubTab = 'HOLAT';
+      openWarehouseStockFilter(kind);
+    }
+    function switchDashboardTab(tab) {
+      dashboardTab = tab;
+      render();
+    }
+    function setDashboardPeriod(period) {
+      dashboardPeriod = period;
+      if (period !== 'custom') { dashboardCustomFrom = ''; dashboardCustomTo = ''; reloadDashboardRange(); }
+      else render();
+    }
+    async function reloadDashboardRange() {
+      if (dashboardPeriod === 'custom' && (!dashboardCustomFrom || !dashboardCustomTo)) { render(); return; }
+      render();
+      try {
+        const params = { period: dashboardPeriod };
+        if (dashboardPeriod === 'custom') { params.dateFrom = dashboardCustomFrom; params.dateTo = dashboardCustomTo; }
+        const data = await callApi('get_dashboard_lite', params);
+        dashboardLiteData = data;
+        if (data?.customers?.all) { usersSummary = data.customers.all; usersLoaded = true; }
+      } catch (e) {
+        console.error(e);
+        alert(tr('❌ Yuklanmadi: ', '❌ Не загружено: ') + (e.message || e));
+      } finally {
+        if (activePage === 'DASHBOARD') render();
+      }
+    }
+    // 51-band: "Mahsulotlar" tabi uchun kategoriya bo'yicha tushum — mavjud
+    // client-side products/categories'dan hisoblanadi, YANGI backend so'rov
+    // qo'shilmaydi (revenueByProduct'dagi sku orqali mos keladi).
+    function dashboardTopCategoriesFromRevenue(revenueByProduct) {
+      const bySku = new Map(products.map(p => [String(p.sku), p]));
+      const catTotals = new Map();
+      (revenueByProduct || []).forEach(r => {
+        const p = r.sku ? bySku.get(String(r.sku)) : null;
+        const key = (p ? productCategoryLabel(p) : '') || tr('Boshqa', 'Другое');
+        const cur = catTotals.get(key) || { label: key, revenue: 0, qty: 0 };
+        cur.revenue += r.revenue; cur.qty += r.qty;
+        catTotals.set(key, cur);
+      });
+      return [...catTotals.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 5);
+    }
     function renderDashboardPage(container) {
       const d = dashboardLiteData;
       if (dashboardLiteLoading || !d) {
         renderPageShell(container, tr('Dashboard / Hisobot', 'Dashboard / Отчёт'), `<div class="fc-empty-state"><div class="fc-spinner"></div><p>${tr('Yuklanmoqda...', 'Загрузка...')}</p></div>`);
         return;
       }
+      const tabs = [
+        { key: 'UMUMIY', label: tr('Umumiy', 'Общее') },
+        { key: 'BUYURTMALAR', label: tr('Buyurtmalar', 'Заказы') },
+        { key: 'SAVDO', label: tr('Savdo', 'Продажи') },
+        { key: 'MIJOZLAR', label: tr('Mijozlar', 'Клиенты') },
+        { key: 'MAHSULOTLAR', label: tr('Mahsulotlar', 'Товары') },
+      ];
+      const periodChips = [
+        { key: 'today', label: tr('Bugun', 'Сегодня') },
+        { key: 'week', label: tr('Hafta', 'Неделя') },
+        { key: 'month', label: tr('Oy', 'Месяц') },
+        { key: 'all', label: tr('Hammasi', 'Всё время') },
+        { key: 'custom', label: tr('Oraliq', 'Период') },
+      ];
+      const showPeriodFilter = dashboardTab !== 'UMUMIY' && dashboardTab !== 'MIJOZLAR';
+      const body = `
+        <div class="space-y-4">
+          <div class="grid grid-cols-5 gap-1">
+            ${tabs.map(tb => `<button onclick="switchDashboardTab('${tb.key}')" class="py-2 rounded-xl text-[10px] font-bold ${dashboardTab === tb.key ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">${tb.label}</button>`).join('')}
+          </div>
+          ${showPeriodFilter ? `
+            <div class="flex gap-1.5 flex-wrap">
+              ${periodChips.map(c => `<button onclick="setDashboardPeriod('${c.key}')" class="fc-badge ${dashboardPeriod === c.key ? 'fc-badge-primary' : 'fc-badge-muted'}">${c.label}</button>`).join('')}
+            </div>
+            ${dashboardPeriod === 'custom' ? `
+              <div class="flex gap-2 items-center">
+                <input type="date" value="${escapeHtml(dashboardCustomFrom)}" onchange="dashboardCustomFrom=this.value; reloadDashboardRange();" class="flex-1 p-2 border rounded-xl text-xs">
+                <span class="text-gray-400 text-xs">—</span>
+                <input type="date" value="${escapeHtml(dashboardCustomTo)}" onchange="dashboardCustomTo=this.value; reloadDashboardRange();" class="flex-1 p-2 border rounded-xl text-xs">
+              </div>
+            ` : ''}
+          ` : ''}
+          ${renderDashboardTabBodyHtml(d)}
+        </div>
+      `;
+      renderPageShell(container, tr('Dashboard / Hisobot', 'Dashboard / Отчёт'), body);
+    }
+    function renderDashboardTabBodyHtml(d) {
+      if (dashboardTab === 'UMUMIY') return renderDashboardUmumiyHtml(d);
+      if (dashboardTab === 'BUYURTMALAR') return renderDashboardBuyurtmalarHtml(d);
+      if (dashboardTab === 'SAVDO') return renderDashboardSavdoHtml(d);
+      if (dashboardTab === 'MIJOZLAR') return renderDashboardMijozlarHtml(d);
+      return renderDashboardMahsulotlarHtml(d);
+    }
+    function renderDashboardUmumiyHtml(d) {
       const salesCard = (label, amount, count) => `
         <div class="fc-card">
           <p class="text-gray-500 text-[11px]">${label}</p>
           <b class="text-lg block">${money(amount)}</b>
           <p class="text-[10px] text-gray-400">${count} ${tr('ta buyurtma', 'заказов')}</p>
         </div>`;
-      const orderStatusBadge = (label, count, variant) => `
-        <div class="fc-card flex items-center justify-between">
+      const orderStatusBadge = (label, count, variant, status) => `
+        <div onclick="dashboardGoToOrders('${status}')" class="fc-card flex items-center justify-between cursor-pointer hover:bg-gray-50">
           <span class="text-xs font-bold">${label}</span>
           <span class="fc-badge fc-badge-${variant}">${count}</span>
         </div>`;
+      return `
+        <section>
+          <h3 class="font-bold text-sm text-gray-700 mb-2">💰 ${tr('Savdo', 'Продажи')}</h3>
+          <div class="grid grid-cols-2 gap-2">
+            ${salesCard(tr('Bugungi savdo', 'Продажи сегодня'), d.sales.today, d.sales.todayCount)}
+            ${salesCard(tr('7 kun', '7 дней'), d.sales.week, d.sales.weekCount)}
+            ${salesCard(tr('30 kun', '30 дней'), d.sales.days30, d.sales.days30Count)}
+            ${salesCard(tr('Shu oy', 'Этот месяц'), d.sales.month, d.sales.monthCount)}
+          </div>
+          <div class="fc-card mt-2">
+            <p class="text-gray-500 text-[11px]">${tr('Jami tushum (hammasi)', 'Общая выручка (всё время)')}</p>
+            <b class="text-xl block">${money(d.sales.allTime)}</b>
+            <p class="text-[10px] text-gray-400">${d.sales.allTimeCount} ${tr('ta buyurtma', 'заказов')}</p>
+          </div>
+        </section>
 
-      const custPage = paginate([...usersSummary].sort((a, b) => b.totalOrders - a.totalOrders), dashboardCustomerPage, 10);
+        <section>
+          <h3 class="font-bold text-sm text-gray-700 mb-2">📦 ${tr('Buyurtmalar', 'Заказы')}</h3>
+          <div class="grid grid-cols-2 gap-2">
+            ${orderStatusBadge(tr('Yangi', 'Новые'), d.orders.NEW, 'warning', 'NEW')}
+            ${orderStatusBadge(tr('Tayyorlanmoqda', 'В обработке'), d.orders.PROCESSING, 'primary', 'PROCESSING')}
+            ${orderStatusBadge(tr('Yetkazilgan', 'Доставлены'), d.orders.DELIVERED, 'success', 'DELIVERED')}
+            ${orderStatusBadge(tr('Bekor/rad', 'Отменены/откл.'), d.orders.CANCELLED + d.orders.REJECTED, 'danger', 'CANCELLED')}
+          </div>
+        </section>
 
-      const body = `
-        <div class="space-y-5">
+        <section>
+          <h3 class="font-bold text-sm text-gray-700 mb-2">🏷️ ${tr('Tovarlar', 'Товары')}</h3>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Jami mahsulot', 'Всего товаров')}</p><b class="text-lg block">${d.products.total}</b></div>
+            <div onclick="dashboardGoToWarehouseFilter('LOW')" class="fc-card fc-border-warning cursor-pointer hover:bg-gray-50"><p class="text-gray-500 text-[11px]">${tr('Kam qolgan', 'Заканчивается')}</p><b class="text-lg block fc-text-warning">${d.products.lowStock}</b></div>
+            <div onclick="dashboardGoToWarehouseFilter('OUT')" class="fc-card fc-border-danger col-span-2 cursor-pointer hover:bg-gray-50"><p class="text-gray-500 text-[11px]">${tr('Tugagan', 'Нет в наличии')}</p><b class="text-lg block fc-text-danger">${d.products.outOfStock}</b></div>
+          </div>
+        </section>
+
+        ${d.regions.length ? `
           <section>
-            <h3 class="font-bold text-sm text-gray-700 mb-2">💰 ${tr('Savdo', 'Продажи')}</h3>
-            <div class="grid grid-cols-2 gap-2">
-              ${salesCard(tr('Bugungi savdo', 'Продажи сегодня'), d.sales.today, d.sales.todayCount)}
-              ${salesCard(tr('7 kun', '7 дней'), d.sales.week, d.sales.weekCount)}
-              ${salesCard(tr('30 kun', '30 дней'), d.sales.days30, d.sales.days30Count)}
-              ${salesCard(tr('Shu oy', 'Этот месяц'), d.sales.month, d.sales.monthCount)}
-            </div>
-            <div class="fc-card mt-2">
-              <p class="text-gray-500 text-[11px]">${tr('Jami tushum (hammasi)', 'Общая выручка (всё время)')}</p>
-              <b class="text-xl block">${money(d.sales.allTime)}</b>
-              <p class="text-[10px] text-gray-400">${d.sales.allTimeCount} ${tr('ta buyurtma', 'заказов')}</p>
+            <h3 class="font-bold text-sm text-gray-700 mb-2">📍 ${tr('Hududlar', 'Регионы')}</h3>
+            <div class="fc-card space-y-1.5">
+              ${d.regions.map((r, i) => `<div class="flex items-center justify-between text-xs ${i ? 'border-t pt-1.5' : ''}"><span>${i + 1}. ${escapeHtml(r.label)}</span><b>${r.count} ${tr('ta buyurtma', 'заказов')}</b></div>`).join('')}
             </div>
           </section>
-
-          <section>
-            <h3 class="font-bold text-sm text-gray-700 mb-2">📦 ${tr('Buyurtmalar', 'Заказы')}</h3>
-            <div class="grid grid-cols-2 gap-2">
-              ${orderStatusBadge(tr('Yangi', 'Новые'), d.orders.NEW, 'warning')}
-              ${orderStatusBadge(tr('Tayyorlanmoqda', 'В обработке'), d.orders.PROCESSING, 'primary')}
-              ${orderStatusBadge(tr('Yetkazilgan', 'Доставлены'), d.orders.DELIVERED, 'success')}
-              ${orderStatusBadge(tr('Bekor/rad', 'Отменены/откл.'), d.orders.CANCELLED + d.orders.REJECTED, 'danger')}
-            </div>
-          </section>
-
-          <section>
-            <h3 class="font-bold text-sm text-gray-700 mb-2">🏷️ ${tr('Tovarlar', 'Товары')}</h3>
-            <div class="grid grid-cols-2 gap-2">
-              <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Jami mahsulot', 'Всего товаров')}</p><b class="text-lg block">${d.products.total}</b></div>
-              <div class="fc-card fc-border-warning"><p class="text-gray-500 text-[11px]">${tr('Kam qolgan', 'Заканчивается')}</p><b class="text-lg block fc-text-warning">${d.products.lowStock}</b></div>
-              <div class="fc-card fc-border-danger col-span-2"><p class="text-gray-500 text-[11px]">${tr('Tugagan', 'Нет в наличии')}</p><b class="text-lg block fc-text-danger">${d.products.outOfStock}</b></div>
-            </div>
-            ${d.products.bestSellers.length ? `
-              <div class="fc-card mt-2">
-                <p class="text-gray-500 text-[11px] mb-1">${tr('Eng ko‘p sotilgan', 'Самые продаваемые')}</p>
-                ${d.products.bestSellers.map((p, i) => `<div class="flex items-center justify-between py-1 ${i ? 'border-t' : ''}"><span class="text-xs truncate">${i + 1}. ${escapeHtml(p.name)}</span><b class="text-xs shrink-0">${p.soldCount}</b></div>`).join('')}
-              </div>
-            ` : ''}
-          </section>
-
-          <section>
-            <h3 class="font-bold text-sm text-gray-700 mb-2">👥 ${tr('Mijozlar', 'Клиенты')}</h3>
-            <div class="grid grid-cols-3 gap-2">
-              <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Jami', 'Всего')}</p><b class="text-lg block">${d.customers.total}</b></div>
-              <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Yangi (30 kun)', 'Новые (30д)')}</p><b class="text-lg block">${d.customers.new30d}</b></div>
-              <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Qayta buyurtma', 'Повторные')}</p><b class="text-lg block">${d.customers.repeat}</b></div>
-            </div>
-
-            <p class="text-[11px] text-gray-500 mt-3">${tr("Mijozlar buyurtmalar soni bo'yicha tartiblangan.", "Клиенты отсортированы по количеству заказов.")}</p>
-            <div class="bg-white rounded-2xl border divide-y mt-1">
-              ${usersLoading ? `<p class="text-xs text-blue-500 p-4 text-center">${tr("⏳ Yuklanmoqda...", "⏳ Загрузка...")}</p>` : (usersSummary.length === 0 ? `<p class="text-xs text-gray-400 p-4 text-center">${tr("Hozircha mijozlar yo'q", "Клиентов пока нет")}</p>` : custPage.items.map(u => `
-                <div onclick="openUserModal('${u.tgId}')" class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50">
-                  <div>
-                    <div class="flex items-center gap-1.5">
-                      <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
-                      ${u.isBlocked ? `<span class="fc-badge fc-badge-danger">${tr("BLOK", "БЛОК")}</span>` : (u.warned ? `<span class="fc-badge fc-badge-warning">${tr("OGOH", "ПРЕДУПР.")}</span>` : '')}
-                    </div>
-                    <p class="text-[10px] text-gray-400">${escapeHtml(u.phone || '')} · ID: ${escapeHtml(u.tgId)}</p>
-                  </div>
-                  <div class="text-right">
-                    <p class="font-black text-blue-600 text-sm">${u.totalOrders} ${tr("buyurtma", "заказов")}</p>
-                    <p class="text-[10px] text-gray-400">✅${u.delivered} ⏳${u.active} ❌${u.cancelled}</p>
-                  </div>
-                </div>
-              `).join(''))}
-            </div>
-            ${renderPagerHTML(custPage.page, custPage.totalPages, 'setDashboardCustomerPage')}
-          </section>
-
-          ${d.regions.length ? `
-            <section>
-              <h3 class="font-bold text-sm text-gray-700 mb-2">📍 ${tr('Hududlar', 'Регионы')}</h3>
-              <div class="fc-card space-y-1.5">
-                ${d.regions.map((r, i) => `<div class="flex items-center justify-between text-xs ${i ? 'border-t pt-1.5' : ''}"><span>${i + 1}. ${escapeHtml(r.label)}</span><b>${r.count} ${tr('ta buyurtma', 'заказов')}</b></div>`).join('')}
-              </div>
-            </section>
-          ` : ''}
-        </div>
+        ` : ''}
       `;
-      renderPageShell(container, tr('Dashboard / Hisobot', 'Dashboard / Отчёт'), body);
+    }
+    function renderDashboardBuyurtmalarHtml(d) {
+      const sr = d.selectedRange || { orders: { NEW: 0, PROCESSING: 0, DELIVERED: 0, CANCELLED: 0, REJECTED: 0 } };
+      const orderStatusBadge = (label, count, variant, status) => `
+        <div onclick="dashboardGoToOrders('${status}')" class="fc-card flex items-center justify-between cursor-pointer hover:bg-gray-50">
+          <span class="text-xs font-bold">${label}</span>
+          <span class="fc-badge fc-badge-${variant}">${count}</span>
+        </div>`;
+      const total = sr.orders.NEW + sr.orders.PROCESSING + sr.orders.DELIVERED + sr.orders.CANCELLED;
+      return `
+        <section>
+          <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Tanlangan davrdagi buyurtmalar', 'Заказы за выбранный период')}</p><b class="text-xl block">${total}</b></div>
+          <div class="grid grid-cols-2 gap-2 mt-2">
+            ${orderStatusBadge(tr('Yangi', 'Новые'), sr.orders.NEW, 'warning', 'NEW')}
+            ${orderStatusBadge(tr('Tayyorlanmoqda', 'В обработке'), sr.orders.PROCESSING, 'primary', 'PROCESSING')}
+            ${orderStatusBadge(tr('Yetkazilgan', 'Доставлены'), sr.orders.DELIVERED, 'success', 'DELIVERED')}
+            ${orderStatusBadge(tr('Bekor/rad', 'Отменены/откл.'), sr.orders.CANCELLED + sr.orders.REJECTED, 'danger', 'CANCELLED')}
+          </div>
+          <p class="text-[10px] text-gray-400 mt-2">${tr('Kartani bosib to‘liq ro‘yxatga o‘ting.', 'Нажмите карточку, чтобы открыть полный список.')}</p>
+        </section>
+      `;
+    }
+    function renderDashboardSavdoHtml(d) {
+      const sr = d.selectedRange || { sales: { amount: 0, count: 0 } };
+      return `
+        <section>
+          <div class="fc-card">
+            <p class="text-gray-500 text-[11px]">${tr('Tanlangan davrdagi savdo', 'Продажи за выбранный период')}</p>
+            <b class="text-2xl block">${money(sr.sales.amount)}</b>
+            <p class="text-[10px] text-gray-400">${sr.sales.count} ${tr('ta buyurtma', 'заказов')}</p>
+          </div>
+        </section>
+      `;
+    }
+    function renderDashboardMijozlarHtml(d) {
+      const custPage = paginate([...usersSummary].sort((a, b) => b.totalOrders - a.totalOrders), dashboardCustomerPage, 10);
+      return `
+        <section>
+          <div class="grid grid-cols-3 gap-2">
+            <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Jami', 'Всего')}</p><b class="text-lg block">${d.customers.total}</b></div>
+            <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Yangi (30 kun)', 'Новые (30д)')}</p><b class="text-lg block">${d.customers.new30d}</b></div>
+            <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Qayta buyurtma', 'Повторные')}</p><b class="text-lg block">${d.customers.repeat}</b></div>
+          </div>
+          <p class="text-[11px] text-gray-500 mt-3">${tr("Mijozlar buyurtmalar soni bo'yicha tartiblangan.", "Клиенты отсортированы по количеству заказов.")}</p>
+          <div class="bg-white rounded-2xl border divide-y mt-1">
+            ${usersLoading ? `<p class="text-xs text-blue-500 p-4 text-center">${tr("⏳ Yuklanmoqda...", "⏳ Загрузка...")}</p>` : (usersSummary.length === 0 ? `<p class="text-xs text-gray-400 p-4 text-center">${tr("Hozircha mijozlar yo'q", "Клиентов пока нет")}</p>` : custPage.items.map(u => `
+              <div onclick="openUserModal('${u.tgId}')" class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50">
+                <div>
+                  <div class="flex items-center gap-1.5">
+                    <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
+                    ${u.isBlocked ? `<span class="fc-badge fc-badge-danger">${tr("BLOK", "БЛОК")}</span>` : (u.warned ? `<span class="fc-badge fc-badge-warning">${tr("OGOH", "ПРЕДУПР.")}</span>` : '')}
+                  </div>
+                  <p class="text-[10px] text-gray-400">${escapeHtml(u.phone || '')} · ID: ${escapeHtml(u.tgId)}</p>
+                </div>
+                <div class="text-right">
+                  <p class="font-black text-blue-600 text-sm">${u.totalOrders} ${tr("buyurtma", "заказов")}</p>
+                  <p class="text-[10px] text-gray-400">✅${u.delivered} ⏳${u.active} ❌${u.cancelled}</p>
+                </div>
+              </div>
+            `).join(''))}
+          </div>
+          ${renderPagerHTML(custPage.page, custPage.totalPages, 'setDashboardCustomerPage')}
+        </section>
+      `;
+    }
+    function renderDashboardMahsulotlarHtml(d) {
+      const revenueByProduct = (d.selectedRange && d.selectedRange.products.revenueByProduct) || [];
+      const topCategories = dashboardTopCategoriesFromRevenue(revenueByProduct);
+      return `
+        <section>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Jami mahsulot', 'Всего товаров')}</p><b class="text-lg block">${d.products.total}</b></div>
+            <div onclick="dashboardGoToWarehouseFilter('LOW')" class="fc-card fc-border-warning cursor-pointer hover:bg-gray-50"><p class="text-gray-500 text-[11px]">${tr('Kam qolgan', 'Заканчивается')}</p><b class="text-lg block fc-text-warning">${d.products.lowStock}</b></div>
+          </div>
+
+          <h3 class="font-bold text-sm text-gray-700 mb-2 mt-3">🏆 ${tr('Eng ko‘p sotilgan (hammasi)', 'Самые продаваемые (всё время)')}</h3>
+          ${d.products.bestSellers.length ? `
+            <div class="fc-card">
+              ${d.products.bestSellers.map((p, i) => `<div class="flex items-center justify-between py-1 ${i ? 'border-t' : ''}"><span class="text-xs truncate">${i + 1}. ${escapeHtml(p.name)}</span><b class="text-xs shrink-0">${p.soldCount}</b></div>`).join('')}
+            </div>
+          ` : `<div class="fc-empty-state"><p>${tr('Ma’lumot yo‘q', 'Нет данных')}</p></div>`}
+
+          <h3 class="font-bold text-sm text-gray-700 mb-2 mt-3">💵 ${tr('Tanlangan davrda tushum (mahsulot bo‘yicha)', 'Выручка за период (по товарам)')}</h3>
+          ${revenueByProduct.length ? `
+            <div class="fc-card">
+              ${revenueByProduct.map((r, i) => `<div class="flex items-center justify-between py-1 ${i ? 'border-t' : ''}"><span class="text-xs truncate flex-1">${i + 1}. ${escapeHtml(r.name)}${r.sku ? ` <span class="text-gray-400">(${escapeHtml(r.sku)})</span>` : ''}</span><b class="text-xs shrink-0 ml-2">${money(r.revenue)}</b></div>`).join('')}
+            </div>
+          ` : `<div class="fc-empty-state"><p>${tr('Tanlangan davrda savdo yo‘q', 'Нет продаж за выбранный период')}</p></div>`}
+
+          ${topCategories.length ? `
+            <h3 class="font-bold text-sm text-gray-700 mb-2 mt-3">📂 ${tr('Yetakchi kategoriyalar (tanlangan davr)', 'Топ категорий (за период)')}</h3>
+            <div class="fc-card space-y-1.5">
+              ${topCategories.map((c, i) => `<div class="flex items-center justify-between text-xs ${i ? 'border-t pt-1.5' : ''}"><span>${i + 1}. ${escapeHtml(c.label)}</span><b>${money(c.revenue)}</b></div>`).join('')}
+            </div>
+          ` : ''}
+        </section>
+      `;
     }
 
     function openUserModal(tgId) {
@@ -6893,9 +7266,10 @@
     }
     async function openDashboardLite() {
       dashboardLiteData = null; dashboardLiteLoading = true; dashboardCustomerPage = 1;
+      dashboardTab = 'UMUMIY'; dashboardPeriod = 'all'; dashboardCustomFrom = ''; dashboardCustomTo = '';
       openPage('DASHBOARD');
       try {
-        dashboardLiteData = await callApi('get_dashboard_lite', {});
+        dashboardLiteData = await callApi('get_dashboard_lite', { period: dashboardPeriod });
         // Dashboard javobi to'liq mijozlar ro'yxatini ham olib keladi —
         // Support/boshqa joylarda alohida get_users_summary so'rovi shart emas.
         if (dashboardLiteData?.customers?.all) { usersSummary = dashboardLiteData.customers.all; usersLoaded = true; }
