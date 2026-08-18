@@ -1636,6 +1636,16 @@ body { background: var(--fitcore-page-bg) !important; color: var(--fitcore-text)
 .fc-page-header-title { flex: 1; font-weight: 700; font-size: 1rem; text-align: center; }
 .fc-page-header-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 2.5rem; min-height: 2.5rem; border-radius: 9999px; background: var(--fc-muted-bg); color: var(--color-gray-700); }
 
+/* Ombor -> Qoldiq: bulk ID/SKU paneli tepada pin (sticky) qilinadi, faqat pastdagi
+   daraxt scroll bo'ladi. `top` qiymati .fc-page-header'ning haqiqiy balandligini
+   aynan takrorlaydi (padding-top + padding-bottom + tugma qatori 2.5rem + border 1px),
+   shunda panel header ostida to'g'ri "yopishadi", uni yashirib qo'ymaydi. */
+.fc-sticky-below-header { position: sticky; top: calc(max(.75rem, env(safe-area-inset-top)) + .75rem + 2.5rem + 1px); z-index: 20; }
+
+/* Universal 2-ustunli variant konstruktori (tovar qo'shish/tahrirlash) — Tailwind
+   arbitrary-value grid-cols precompiled build'da mavjud emas, shuning uchun oddiy CSS grid. */
+.fc-variant-row { display: grid; grid-template-columns: 1fr 1fr 4.5rem auto; gap: .375rem; align-items: center; }
+
 /* Bo'sh holat (empty state) — Sevimlilar/Buyurtmalar/Trash/Support kabi ro'yxatlar uchun umumiy */
 .fc-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem; padding: 2.5rem 1rem; color: var(--fc-muted); text-align: center; }
 .fc-empty-state svg { opacity: .45; }

@@ -345,57 +345,90 @@
       return (sizes || []).map(s => `${s.size},${s.qty}`).join('/');
     }
 
-    function parseVariantInputs(sizeText, colorText, fallbackStock) {
-      const sizesRaw = String(sizeText || '').split('/').map(x => x.trim()).filter(Boolean);
-      const colorRaw = String(colorText || '').split('/').map(x => x.trim()).filter(Boolean);
-      const variants = [];
-
-      // Rang mavjud bo'lsa: "48,Qizil-1,Qora-2/50,Ko'k-3" yoki "Qizil-3/Qora-2".
-      if (colorRaw.length) {
-        for (const group of colorRaw) {
-          const parts = group.split(',').map(x => x.trim()).filter(Boolean);
-          const first = parts[0] || '';
-          const looksLikeSizeGroup = parts.length > 1 && !first.includes('-');
-          const size = looksLikeSizeGroup ? first : null;
-          const colorParts = looksLikeSizeGroup ? parts.slice(1) : parts;
-          for (const token of colorParts) {
-            const m = token.match(/^(.*?)[-–—]\s*(\d+)$/);
-            if (!m) continue;
-            const color = m[1].trim();
-            const qty = parseInt(m[2], 10);
-            if (color && Number.isFinite(qty) && qty >= 0) variants.push({ size, color, qty });
-          }
-        }
-        return variants;
-      }
-
-      // Faqat o'lcham: "48,2/50,5". Agar faqat "48/50" yozilsa qty=0.
-      if (sizesRaw.length) {
-        for (const token of sizesRaw) {
-          const parts = token.split(',').map(x => x.trim());
-          const size = parts[0];
-          const qty = parts.length > 1 ? parseInt(parts[1], 10) : 0;
-          if (size) variants.push({ size, color: null, qty: Number.isFinite(qty) ? qty : 0 });
-        }
-        return variants;
-      }
-
-      return [];
+    // ==================== UNIVERSAL 2-USTUNLI VARIANT KONSTRUKTORI ====================
+    // Tovar qo'shish va tahrirlashda BIR XIL komponent. Ustun nomlari generic
+    // ("1-ustun"/"2-ustun") — DBda hamon size/color deb saqlanadi (backend/RPC/
+    // checkout/order-tarixi o'zgarmasligi uchun ataylab shunday: 1-ustun->size,
+    // 2-ustun->color, bitta-birga mos). Matn kiritishda HECH QACHON qayta render
+    // qilinmaydi (fokus/klaviatura buzilmasligi uchun) — faqat qator qo'shish/
+    // o'chirishda (+/-) qatorlar ro'yxati DOM'dan o'qilib qayta chiziladi.
+    function hydrateVariantBuilderFromProduct(p) {
+      const vars = productVariants(p);
+      variantBuilderRows = vars.length
+        ? vars.map(v => ({ level1: v.size || '', level2: v.color || '', qty: String(v.qty ?? 0) }))
+        : [{ level1: '', level2: '', qty: '' }];
     }
-    function formatVariantInputs(vars) {
-      const list = Array.isArray(vars) ? vars : [];
-      if (!list.length) return { sizes: '', colors: '' };
-      const hasColor = list.some(v => v.color);
-      if (!hasColor) return { sizes: list.map(v => `${v.size || ''},${Number(v.qty)||0}`).join('/'), colors: '' };
-      const hasSize = list.some(v => v.size);
-      if (!hasSize) return { sizes: '', colors: list.map(v => `${v.color}-${Number(v.qty)||0}`).join('/') };
-      const groups = new Map();
-      for (const v of list) {
-        const size = v.size || '';
-        if (!groups.has(size)) groups.set(size, []);
-        groups.get(size).push(`${v.color || ''}-${Number(v.qty)||0}`);
+    function readVariantBuilderRowsFromDom() {
+      const rowEls = document.querySelectorAll('#vb-rows .vb-row');
+      return Array.from(rowEls).map(el => ({
+        level1: el.querySelector('.vb-level1')?.value || '',
+        level2: el.querySelector('.vb-level2')?.value || '',
+        qty: el.querySelector('.vb-qty')?.value || '',
+      }));
+    }
+    function variantBuilderInsertRow(idx) {
+      const rows = readVariantBuilderRowsFromDom();
+      rows.splice(idx + 1, 0, { level1: '', level2: '', qty: '' });
+      variantBuilderRows = rows;
+      const container = document.getElementById('vb-rows');
+      if (!container) return;
+      container.innerHTML = renderVariantBuilderRowsHtml(rows);
+      const newInput = container.querySelector(`.vb-row[data-idx="${idx + 1}"] .vb-level1`);
+      if (newInput) newInput.focus();
+    }
+    function variantBuilderRemoveRow(idx) {
+      const rows = readVariantBuilderRowsFromDom();
+      if (rows.length <= 1) return;
+      rows.splice(idx, 1);
+      variantBuilderRows = rows;
+      const container = document.getElementById('vb-rows');
+      if (container) container.innerHTML = renderVariantBuilderRowsHtml(rows);
+    }
+    // Har ustun MUSTAQIL yuqoridan-pastga meros oladi (bo'sh katak = yuqoridagi
+    // eng yaqin qiymat). Soni hech qachon meros olinmaydi — har qatorning o'zi.
+    function resolveVariantBuilderRows(rawRows) {
+      let last1 = null, last2 = null;
+      const out = [];
+      for (const row of (rawRows || [])) {
+        const v1 = String(row.level1 || '').trim();
+        const v2 = String(row.level2 || '').trim();
+        if (v1) last1 = v1;
+        if (v2) last2 = v2;
+        const qty = Math.max(0, Number.parseInt(row.qty, 10) || 0);
+        const size = last1 || null;
+        const color = last2 || null;
+        if (size || color) out.push({ size, color, qty });
       }
-      return { sizes: [...groups.keys()].filter(Boolean).join('/'), colors: [...groups.entries()].map(([size,arr]) => `${size},${arr.join(',')}`).join('/') };
+      return out;
+    }
+    function renderVariantBuilderRowsHtml(rows) {
+      return rows.map((row, i) => `
+        <div class="vb-row fc-variant-row" data-idx="${i}">
+          <input type="text" class="vb-level1 p-2 border rounded-lg text-xs" value="${escapeHtml(row.level1)}" placeholder="${tr('1-ustun', '1-я колонка')}">
+          <input type="text" class="vb-level2 p-2 border rounded-lg text-xs" value="${escapeHtml(row.level2)}" placeholder="${tr('2-ustun', '2-я колонка')}">
+          <input type="number" min="0" class="vb-qty p-2 border rounded-lg text-xs" value="${escapeHtml(row.qty)}" placeholder="0">
+          <div class="flex gap-1">
+            <button type="button" onclick="variantBuilderInsertRow(${i})" class="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 font-bold text-sm" aria-label="${tr("Qator qo'shish", "Добавить строку")}">+</button>
+            <button type="button" onclick="variantBuilderRemoveRow(${i})" ${rows.length <= 1 ? 'disabled' : ''} class="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 font-bold text-sm disabled:opacity-30" aria-label="${tr("Qatorni o'chirish", "Удалить строку")}">−</button>
+          </div>
+        </div>
+      `).join('');
+    }
+    function renderVariantBuilderHtml() {
+      const rows = variantBuilderRows.length ? variantBuilderRows : [{ level1: '', level2: '', qty: '' }];
+      return `
+        <div class="space-y-2">
+          <label class="font-bold text-gray-600">${tr('Variantlar (ixtiyoriy)', 'Варианты (необязательно)')}</label>
+          <div class="fc-variant-row text-[10px] font-bold text-gray-400 px-0.5">
+            <span>${tr('1-ustun', '1-я колонка')}</span>
+            <span>${tr('2-ustun', '2-я колонка')}</span>
+            <span>${tr('Soni', 'Кол-во')}</span>
+            <span></span>
+          </div>
+          <div id="vb-rows" class="space-y-1.5">${renderVariantBuilderRowsHtml(rows)}</div>
+          <p class="text-[9px] text-gray-400">${tr("Katak bo'sh qoldirilsa, shu ustunda yuqoridagi eng yaqin qiymat olinadi. Masalan: 48/Qizil/5, keyingi qatorda 1-ustun bo'sh + Sariq/8 → natija 48/Sariq/8.", "Если ячейка пуста, берётся ближайшее значение сверху в этой колонке. Например: 48/Красный/5, затем пусто + Жёлтый/8 → результат 48/Жёлтый/8.")}</p>
+        </div>
+      `;
     }
 
     function truncateText(text, maxLen) {
@@ -471,7 +504,6 @@
     let warehouseStockFilter = null; // 'LOW' | 'OUT' | null — Holat cardi bosilganda
     let warehouseStockFilterPage = 1;
     let warehouseStockFilterSearch = '';
-    let quickStockUpdateSaving = false;
     let warehouseKirimShowCatalog = false;
     // 15-16-band: Kirim (stock-in ADD) + harakatlar tarixi
     let warehouseKirimSearch = '';
@@ -559,6 +591,10 @@
     let checkoutDistrictOptionsLoadedFor = null; // regionKey
     let activePopupModal = null;
     let editingFieldData = null;
+    // Universal 2-ustunli variant konstruktori (Add + Edit bir xil komponent).
+    // Har qator: {level1, level2, qty} — level1->size, level2->color (mavjud
+    // backend/RPC shakli o'zgarmaydi, faqat kiritish UX'i almashadi).
+    let variantBuilderRows = [];
     let missingImageQueueIndex = 0;
     let missingImageQueueSaving = false;
 
@@ -3653,56 +3689,15 @@
 
     // 14-16-band: "Qoldiqni yangilash" — mavjud daraxt + tezkor SKU/ID
     // yangilash, O'ZGARISHSIZ saqlangan (faqat Holatdan alohida sub-tabga ko'chdi).
-    async function submitQuickStockUpdate() {
-      if (quickStockUpdateSaving) return;
-      const skuInput = document.getElementById('quick-stock-sku');
-      const valInput = document.getElementById('quick-stock-value');
-      const sku = (skuInput?.value || '').trim().toUpperCase();
-      const stock = Number.parseInt(valInput?.value, 10);
-      if (!sku) return alert(tr('SKU yoki ID kiriting.', 'Введите SKU или ID.'));
-      if (!Number.isInteger(stock) || stock < 0) return alert(tr("To'g'ri qoldiq son kiriting.", 'Введите корректное число остатка.'));
-      quickStockUpdateSaving = true;
-      render();
-      showActionToast(tr('⏳ Saqlanmoqda...', '⏳ Сохранение...'), 'saving');
-      try {
-        const result = await callApi('bulk_stock_update', { updates: [{ sku, stock }] });
-        (result.products || []).forEach(row => {
-          const mapped = mapProductFromDB(row);
-          const idx = products.findIndex(p => p.id === mapped.id);
-          if (idx >= 0) products[idx] = mapped;
-        });
-        const errs = result.errors || [];
-        quickStockUpdateSaving = false;
-        warehouseSummaryLoaded = false; // Holat keyingi tashrifda qayta hisoblansin
-        if (errs.length) {
-          render();
-          showActionToast(tr('❌ Yangilanmadi', '❌ Не обновлено'), 'error', 2000);
-          alert(tr('Xatolik: ', 'Ошибка: ') + (errs[0].error || tr('nomaʼlum xato', 'неизвестная ошибка')));
-        } else {
-          render();
-          showActionToast(tr('✅ Qoldiq yangilandi', '✅ Остаток обновлён'), 'success', 1500);
-        }
-      } catch (e) {
-        quickStockUpdateSaving = false;
-        render();
-        console.error(e);
-        showActionToast(tr('❌ Yangilanmadi', '❌ Не обновлено'), 'error', 2000);
-        alert(tr('Xatolik: ', 'Ошибка: ') + (e.message || e));
-      }
-    }
-
     function renderWarehouseUpdateHtml() {
       const topCats = categories.filter(c => !c.parentId);
       return `
         <div class="space-y-4">
-          <div class="fc-card space-y-2">
-            <h3 class="font-bold text-sm text-gray-800">⚡ ${tr('Tezkor qoldiq yangilash', 'Быстрое обновление остатка')}</h3>
-            <p class="text-[10px] text-gray-500">${tr("SKU/ID va YANGI (umumiy) qoldiqni kiriting — mavjud qiymat almashtiriladi.", "Введите SKU/ID и НОВЫЙ (общий) остаток — заменит текущее значение.")}</p>
-            <div class="flex gap-2">
-              <input type="text" id="quick-stock-sku" placeholder="${tr('SKU / ID', 'SKU / ID')}" class="flex-1 p-2.5 border rounded-xl text-xs">
-              <input type="number" id="quick-stock-value" min="0" placeholder="${tr('Yangi qoldiq', 'Новый остаток')}" class="w-28 p-2.5 border rounded-xl text-xs">
-            </div>
-            <button onclick="submitQuickStockUpdate()" ${quickStockUpdateSaving ? 'disabled' : ''} class="fc-btn fc-btn-primary w-full">${quickStockUpdateSaving ? tr('Saqlanmoqda...', 'Сохранение...') : tr('Yangilash', 'Обновить')}</button>
+          <div class="fc-sticky-below-header bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
+            <h3 class="font-bold text-sm text-gray-800">${tr("⚡ ID orqali ko'p tovar qoldig'ini yangilash", "⚡ Массовое обновление остатков по ID")}</h3>
+            <p class="text-[10px] text-gray-500">${tr("SKU va sonini kiriting (Masalan:", "Введите SKU и количество (Например:")} <b>111001 35</b>)</p>
+            <textarea id="bulk-input" rows="4" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="111001 35&#10;111002 20"></textarea>
+            <button onclick="saveBulkStock()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs">${tr("💾 Barchasini saqlash", "💾 Сохранить все")}</button>
           </div>
 
           <div class="flex items-center justify-end gap-2">
@@ -3712,13 +3707,6 @@
           <p class="text-[10px] text-gray-400 -mb-2">${tr("Daraxtdan mahsulotni bosib to'g'ridan-to'g'ri qoldig'ini tahrirlang.", "Нажмите на товар в дереве, чтобы сразу изменить остаток.")}</p>
           <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
             ${topCats.map(parent => renderCategoryTreeNodeHTML(parent, 0)).join('')}
-          </div>
-
-          <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
-            <h3 class="font-bold text-sm text-gray-800">${tr("⚡ ID orqali ko'p tovar qoldig'ini yangilash", "⚡ Массовое обновление остатков по ID")}</h3>
-            <p class="text-[10px] text-gray-500">${tr("SKU va sonini kiriting (Masalan:", "Введите SKU и количество (Например:")} <b>111001 35</b>)</p>
-            <textarea id="bulk-input" rows="4" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="111001 35&#10;111002 20"></textarea>
-            <button onclick="saveBulkStock()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs">${tr("💾 Barchasini saqlash", "💾 Сохранить все")}</button>
           </div>
         </div>
       `;
@@ -3756,7 +3744,10 @@
               <p class="font-bold text-sm text-gray-900 truncate">${escapeHtml(productName(selected))}</p>
               <p class="text-[10px] text-gray-400">ID: ${escapeHtml(selected.sku)}</p>
             </div>
-            <button onclick="clearKirimSelection()" class="text-[11px] font-bold text-blue-600 shrink-0">${tr("O'zgartirish", 'Изменить')}</button>
+            <div class="flex items-center gap-2 shrink-0">
+              <button onclick="clearKirimSelection()" class="text-[11px] font-bold text-blue-600 flex items-center gap-1"><i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>${tr('Orqaga', 'Назад')}</button>
+              <button onclick="openProductDetailModal('${selected.id}')" class="text-[11px] font-bold text-gray-600 flex items-center gap-1">${ICON_EDIT}${tr('Tahrirlash', 'Изменить')}</button>
+            </div>
           </div>
           ${vars.length ? `
             <div>
@@ -3992,6 +3983,7 @@
     function setWarehouseMovementsFilter(type) {
       warehouseMovementsFilter = type;
       warehouseMovementsPage = 1;
+      render(); // chip active-holati darhol yangilansin (setWarehouseMovementsDateRange bilan bir xil naqsh)
       loadWarehouseMovements(true);
     }
     function setWarehouseMovementsPage(p) {
@@ -5361,16 +5353,7 @@
                 <input type="number" id="m-prod-stock" placeholder="15" class="w-full mt-1 p-2 border rounded-xl">
               </div>
 
-              <div>
-                <label class="font-bold text-gray-600">${tr("O'lchamlar (ixtiyoriy)", "Размеры (необязательно)")}</label>
-                <input type="text" id="m-prod-sizes" placeholder="48,2/50,5/52,17 yoki 48/50/52" class="w-full mt-1 p-2 border rounded-xl">
-                <p class="text-[9px] text-gray-400 mt-0.5">${tr("Faqat o'lcham bo'lsa:", "Если только размеры:")} <b>48,2/50,5</b>${tr(". Rang ham bo'lsa, o'lchamlarni", ". Если есть цвета, размеры можно указать")} <b>48/50/52</b> ${tr("ko'rinishida yozish mumkin.", "в таком формате.")}</p>
-              </div>
-              <div>
-                <label class="font-bold text-gray-600">${tr("Ranglar (ixtiyoriy)", "Цвета (необязательно)")}</label>
-                <input type="text" id="m-prod-colors" placeholder="48,Qizil-1,Qora-1/50,Qizil-3,Ko'k-3 yoki Qizil-3/Qora-2" class="w-full mt-1 p-2 border rounded-xl">
-                <p class="text-[9px] text-gray-400 mt-0.5">${tr("Rang majburiy emas. Rang kiritilsa, haqiqiy qoldiq rang variantlarining yig'indisidan hisoblanadi.", "Цвет необязателен. Если указаны цвета, общий остаток рассчитывается по сумме цветовых вариантов.")}</p>
-              </div>
+              <div>${renderVariantBuilderHtml()}</div>
 
               <div>
                 <label class="font-bold text-gray-600">${tr("Izoh / Tavsif", "Описание")}</label>
@@ -5744,13 +5727,7 @@
                 <img id="ef-img-prev" src="${escapeHtml(hasProductImage(p) ? p.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border ${hasProductImage(p) ? '' : 'hidden'}">
               ` : ''}
 
-              ${(field === 'variants' || field === 'sizes') ? (() => { const vf = formatVariantInputs(productVariants(p)); return `
-                <label class="font-bold text-gray-600">${tr("O'lchamlar:", "Размеры:")}</label>
-                <input type="text" id="ef-size-val" value="${escapeHtml(vf.sizes)}" placeholder="48,2/50,5 yoki 48/50" class="w-full p-2 border rounded-xl">
-                <label class="font-bold text-gray-600 mt-2 block">${tr("Ranglar:", "Цвета:")}</label>
-                <input type="text" id="ef-color-val" value="${escapeHtml(vf.colors)}" placeholder="48,Qizil-1,Qora-1/50,Ko'k-3 yoki Qizil-3/Qora-2" class="w-full p-2 border rounded-xl">
-                <p class="text-[10px] text-gray-400 mt-1">${tr("Rang majburiy emas. Variantlar bo'lsa umumiy qoldiq avtomatik hisoblanadi.", "Цвет необязателен. При наличии вариантов общий остаток рассчитывается автоматически.")}</p>
-              `; })() : ''}
+              ${(field === 'variants' || field === 'sizes') ? renderVariantBuilderHtml() : ''}
 
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveFieldEdit('${p.id}', '${field}')" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("Saqlash", "Сохранить")}</button>
@@ -6355,6 +6332,7 @@
       selectedProductModal = products.find(p => p.id === prodId);
       editingFieldData = fieldName;
       initializeTempImageEditor((fieldName === 'img' && selectedProductModal) ? selectedProductModal.img : null);
+      if ((fieldName === 'variants' || fieldName === 'sizes') && selectedProductModal) hydrateVariantBuilderFromProduct(selectedProductModal);
       activePopupModal = 'EDIT_PROD_FIELD';
       render();
     }
@@ -6633,9 +6611,7 @@
       const oldPriceVal = parseFloat(document.getElementById('m-prod-oldprice').value);
       const stockVal = document.getElementById('m-prod-stock').value;
       const stock = stockVal === '' ? NaN : parseInt(stockVal, 10);
-      const sizeText = document.getElementById('m-prod-sizes').value;
-      const colorText = document.getElementById('m-prod-colors').value;
-      const variants = parseVariantInputs(sizeText, colorText, isNaN(stock) ? 0 : stock);
+      const variants = resolveVariantBuilderRows(readVariantBuilderRowsFromDom());
       const desc = document.getElementById('m-prod-desc').value.trim();
       if (!name || isNaN(price) || (variants.length === 0 && isNaN(stock))) {
         return alert(tr("Iltimos, barcha majburiy maydonlarni to'ldiring!", "Заполните все обязательные поля!"));
@@ -6753,9 +6729,7 @@
         // Tanlangan rasm kartochkada ham darhol ko'rinsin.
         if (imageSnap.preview || imageSnap.url) p.img = imageSnap.preview || imageSnap.url;
       } else if (field === 'sizes' || field === 'variants') {
-        const sizeText = document.getElementById('ef-size-val').value;
-        const colorText = document.getElementById('ef-color-val').value;
-        const vars = parseVariantInputs(sizeText, colorText, p.stock);
+        const vars = resolveVariantBuilderRows(readVariantBuilderRowsFromDom());
         payload.field = 'variants'; payload.value = vars;
         p.variants = vars;
         p.sizes = vars.length && !vars.some(v => v.color) ? vars.map(v => ({ size: v.size, qty: v.qty, sku: v.sku || null })) : null;
@@ -6844,6 +6818,7 @@
 
     function openAddProductModal() {
       initializeTempImageEditor(null);
+      variantBuilderRows = [{ level1: '', level2: '', qty: '' }];
       activePopupModal = 'ADD_PROD';
       render();
     }
