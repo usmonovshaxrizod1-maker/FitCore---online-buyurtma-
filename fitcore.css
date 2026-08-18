@@ -1435,6 +1435,9 @@ input.border:focus, textarea.border:focus, select.border:focus {
   border-top: 1px solid #edf1f5 !important;
   box-shadow: 0 -5px 18px rgba(15, 23, 42, 0.045) !important;
 }
+/* 44-band: Telegram WebView'da bottom-nav pastki xavfsiz zonaga (home-indicator)
+   yopishib qolmasin. */
+.fitcore-bottom-nav { padding-bottom: max(.5rem, env(safe-area-inset-bottom)) !important; }
 
 /* Aynan rejim almashtirish tugmasi: mavjud bo'lmagan gradient utility'lariga bog'liq emas. */
 #admin-role-toggle-btn {
@@ -1465,6 +1468,8 @@ input.border:focus, textarea.border:focus, select.border:focus {
   border-bottom: 0 !important;
   box-shadow: 0 3px 14px rgba(15, 23, 42, 0.055) !important;
 }
+/* 44-band: Telegram WebView top xavfsiz zonasi (notch/status bar) hisobga olinadi. */
+.fitcore-topbar { padding-top: max(.75rem, env(safe-area-inset-top)) !important; }
 .fitcore-bottom-nav {
   border-top-color: #eef2f6 !important;
   box-shadow: 0 -4px 14px rgba(15, 23, 42, 0.04) !important;
@@ -1504,51 +1509,6 @@ body { background: var(--fitcore-page-bg) !important; color: var(--fitcore-text)
 /* Header/bottom nav ranglari card-bg'dan mustaqil — o'zining rolига ega. */
 .fitcore-topbar.bg-white { background-color: var(--fitcore-header-bg) !important; }
 .fitcore-bottom-nav.bg-white { background-color: var(--fitcore-bottomnav-bg) !important; }
-
-/* ============================================================
-   DESIGN SYSTEM — semantic holat ranglari (Danger/Success/Warning/Muted).
-   4-BLOK'dagi --fitcore-primary bilan bir xil uslub: yangi rang emas,
-   allaqachon ishlatilayotgan Tailwind classlarini (ular turli joyda
-   turlicha soyada — masalan text-red-500/600/700 aralash ishlatilgan)
-   BITTA izchil o'zgaruvchiga birlashtiradi. Default qiymatlar eng ko'p
-   ishlatilgan soyaga teng qilib tanlangan — hech narsa vizual jihatdan
-   ZO'RAKI o'zgarmaydi, faqat keyingi safar rangni bitta joydan
-   o'zgartirish mumkin bo'ladi. Faqat ilova UI holatlari (xato/tasdiq/
-   ogohlantirish) — Instagram/Facebook brend ikonkalari yoki mahsulot
-   rasmlariga tegilmagan (ular bu classlardan foydalanmaydi).
-   ============================================================ */
-:root {
-  --fitcore-danger: var(--color-red-600);
-  --fitcore-danger-soft: var(--color-red-50);
-  --fitcore-danger-border: var(--color-red-200);
-  --fitcore-success: var(--color-emerald-600);
-  --fitcore-success-soft: var(--color-emerald-50);
-  --fitcore-warning: var(--color-amber-700);
-  --fitcore-warning-soft: var(--color-amber-50);
-  --fitcore-muted: var(--color-gray-400);
-}
-.text-red-500, .text-red-600, .text-red-700 { color: var(--fitcore-danger) !important; }
-.bg-red-600 { background-color: var(--fitcore-danger) !important; }
-.bg-red-600.text-white { color: #fff !important; }
-.bg-red-50, .bg-red-100 { background-color: var(--fitcore-danger-soft) !important; }
-.border-red-200, .border-red-500 { border-color: var(--fitcore-danger-border) !important; }
-
-.text-emerald-600, .text-emerald-700, .text-green-600 { color: var(--fitcore-success) !important; }
-.bg-emerald-600, .bg-green-600 { background-color: var(--fitcore-success) !important; }
-.bg-emerald-600.text-white, .bg-green-600.text-white { color: #fff !important; }
-.bg-emerald-50 { background-color: var(--fitcore-success-soft) !important; }
-
-.text-amber-600, .text-amber-700, .text-amber-800 { color: var(--fitcore-warning) !important; }
-.bg-amber-500, .bg-amber-600 { background-color: var(--fitcore-warning) !important; }
-.bg-amber-500.text-white, .bg-amber-600.text-white { color: #fff !important; }
-.bg-amber-50 { background-color: var(--fitcore-warning-soft) !important; }
-
-/* Standart tugma o'lchamlari — Telegram mobile uchun tap area kichik
-   bo'lmasin. Mavjud tugma classlariga QO'SHIMCHA sifatida ishlatiladi
-   (yangi bo'limlarda: Dashboard/Ombor/Support/Trash), eski tugmalarning
-   className'ga tegilmagan — shu sabab hech qanday joy buzilmaydi. */
-.fitcore-btn { min-height: 44px; border-radius: 0.75rem; font-weight: 700; }
-.fitcore-icon-btn { min-width: 36px; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; }
 
 /* 2-10-band: qo'llab-quvvatlash chat UI — layout uchun bir nechta Tailwind
    utility (justify-end, max-w-[80%], opacity-70, va h.k.) bu build'da yo'q
@@ -1600,3 +1560,107 @@ body { background: var(--fitcore-page-bg) !important; color: var(--fitcore-text)
 @supports not (height: 100dvh) {
   #modal-container > .fixed > * { max-height: 88vh; }
 }
+
+/* ============================================================
+   POLISH ROUND — 1-BOSQICH: semantic design-token tizimi
+   Bu blok butun round davomida (barcha bosqichlarda) yangi UI
+   shu --fc-* o'zgaruvchilar va .fc-* classlardan foydalanadi —
+   hardcoded Tailwind red-*, green-* va h.k. o'rniga. Eski hardcoded
+   joylarni almashtirish 3-bosqichda alohida qilinadi (bu yerda
+   faqat FOUNDATION — mavjud ko'rinishga hech qanday ta'sir yo'q).
+   Ranglar mavjud --color-* / --fitcore-* tokenlardan olinadi, shu
+   sabab do'kon o'z rang sxemasini tanlasa (Dizayn sozlamalari)
+   --fc-primary ham avtomatik moslashadi.
+   ============================================================ */
+:root {
+  --fc-primary: var(--fitcore-primary, var(--color-blue-600));
+  --fc-success: var(--color-green-600);
+  --fc-success-bg: var(--color-green-50);
+  --fc-success-border: var(--color-green-200);
+  --fc-warning: var(--color-amber-600);
+  --fc-warning-bg: var(--color-amber-50);
+  --fc-warning-border: var(--color-amber-200);
+  --fc-danger: var(--color-red-600);
+  --fc-danger-bg: var(--color-red-50);
+  --fc-danger-border: var(--color-red-200);
+  --fc-muted: var(--color-gray-500);
+  --fc-muted-bg: var(--color-gray-100);
+  --fc-selected: var(--color-blue-500);
+  --fc-selected-bg: var(--color-blue-50);
+  --fc-surface: var(--fitcore-card-bg, var(--color-white));
+  --fc-border: var(--color-gray-200);
+}
+
+/* Matn/fon/border semantikasi */
+.fc-text-danger { color: var(--fc-danger); }
+.fc-text-success { color: var(--fc-success); }
+.fc-text-warning { color: var(--fc-warning); }
+.fc-text-muted { color: var(--fc-muted); }
+.fc-text-primary { color: var(--fc-primary); }
+.fc-bg-danger-soft { background-color: var(--fc-danger-bg); }
+.fc-bg-success-soft { background-color: var(--fc-success-bg); }
+.fc-bg-warning-soft { background-color: var(--fc-warning-bg); }
+/* 33-band: to'liq to'yingan (solid) danger fon — qizil tugmalar uchun.
+   Bitta joyda o'zgarsa hammasi birga o'zgarishi uchun (avvalgi muammo: ba'zi
+   qizil joy o'zgarsa, ba'zisi eskicha qolardi). */
+.fc-bg-danger { background-color: var(--fc-danger); }
+.fc-bg-danger:hover { filter: brightness(0.92); }
+.fc-border-danger { border-color: var(--fc-danger-border); }
+.fc-border-success { border-color: var(--fc-success-border); }
+.fc-border-warning { border-color: var(--fc-warning-border); }
+
+/* Badge tizimi — status/holat belgilari (buyurtma, ombor, support) */
+.fc-badge { display: inline-flex; align-items: center; gap: .25rem; padding: .125rem .5rem; border-radius: 9999px; font-size: .75rem; font-weight: 500; border-width: 1px; border-style: solid; }
+.fc-badge-primary { color: var(--fc-primary); background: var(--fc-selected-bg); border-color: var(--fc-selected); }
+.fc-badge-success { color: var(--fc-success); background: var(--fc-success-bg); border-color: var(--fc-success-border); }
+.fc-badge-warning { color: var(--fc-warning); background: var(--fc-warning-bg); border-color: var(--fc-warning-border); }
+.fc-badge-danger { color: var(--fc-danger); background: var(--fc-danger-bg); border-color: var(--fc-danger-border); }
+.fc-badge-muted { color: var(--fc-muted); background: var(--fc-muted-bg); border-color: var(--fc-border); }
+
+/* Button tizimi — bir xil height/radius/padding/font, ixcham icon-only variant bilan */
+.fc-btn { display: inline-flex; align-items: center; justify-content: center; gap: .375rem; min-height: 2.75rem; padding: 0 1rem; border-radius: .75rem; font-size: .875rem; font-weight: 600; border-width: 1px; border-style: solid; border-color: transparent; cursor: pointer; transition: opacity .15s ease, background .15s ease; }
+.fc-btn:disabled { opacity: .55; cursor: not-allowed; }
+.fc-btn-primary { background: var(--fc-primary); color: #fff; }
+.fc-btn-secondary { background: var(--fc-surface); color: var(--color-gray-800); border-color: var(--fc-border); }
+.fc-btn-success { background: var(--fc-success); color: #fff; }
+.fc-btn-danger { background: var(--fc-danger); color: #fff; }
+.fc-btn-ghost { background: transparent; color: var(--color-gray-600); }
+.fc-btn-icon { min-width: 2.75rem; min-height: 2.75rem; padding: 0; border-radius: 9999px; background: var(--fc-surface); color: var(--color-gray-700); border-color: var(--fc-border); }
+
+/* Card tizimi — mahsulot/buyurtma/support/dashboard/ombor cardlari uchun umumiy asos */
+.fc-card { background: var(--fc-surface); border: 1px solid var(--fc-border); border-radius: 1rem; padding: .875rem; }
+.fc-card-selected { border-color: var(--fc-selected); background: var(--fc-selected-bg); }
+
+/* Sahifa header standarti — page-shell (yangi full-page bo'limlar: Support/Settings/Dashboard/Ombor) */
+.fc-page-header { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: .5rem; padding: max(.75rem, env(safe-area-inset-top)) .75rem .75rem; background: var(--fc-surface); border-bottom: 1px solid var(--fc-border); }
+.fc-page-header-title { flex: 1; font-weight: 700; font-size: 1rem; text-align: center; }
+.fc-page-header-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 2.5rem; min-height: 2.5rem; border-radius: 9999px; background: var(--fc-muted-bg); color: var(--color-gray-700); }
+
+/* Bo'sh holat (empty state) — Sevimlilar/Buyurtmalar/Trash/Support kabi ro'yxatlar uchun umumiy */
+.fc-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem; padding: 2.5rem 1rem; color: var(--fc-muted); text-align: center; }
+.fc-empty-state svg { opacity: .45; }
+
+/* Loading spinner — bitta umumiy uslub (dashboard/ombor/support kabi joylarda) */
+.fc-spinner { width: 1.25rem; height: 1.25rem; border: 2px solid var(--fc-border); border-top-color: var(--fc-primary); border-radius: 9999px; animation: fc-spin .7s linear infinite; }
+@keyframes fc-spin { to { transform: rotate(360deg); } }
+
+/* Tasdiqlash dialogi — native confirm() o'rniga ishlatiladigan custom komponent (delete/restore/permanent-delete) */
+.fc-confirm-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+@media (min-width: 640px) { .fc-confirm-backdrop { align-items: center; } }
+.fc-confirm-box { background: var(--fc-surface); border-radius: 1.25rem 1.25rem 0 0; padding: 1.25rem; width: 100%; max-width: 26rem; }
+@media (min-width: 640px) { .fc-confirm-box { border-radius: 1.25rem; } }
+.fc-confirm-title { font-weight: 700; font-size: 1rem; margin-bottom: .375rem; }
+.fc-confirm-text { color: var(--color-gray-600); font-size: .875rem; margin-bottom: 1rem; }
+.fc-confirm-actions { display: flex; gap: .5rem; }
+.fc-confirm-actions .fc-btn { flex: 1; }
+
+/* Pager (10 tadan sahifalash) — barcha yangi ro'yxatlar uchun umumiy */
+.fc-pager { display: flex; align-items: center; justify-content: center; gap: .25rem; padding: .75rem 0; flex-wrap: wrap; }
+.fc-pager-btn { min-width: 2.25rem; min-height: 2.25rem; padding: 0 .5rem; border-radius: .5rem; font-size: .8125rem; font-weight: 600; background: var(--fc-surface); border: 1px solid var(--fc-border); color: var(--color-gray-700); }
+.fc-pager-btn[disabled] { opacity: .4; }
+.fc-pager-btn.fc-pager-active { background: var(--fc-primary); color: #fff; border-color: var(--fc-primary); }
+.fc-pager-ellipsis { color: var(--fc-muted); padding: 0 .25rem; }
+
+/* 1/3-band: bottom-nav "Qo'llab-quvvatlash" tugmasidagi o'qilmagan-xabar nuqtasi */
+.nav-btn { position: relative; }
+.fc-nav-dot { position: absolute; top: -1px; right: 22%; width: 9px; height: 9px; border-radius: 9999px; background: var(--fc-danger); border: 1.5px solid #fff; }

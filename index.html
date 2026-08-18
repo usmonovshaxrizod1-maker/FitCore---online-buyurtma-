@@ -9,12 +9,13 @@
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="preconnect" href="https://mvgbqggrzhswjhmwqcyp.supabase.co">
-  <link rel="stylesheet" href="./fitcore.css?v=11">
+  <link rel="stylesheet" href="./fitcore.css?v=10">
   <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
   <script defer src="https://unpkg.com/lucide@latest"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script defer src="./fitcore-image-io.js?v=3"></script>
   <script defer src="./fitcore-commerce.js?v=3"></script>
-  <script defer src="./fitcore-app.js?v=20"></script>
+  <script defer src="./fitcore-app.js?v=16"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 pb-20 font-sans">
 
@@ -25,15 +26,18 @@
       <span id="role-tag" class="hidden bg-slate-900 text-white font-black px-2.5 py-1 rounded-xl text-[10px] tracking-widest border border-amber-400 text-amber-400"></span>
     </div>
     <div class="flex items-center space-x-2">
-      <button onclick="switchTab('cart')" class="relative p-2 bg-gray-100 rounded-full" id="header-cart-btn">
+      <button onclick="switchTab('cart')" class="relative p-2 bg-gray-100 rounded-full" id="header-cart-btn" aria-label="Savatcha" title="Savatcha">
         <i data-lucide="shopping-cart" class="w-5 h-5 text-gray-700"></i>
-        <span id="cart-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full items-center justify-center">0</span>
+        <span id="cart-badge" class="hidden absolute -top-1 -right-1 fc-bg-danger text-white text-[10px] font-bold w-4 h-4 rounded-full items-center justify-center">0</span>
       </button>
-      <button onclick="switchTab('profile')" class="p-2 bg-gray-100 rounded-full" id="header-person-btn">
+      <!-- 4-band: BAYROQ -> ODAMCHA -> SOZLAMA ketma-ketligi (savatchadan keyin). -->
+      <button onclick="toggleUiLang()" class="p-2 bg-gray-100 rounded-full text-base leading-none" id="lang-flag-btn" title="Til / Язык" aria-label="Til / Язык">🇺🇿</button>
+      <button onclick="switchTab('profile')" class="p-2 bg-gray-100 rounded-full" id="header-person-btn" aria-label="Profil" title="Profil">
         <i data-lucide="user" class="w-5 h-5 text-gray-700"></i>
       </button>
-      <!-- 5.11: joylashuv savat/profildan keyinga ko'chirildi; toggleUiLang/updateHeaderChrome id bo'yicha ishlaydi, DOM tartibiga bog'liq emas -->
-      <button onclick="toggleUiLang()" class="p-2 bg-gray-100 rounded-full text-base leading-none" id="lang-flag-btn" title="Til / Язык">🇺🇿</button>
+      <button onclick="openShopParams()" class="p-2 bg-gray-100 rounded-full" id="header-settings-btn" aria-label="Do'kon sozlamalari" title="Do'kon sozlamalari">
+        <i data-lucide="settings" class="w-5 h-5 text-gray-700"></i>
+      </button>
     </div>
     <!-- 17-band: top/left endi togglePersonMenu() orqali JS'da dinamik
          o'rnatiladi (personBtn.getBoundingClientRect() asosida) — bu yerdagi
@@ -82,15 +86,20 @@
       <i data-lucide="warehouse" class="w-5 h-5"></i>
       <span class="text-[10px] mt-1" id="nav-label-warehouse">Ombor</span>
     </button>
-    <button onclick="switchTab('support')" id="nav-support-btn" class="nav-btn hidden flex-col items-center text-gray-500">
+    <button onclick="openAdminSupportOrUserSupport()" id="nav-support-btn" class="nav-btn flex flex-col items-center text-gray-500">
       <i data-lucide="life-buoy" class="w-5 h-5"></i>
-      <span class="text-[10px] mt-1 leading-tight" id="nav-label-support">Qo'llab-quvvatlash</span>
+      <span class="text-[10px] mt-1" id="nav-label-support">Qo'llab-quvvatlash</span>
     </button>
     <button onclick="switchTab('profile')" class="nav-btn flex flex-col items-center text-gray-500" id="nav-profile">
       <i data-lucide="user" class="w-5 h-5"></i>
       <span class="text-[10px] mt-1" id="nav-label-profile">Profil</span>
     </button>
   </nav>
+
+  <!-- FULL PAGES (page-shell) — POLISH ROUND 1-bosqich: Qo'llab-quvvatlash/Sozlamalar/
+       Dashboard/Ombor-Holat kabi bo'limlar shu yerga renderPageShell() orqali chiqadi.
+       Modal-dan farqi: orqa fon xira (backdrop) emas, to'liq sahifa, bottom-nav'ni qoplaydi. -->
+  <div id="page-container" class="hidden fixed inset-0 z-40 bg-white overflow-y-auto"></div>
 
   <!-- MODALS CONTAINER -->
   <div id="modal-container"></div>

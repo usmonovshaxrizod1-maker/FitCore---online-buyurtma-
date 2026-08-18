@@ -47,6 +47,20 @@
 
     const FALLBACK_IMG = 'https://via.placeholder.com/150';
 
+    // 31-band: navigatsiya/action kontekstidagi emoji o'rniga zamonaviy SVG
+    // iconlar — inline (Lucide-uslubida chizilgan, lekin data-lucide emas,
+    // shuning uchun lucide.createIcons() chaqirilishiga bog'liq emas va har
+    // qanday render yo'lida darhol ko'rinadi). Bitta stroke/size uslubi.
+    function fcIcon(pathHtml, cls = 'w-3.5 h-3.5') {
+      return `<svg class="inline align-[-2px] ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${pathHtml}</svg>`;
+    }
+    const ICON_EDIT = fcIcon('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="M15 5l4 4"></path>');
+    const ICON_TRASH = fcIcon('<path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>');
+    const ICON_UP = fcIcon('<polyline points="18 15 12 9 6 15"></polyline>');
+    const ICON_DOWN = fcIcon('<polyline points="6 9 12 15 18 9"></polyline>');
+    const ICON_PIN = fcIcon('<line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path>');
+    const ICON_SETTINGS = fcIcon('<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>');
+
     // ⚙️ CONFIGURATION
     // MUHIM: bot tokeni va admin ID endi bu yerda YO'Q — ular faqat serverda
     // (Edge Function ichida, maxfiy sifatida) saqlanadi. Frontendda ular
@@ -55,6 +69,7 @@
     const CONFIG = {
       SUPABASE_URL: "https://mvgbqggrzhswjhmwqcyp.supabase.co",
       SUPABASE_KEY: "sb_publishable_f86Xiu8_yFR_kkZNU95P-g_inE5zCyA",
+      IMAGES_BUCKET: "images"
     };
 
     const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
@@ -242,11 +257,47 @@
 
     const TOP_LEVEL_REGIONS = REGION_DEFS.map(r => ({ id: r.code, nameUz: r.nameUz, nameRu: r.nameRu }));
     const TOP_LEVEL_REGION_IDS = TOP_LEVEL_REGIONS.map(region => region.id);
+    const imageIO = window.FitcoreImageIO;
     const commerce = window.FitcoreCommerce;
-    // Rasm siqish/saqlash chegaralari (mahsulot/kategoriya/logotip).
-    const TARGET_IMAGE_BYTES = 2 * 1024 * 1024;
+    const SUPPORTED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    const MAX_ORIGINAL_IMAGE_BYTES = 15 * 1024 * 1024;
     const MAX_STORED_IMAGE_BYTES = 5 * 1024 * 1024;
+    // Server-first upload Telegram WebView'da direct Storage fetch'ga qaraganda barqarorroq.
+    // Base64 request'ni kichik saqlash uchun local rasmlarni imkon qadar 2MB ostiga siqamiz.
+    const TARGET_PRODUCT_IMAGE_BYTES = 2 * 1024 * 1024;
     const MAX_RECEIPT_BYTES = 6 * 1024 * 1024;
+
+    function validatePickedImageFile(file, maxOriginalBytes = MAX_ORIGINAL_IMAGE_BYTES) {
+      if (!file || !SUPPORTED_IMAGE_MIME.has(String(file.type || '').toLowerCase())) {
+        throw new Error('invalid_image_type');
+      }
+      if (!Number.isFinite(file.size) || file.size <= 0 || file.size > maxOriginalBytes) {
+        throw new Error('image_too_large');
+      }
+      return true;
+    }
+    // 6-band: accept="image/*" endi telefon galereyasidagi ko'proq formatni
+    // (shu jumladan HEIC/HEIF) tanlashga imkon beradi, lekin brauzer HEIC'ni
+    // canvas orqali ishonchli dekodlay olmaydi va serverda ham xavfsiz
+    // normalizatsiya yo'q (Deno'da ishonchli HEIC decoder yo'q) — shu sabab
+    // HEIC/HEIF hali ham rad etiladi, faqat aniqroq xabar bilan (kengaytmaga
+    // ishonib qolmasdan, extensiyasiz fayllar uchun ham MIME orqali aniqlash
+    // urinib ko'riladi).
+    function isLikelyHeicFile(file) {
+      const mime = String(file?.type || '').toLowerCase();
+      const name = String(file?.name || '').toLowerCase();
+      return mime === 'image/heic' || mime === 'image/heif' || /\.(heic|heif)$/.test(name);
+    }
+    function pickedImageErrorMessage(err, file) {
+      const code = String(err?.message || err || '');
+      if (code === 'invalid_image_type') {
+        return isLikelyHeicFile(file)
+          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. iPhone: Sozlamalar > Kamera > Formatlar > \"Eng mos\"ni tanlang, yoki rasmni avval JPG/PNG'ga o'tkazing.", "⚠️ Формат HEIC/HEIF пока не поддерживается. iPhone: Настройки > Камера > Форматы > «Наиболее совместимые», либо сначала преобразуйте фото в JPG/PNG.")
+          : tr('⚠️ Faqat JPG/JPEG, PNG yoki WebP rasm tanlang!', '⚠️ Выберите JPG/JPEG, PNG или WebP!');
+      }
+      return tr('⚠️ Original rasm hajmi 15MB dan oshmasligi kerak!', '⚠️ Исходное изображение не должно превышать 15 МБ!');
+    }
+
     const tg = window.Telegram?.WebApp;
     if (tg) tg.expand();
 
@@ -382,6 +433,7 @@
     let supportMessagesLoading = false;
     let openSupportTicketId = null; // mijoz tomonda hozir ochiq chat
     let supportReplyTarget = null; // {id, body, sender} — "shu xabarga javob" preview
+    let supportSendingMessage = false; // 41-band: ikki marta yuborishni oldini olish
     let adminSupportSelectedUser = null; // admin: Support -> User bosqichi
     let adminSupportSelectedTicketId = null; // admin: User -> Chat bosqichi
     let cart = JSON.parse(localStorage.getItem('cart') || "{}");
@@ -406,18 +458,40 @@
     let myStatus = { isBlocked: false, blockReason: null, isWarned: false, warnReason: null };
 
     let currentTab = 'home';
+    // POLISH ROUND 1-bosqich: page-shell — modal (backdrop) emas, to'liq sahifa
+    // (Qo'llab-quvvatlash/Sozlamalar/Dashboard/Ombor-Holat). null = hech qanday page ochiq emas.
+    let activePage = null;
     let warehouseMissingImageOnly = false;
+    // 11-16-band: Ombor tabi ichida ikki sub-bo'lim — Holat (summary, default)
+    // va Qoldiqni yangilash (mavjud daraxt+SKU tezkor yangilash, o'zgarishsiz saqlangan).
+    let warehouseSubTab = 'HOLAT';
+    let warehouseSummaryData = null;
+    let warehouseSummaryLoading = false;
+    let warehouseSummaryLoaded = false;
+    let warehouseStockFilter = null; // 'LOW' | 'OUT' | null — Holat cardi bosilganda
+    let warehouseStockFilterPage = 1;
+    // 15-16-band: Kirim (stock-in ADD) + harakatlar tarixi
+    let warehouseKirimSearch = '';
+    let warehouseKirimSelectedProduct = null;
+    let warehouseKirimSelectedVariantSku = null;
+    let warehouseKirimQty = '';
+    let warehouseKirimSaving = false;
+    let warehouseMovements = [];
+    let warehouseMovementsLoading = false;
+    let warehouseMovementsLoaded = false;
+    let warehouseMovementsPage = 1;
+    let warehouseMovementsTotal = 0;
+    let warehouseMovementsFilter = null; // 'KIRIM' | 'BUYURTMA' | 'MANUAL' | null
     let warehouseImportedMissingImageOnly = false;
-    let warehouseSection = 'holat'; // holat | yangilash | kirim | kam | tugagan | tarix
-    let inventoryMovements = null;
-    let inventoryMovementsLoading = false;
     let isAdminMode = false;
     let authReady = false;
     let adminCatParentId = null;
     let categoryPage = 1;
     // sortPrice/sortNew/sortSold: null | 'asc' | 'desc' — har biri mustaqil yoqiladi
-    let categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null, hideOutOfStock: false };
-    let homePage = 1;
+    let categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null, inStockOnly: false };
+    // 23-band: Bosh sahifa qidiruv matni — search-input DOM elementi qayta
+    // chizilganda (masalan product detaildan orqaga qaytilganda) yo'qolmasin.
+    let homeSearchQuery = '';
     let ordersPage = 1;
     let userOrderFilter = 'ALL';
     let selectedProductModal = null;
@@ -442,6 +516,9 @@
     let fulfillmentExpandedPayment = null; // CASH | CARD | null (faqat PAYMENTS bo'limida, 1.2: yonma-yon + inline ochilish)
     let selectedDeliveryMethodId = checkoutDraft.deliveryMethodId || null;
     let selectedPayMethod = checkoutDraft.paymentMethodId || null;
+    let checkoutReceiptFile = null;
+    let checkoutReceiptPreparing = null;
+    let checkoutReceiptPreviewUrl = null; // 1.8: local preview uchun object URL
     // 15-band: rad etilgan chekni qayta yuborish uchun alohida state —
     // checkout state'idan mustaqil (checkout draft bilan aralashib ketmasin).
     let resubmitOrderId = null;
@@ -449,6 +526,11 @@
     let resubmitReceiptPreparing = null;
     let resubmitReceiptPreviewUrl = null;
     let resubmitReceiptSelectionVersion = 0;
+    // 8-bo'lim: preview asl native File'dan uzoq yashaydigan object URL bo'lib
+    // qolmasligi uchun — capture muvaffaqiyatli bo'lgach detached Blob'dan
+    // yangilanadi. Bu versiya tez-tez qayta tanlashda eski (sekin) capture'ning
+    // yangi tanlovni bosib yubormasligini kafolatlaydi.
+    let checkoutReceiptSelectionVersion = 0;
     // 1.14: BTS/EMU filial tanlash — mijoz qo'lda manzil yozmaydi.
     let checkoutBranches = [];
     let checkoutBranchesLoading = false;
@@ -481,22 +563,29 @@
     let moveCategoryId = null;
     let moveCategoryTargetId = '';
     let trashBatches = null;
-    let trashPage = 1;
-    let trashSelectMode = false;
-    const trashSelectedBatchIds = new Set();
+    // 28-30-band: PRODUCT-turdagi trash batchlarda mahsulot darajasidagi
+    // tanlash holati — batchId bo'yicha.
+    let trashSelectMode = {};
+    let trashSelectedProductIds = {};
     let bulkProductSelectMode = false;
     const bulkSelectedProductIds = new Set();
     let bulkMoveTargetCategoryId = '';
-    // Dashboard — alohida sahifa (currentTab === 'dashboard').
-    let dashboardData = null;
-    let dashboardLoading = false;
-    let dashboardRangePreset = 'today'; // today | 7d | 30d | month | custom
-    let dashboardCustomFrom = '';
-    let dashboardCustomTo = '';
-    let dashboardReturnTab = 'warehouse';
+    // 17-band: Sevimlilar — boot'dan keyin bir marta yuklanadi (har card uchun
+    // alohida so'rov yo'q, 48-band talabi).
+    let favoriteProductIds = new Set();
+    let favoritesLoaded = false;
+    let favoritesLoading = false;
+    let favoritesPage = 1;
+    // 18-band: Yaqinda ko'rilganlar — tartib muhim (eng oxirgi birinchi), shuning
+    // uchun massiv (Set emas).
+    let recentViewProductIds = [];
+    let recentViewsLoaded = false;
+    let recentPage = 1;
+    let dashboardLiteData = null;
+    let dashboardLiteLoading = false;
+    let dashboardCustomerPage = 1; // 9-band: Dashboard ichidagi Mijozlar bo'limi paginationi
 
-    // Rasm: lokal fayl (siqilib, base64 sifatida save so'rovi ichida
-    // yuboriladi) YOKI HTTPS URL — ikkalasi ham qo'llab-quvvatlanadi.
+    // Rasm yuklash uchun: haqiqiy fayl (Storage'ga yuklanadi) va preview (faqat ko'rsatish uchun)
     let tempImageFile = null;
     let tempImagePreviewUrl = null;
     let tempImagePreparingPromise = null;
@@ -555,8 +644,8 @@
       NEW: "bg-amber-100 text-amber-800",
       PROCESSING: "bg-blue-100 text-blue-800",
       DELIVERED: "bg-green-100 text-green-800",
-      CANCELLED: "bg-red-100 text-red-800",
-      REJECTED: "bg-red-100 text-red-800",
+      CANCELLED: "fc-bg-danger-soft fc-text-danger",
+      REJECTED: "fc-bg-danger-soft fc-text-danger",
     };
     function statusColorClass(st) { return STATUS_COLORS[st] || "bg-gray-100 text-gray-600"; }
     // 14-band: chek rad etilgan bo'lsa, orders.status o'zi o'zgarmagan (hali
@@ -887,7 +976,7 @@
     async function loadUsersLazy(force = false) {
       if (!isUserAnAdmin || usersLoading || (usersLoaded && !force)) return;
       usersLoading = true;
-      if (currentTab === 'users') render();
+      if (activePage === 'SUPPORT' || activePage === 'DASHBOARD') render();
       try {
         const data = await callApi('get_users_summary', {});
         usersSummary = data.users || [];
@@ -896,7 +985,7 @@
         console.error('Mijozlarni yuklashda xatolik:', e);
       } finally {
         usersLoading = false;
-        if (currentTab === 'users') render();
+        if (activePage === 'SUPPORT' || activePage === 'DASHBOARD') render();
       }
     }
 
@@ -930,7 +1019,9 @@
         console.error("Murojaatlarni yuklashda xatolik:", e);
       } finally {
         supportTicketsLoading = false;
-        if (activePopupModal === 'SUPPORT') render();
+        // POLISH ROUND: bottom-nav Support tugmasidagi o'qilmagan-nuqta ham
+        // shu yuklanishga bog'liq — activePage/tab'dan qat'iy nazar qayta chizamiz.
+        render();
       }
     }
     async function loadAdminSupportTicketsLazy(force = false) {
@@ -944,7 +1035,7 @@
         console.error("Murojaatlarni yuklashda xatolik:", e);
       } finally {
         adminSupportTicketsLoading = false;
-        if (currentTab === 'support' || currentTab === 'profile') render();
+        render();
       }
     }
     async function loadSupportMessages(ticketId, force = false) {
@@ -972,14 +1063,20 @@
       return t.status === 'ANSWERED' && t.lastMessage?.sender === 'USER';
     }
 
+    // 1/2-band: bottom-nav "Qo'llab-quvvatlash" tugmasi — rolga qarab
+    // admin/mijoz oqimini ochadi (index.html'dagi yagona nav-support-btn).
+    function openAdminSupportOrUserSupport() {
+      if (isAdminMode && isUserAnAdmin) openAdminSupportModal();
+      else openSupportModal(null);
+    }
+
     // ---- Mijoz tomon ----
     function openSupportModal(orderId) {
       supportTicketOrderId = orderId || null;
       openSupportTicketId = null;
       supportMessages = [];
       supportReplyTarget = null;
-      activePopupModal = 'SUPPORT';
-      render();
+      openPage('SUPPORT', 'nav-support-btn');
       loadMySupportTicketsLazy().then(resolveActiveSupportTicket);
     }
     // Shu order (yoki umumiy) uchun yopilmagan ticket bo'lsa, to'g'ridan-
@@ -1001,9 +1098,12 @@
       render();
     }
     async function submitSupportComposer() {
+      if (supportSendingMessage) return;
       const textareaId = openSupportTicketId ? 'sup-chat-message' : 'sup-message';
       const body = document.getElementById(textareaId)?.value.trim() || '';
       if (!body) return alert(tr("Murojaat matnini yozing.", "Напишите текст обращения."));
+      supportSendingMessage = true;
+      render();
       showActionToast(tr("⏳ Yuborilmoqda...", "⏳ Отправка..."), 'saving');
       try {
         if (openSupportTicketId) {
@@ -1018,12 +1118,14 @@
           supportMessages = [data.message];
         }
         supportReplyTarget = null;
-        render();
         showActionToast(tr("✅ Yuborildi", "✅ Отправлено"), 'success', 1500);
       } catch (e) {
         console.error(e);
         showActionToast(tr("❌ Yuborilmadi", "❌ Не отправлено"), 'error', 2000);
         alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      } finally {
+        supportSendingMessage = false;
+        render();
       }
     }
     // 7-band: FAQAT mijoz o'zi murojaatni tugatadi.
@@ -1043,14 +1145,14 @@
       }
     }
 
-    // ---- Admin tomon: Support -> User -> Chatlar -> Chat (to'liq sahifa) ----
+    // ---- Admin tomon: Support -> User -> Chatlar -> Chat ----
     function openAdminSupportModal() {
-      currentTab = 'support';
       adminSupportSelectedUser = null;
       adminSupportSelectedTicketId = null;
       supportReplyTarget = null;
-      render();
+      openPage('SUPPORT', 'nav-support-btn');
       loadAdminSupportTicketsLazy();
+      loadUsersLazy();
     }
     function groupAdminSupportTicketsByUser() {
       const byUser = new Map();
@@ -1087,9 +1189,12 @@
       loadSupportMessages(ticketId);
     }
     async function submitAdminSupportReply() {
+      if (supportSendingMessage) return;
       const ticketId = adminSupportSelectedTicketId;
       const body = document.getElementById('sup-admin-message')?.value.trim() || '';
       if (!body) return alert(tr("Javob matnini yozing.", "Напишите текст ответа."));
+      supportSendingMessage = true;
+      render();
       showActionToast(tr("⏳ Yuborilmoqda...", "⏳ Отправка..."), 'saving');
       try {
         const data = await callApi('send_support_message', { ticketId, body, replyToMessageId: supportReplyTarget?.id || null });
@@ -1097,12 +1202,14 @@
         const idx = adminSupportTickets.findIndex(t => t.id === ticketId);
         if (idx >= 0) adminSupportTickets[idx] = { ...adminSupportTickets[idx], ...data.ticket, lastMessage: { sender: data.message.sender, body: data.message.body, createdAt: data.message.createdAt } };
         supportReplyTarget = null;
-        render();
         showActionToast(tr("✅ Javob yuborildi", "✅ Ответ отправлен"), 'success', 1500);
       } catch (e) {
         console.error(e);
         showActionToast(tr("❌ Yuborilmadi", "❌ Не отправлено"), 'error', 2000);
         alert(tr("Xatolik: ", "Ошибка: ") + (e.message || e));
+      } finally {
+        supportSendingMessage = false;
+        render();
       }
     }
     function setSupportReplyTarget(id) {
@@ -1146,20 +1253,15 @@
 
     function switchTab(tab) {
       currentTab = tab;
+      activePage = null; // istalgan bottom-nav tugmasi bosilsa ochiq page (Support va h.k.) yopiladi
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-blue-600', 'font-bold'));
       const activeNav = document.getElementById(`nav-${tab}`);
       if (activeNav) activeNav.classList.add('text-blue-600', 'font-bold');
       render(); // tugma bosilishi darhol sezilsin
       if (tab === 'orders') loadOrdersLazy();
-      if (tab === 'support' && isUserAnAdmin) { adminSupportSelectedUser = null; adminSupportSelectedTicketId = null; loadAdminSupportTicketsLazy(); }
+      if (tab === 'warehouse') loadWarehouseSummary();
       if (tab === 'profile' && isSuperAdmin) loadAdminsLazy();
       if (tab === 'profile' && isUserAnAdmin) loadAdminSupportTicketsLazy();
-    }
-
-    function openAllCustomersPage() {
-      currentTab = 'users';
-      render();
-      loadUsersLazy();
     }
 
     function toggleAdminRole() {
@@ -1201,6 +1303,52 @@
       else cart[key].qty += 1;
       localStorage.setItem('cart', JSON.stringify(cart));
       updateCartBadge(); render();
+    }
+
+    // ---- Qayta buyurtma (POLISH ROUND 2-bosqich, 20-band) ----
+    // Eski order snapshotidagi narx KO'R-KO'RONA ishlatilmaydi — joriy
+    // mahsulot/variant SKU orqali topiladi, joriy narx/qoldiq tekshiriladi.
+    function resolveOrderItemToLiveProduct(item) {
+      for (const p of products) {
+        if (p.status === 'DELETED') continue;
+        if (p.sku === item.sku) return { product: p, variant: null };
+        const v = productVariants(p).find(x => x.sku === item.sku);
+        if (v) return { product: p, variant: v };
+      }
+      return null;
+    }
+    function reorderFromOrder(orderId) {
+      const o = (selectedOrderModal && selectedOrderModal.id === orderId) ? selectedOrderModal : orders.find(x => x.id === orderId);
+      if (!o || !o.items?.length) return;
+      if (!confirm(tr('Bu buyurtmadagi mahsulotlar joriy narx va mavjudlik bo‘yicha savatchaga qo‘shiladi. Davom etasizmi?', 'Товары из этого заказа будут добавлены в корзину по текущей цене и наличию. Продолжить?'))) return;
+
+      const totalCount = o.items.length;
+      let addedCount = 0;
+      for (const item of o.items) {
+        const resolved = resolveOrderItemToLiveProduct(item);
+        if (!resolved || !resolved.product) continue; // o'chirilgan/topilmagan mahsulot — o'tkazib yuboriladi
+        const { product: p, variant: v } = resolved;
+        const size = v ? (v.size || null) : null;
+        const color = v ? (v.color || null) : null;
+        const available = v ? (Number(v.qty) || 0) : (Number(p.stock) || 0);
+        if (available <= 0) continue; // mavjud emas — o'tkazib yuboriladi
+        const key = cartKey(p.id, size, color);
+        const otherQty = cartQtyForVariant(p.id, size, color, null);
+        const addQty = Math.max(0, Math.min(Math.max(1, Number(item.qty) || 1), available - otherQty));
+        if (addQty <= 0) continue;
+        if (!cart[key]) cart[key] = { productId: p.id, size, color, qty: addQty, addedAt: new Date().toLocaleString() };
+        else cart[key].qty += addQty;
+        addedCount++;
+      }
+      localStorage.setItem('cart', JSON.stringify(cart));
+      updateCartBadge();
+      selectedOrderModal = null;
+      render();
+      // Diqqat: UZ va RU so'z tartibi teskari ("4 mahsulotdan 3 tasi" vs "3 из 4
+      // товаров") — shuning uchun butun jumla ikki tilda alohida yozilgan,
+      // fragmentlarni tr() bilan qo'shib bo'lmaydi.
+      const summary = tr(`${totalCount} mahsulotdan ${addedCount} tasi savatchaga qo‘shildi.`, `${addedCount} из ${totalCount} товаров добавлено в корзину.`);
+      showActionToast((addedCount ? '✅ ' : '⚠️ ') + summary, addedCount ? 'success' : 'error', 2500);
     }
 
     function changeCartQty(key, delta, e) {
@@ -1266,16 +1414,18 @@
       }
     }
 
-    // ============ RASM: LOKAL FAYL + URL ============
-    // Lokal fayl tanlansa: hech qanday qat'iy MIME ro'yxati bilan OLDINDAN
-    // rad etilmaydi (eski bug: Android content:// orqali tanlangan haqiqiy
-    // JPEG fayllarning `file.type`i ko'pincha bo'sh/nostandart bo'lib,
-    // 10 tadan 8 hol qat'iy ro'yxat tufayli noto'g'ri rad etilardi). Buning
-    // o'rniga fayl to'g'ridan-to'g'ri createImageBitmap(file) orqali dekodlashga
-    // urinib ko'riladi (FileReader/ArrayBuffer bilan OLDINDAN o'qish YO'Q —
-    // aynan shu oldindan o'qish Telegram WebView'da abadiy osilib qolish
-    // bug'ining sababi edi). Faqat DEKOD chindan muvaffaqiyatsiz bo'lsagina
-    // (haqiqatan qo'llab-quvvatlanmaydigan format) xato ko'rsatiladi.
+    // ============ IMAGE UPLOAD (Supabase Storage, signed URL orqali) ============
+    // Telegram Desktop/WebView ayrim file-picker File handle'larini callback tugagach
+    // ishonchsiz holatga o'tkazadi. Baytlarni tanlash paytida darhol detached Blob'ga
+    // ko'chiramiz; preview va keyingi Save shu mustaqil nusxadan foydalanadi.
+    function readBlobAsArrayBuffer(blob) {
+      return imageIO.readBlobAsArrayBuffer(blob);
+    }
+
+    function makeDetachedImageFile(bytes, source) {
+      return imageIO.makeDetachedImageFile(bytes, source);
+    }
+
     async function decodeImageSource(blob) {
       if (typeof createImageBitmap === 'function') {
         try {
@@ -1287,7 +1437,11 @@
         const img = new Image();
         const url = URL.createObjectURL(blob);
         img.onload = () => resolve({ source: img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, close: () => URL.revokeObjectURL(url) });
-        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image_decode_failed')); };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          imageIO.logStage('DECODE_FAILED', { mime: blob?.type, size: blob?.size, level: 'warn' });
+          reject(new Error('image_decode_failed'));
+        };
         img.src = url;
       });
     }
@@ -1296,63 +1450,119 @@
       return new Promise(resolve => canvas.toBlob(resolve, mimeType, quality));
     }
 
-    // Kirish formatidan qat'iy nazar (jpg/png/webp/gif/bmp/heic — brauzer
-    // dekodlay olgan hammasi), chiqish PNG (shaffoflik saqlanishi kerak
-    // bo'lsa, masalan logotip) yoki JPEG (boshqa barcha holatlarda, eng
-    // kichik hajm uchun) bo'lib qayta kodlanadi — shu "siqish" talabining o'zi.
+    // Rasmni serverga yuborishdan oldin kichraytirish: uzun tomoni maxDim px.
+    // PNG/WebP MIME turi saqlanadi; JPEG JPEG bo'lib qoladi.
+    //
+    // 1.11 pipeline talabi: compression urinishi HECH QACHON xato tashlamasin —
+    // decode/canvas/toBlob bosqichlarining birortasi kutilmagan tarzda
+    // yiqilsa ham (masalan WebView'ning noodatiy Canvas xatosi), funksiya
+    // shunchaki original (allaqachon mustaqil nusxalangan) faylni qaytaradi.
+    // Xato faqat "compression VA original ikkalasi ham ishlamasa" chiqishi
+    // kerak — bu yerda emas, chaqiruvchi tomonda (upload muvaffaqiyatsiz
+    // bo'lganda) yuz beradi. Bundan oldin bu funksiya faqat AYRIM bosqichlar
+    // uchun try/catch qilingandi (masalan canvas.toBlob xatosi tashqariga
+    // chiqib ketardi) — shu tirqish "Rasm faylini lokal o'qishda xato"
+    // xabarining haqiqiy sababi edi, garchi baytlar aslida muvaffaqiyatli
+    // o'qilgan bo'lsa ham.
     async function compressImage(file, maxDim, quality) {
-      let decoded;
-      try { decoded = await decodeImageSource(file); }
-      catch (e) { throw e; }
       try {
-        let width = decoded.width, height = decoded.height;
-        if (!width || !height) throw new Error('image_decode_failed');
-        if (width > maxDim || height > maxDim) {
-          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
-          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        let decoded;
+        try { decoded = await decodeImageSource(file); }
+        catch (_) { return file; }
+        try {
+          let width = decoded.width;
+          let height = decoded.height;
+          if (!width || !height) return file;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+            else { width = Math.round(width * maxDim / height); height = maxDim; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return file;
+          ctx.drawImage(decoded.source, 0, 0, width, height);
+          const outputType = file.type === 'image/png' ? 'image/png' : (file.type === 'image/webp' ? 'image/webp' : 'image/jpeg');
+          const blob = await canvasToBlob(canvas, outputType, outputType === 'image/png' ? undefined : quality);
+          if (!blob) return file;
+          const extension = outputType === 'image/png' ? 'png' : (outputType === 'image/webp' ? 'webp' : 'jpg');
+          const name = String(file.name || 'product-image').replace(/\.[^.]+$/, '') + '.' + extension;
+          return makeDetachedImageFile(await readBlobAsArrayBuffer(blob), { name, type: outputType });
+        } finally {
+          decoded.close?.();
         }
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('image_decode_failed');
-        ctx.drawImage(decoded.source, 0, 0, width, height);
-        const outputType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-        const blob = await canvasToBlob(canvas, outputType, outputType === 'image/png' ? undefined : quality);
-        if (!blob) throw new Error('image_decode_failed');
-        return blob;
-      } finally { decoded.close?.(); }
+      } catch (_) {
+        imageIO.logStage('COMPRESS_FAILED', { mime: file?.type, size: file?.size, message: _?.message, level: 'warn' });
+        return file;
+      }
     }
 
     async function compressImageToLimit(file, maxBytes, maxDim = 1000, quality = 0.8) {
+      if (!file) return file;
       const dims = Array.from(new Set([maxDim, Math.min(maxDim, 1200), Math.min(maxDim, 900), Math.min(maxDim, 720), Math.min(maxDim, 600)]))
-        .filter((n) => Number(n) > 0).sort((a, b) => b - a);
+        .filter((n) => Number(n) > 0)
+        .sort((a, b) => b - a);
       const qualities = [quality, Math.min(quality, 0.75), 0.65, 0.55, 0.48];
-      let best = null;
-      let lastErr = null;
+      let best = file;
       for (let i = 0; i < dims.length; i++) {
-        try {
-          const candidate = await compressImage(file, dims[i], qualities[Math.min(i, qualities.length - 1)]);
-          if (candidate && (!best || candidate.size < best.size)) best = candidate;
-          if (candidate && candidate.size <= maxBytes) return candidate;
-        } catch (e) { lastErr = e; }
+        const candidate = await compressImage(file, dims[i], qualities[Math.min(i, qualities.length - 1)]);
+        if (candidate && (!best || candidate.size < best.size)) best = candidate;
+        if (candidate && candidate.size <= maxBytes) return candidate;
       }
-      if (!best) throw lastErr || new Error('image_decode_failed');
       return best;
     }
 
-    // Faqat CANVAS orqali ISHLAB CHIQARILGAN (allaqachon xotiradagi, native
-    // fayl handle'iga bog'liq bo'lmagan) blob ustida ishlaydi — shuning
-    // uchun bu yerda FileReader xavfsiz (WebView hang muammosi faqat asl
-    // native fayl handle'ini o'qishda bo'lgan).
-    async function blobToBase64(blob) {
-      const buf = await blob.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      let binary = '';
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    // ============ IMAGE PIPELINE V2 ============
+    // Markazlashtirilgan rasm tayyorlash — mahsulot/kategoriya/logotip
+    // (onImagePicked), chek (onCheckoutReceiptPicked) va chekni qayta
+    // yuborish (onResubmitReceiptPicked) barchasi shundan foydalanadi.
+    //
+    // ESKI (V1) muammo: fayl tanlangan ZAHOTI original File'ni
+    // readBlobAsArrayBuffer (FileReader.readAsArrayBuffer, keyin
+    // blob.arrayBuffer() fallback) orqali TO'LIQ o'qib, keyin detached
+    // nusxaga o'girardi — bu Telegram WebView'da (ayniqsa Android
+    // content:// orqali tanlangan rasmlarda) ba'zida abadiy osilib qolardi
+    // ("10 ta rasmdan 2 tasi o'qiladi" — production'da kuzatilgan bug).
+    //
+    // YANGI (V2): FileReader/ArrayBuffer orqali oldindan o'qish UMUMAN olib
+    // tashlangan. compressImageToLimit -> compressImage -> decodeImageSource
+    // ICHKARIDA createImageBitmap(file)'ni TO'G'RIDAN-TO'G'RI original
+    // File'dan chaqiradi (FileReader kerak emas) — bu yo'l WebView'dagi
+    // hang muammosiga umuman duch kelmaydi. Muvaffaqiyatli bo'lsa natija
+    // ALLAQACHON canvas'dan yaratilgan yangi (detached) fayl — qo'shimcha
+    // tashqi detach qadamiga hojat yo'q.
+    //
+    // FALLBACK (o'chirilmagan, faqat ikkinchi darajaga tushirilgan): agar
+    // ICHKI dekod (createImageBitmap VA <img> fallback) IKKALASI HAM
+    // muvaffaqiyatsiz bo'lsa (compressed === file, o'zgarishsiz qaytgan
+    // bo'lsa), eski FileReader/ArrayBuffer + makeDetachedImageFile zanjiri
+    // qayta urinib ko'radi. Bu ham ishlamasa — funksiya xato TASHLAMAYDI,
+    // original faylni o'zgarishsiz qaytaradi (signed-URL yuklash browser
+    // darajasida to'g'ridan-to'g'ri fetch bilan ishlaydi, JS'da qayta bayt
+    // o'qishni talab qilmaydi — shu sabab original native handle hali
+    // yaroqli bo'lsa, yuklash baribir muvaffaqiyatli bo'lishi mumkin).
+    //
+    // onPrepared(file) — mustaqil nusxa tayyor bo'lgan zahoti (preview'ni
+    // barqaror manzilga o'tkazish uchun) chaqiriladi; ixtiyoriy.
+    async function captureAndPrepareImageV2(file, maxBytes, maxDim, quality, onPrepared) {
+      const compressed = await compressImageToLimit(file, maxBytes, maxDim, quality);
+      if (compressed && compressed !== file) {
+        imageIO.logStage('IMAGE_V2_DIRECT_OK', { mime: file?.type, size: file?.size });
+        if (onPrepared) { try { onPrepared(compressed); } catch (_) {} }
+        return compressed;
       }
-      return btoa(binary);
+      imageIO.logStage('IMAGE_V2_FALLBACK_STARTED', { mime: file?.type, size: file?.size, level: 'warn' });
+      try {
+        const bytes = await readBlobAsArrayBuffer(file);
+        const detached = makeDetachedImageFile(bytes, file);
+        if (onPrepared) { try { onPrepared(detached); } catch (_) {} }
+        const recompressed = await compressImageToLimit(detached, maxBytes, maxDim, quality);
+        return recompressed || detached;
+      } catch (fallbackErr) {
+        imageIO.logStage('IMAGE_V2_FALLBACK_FAILED', { mime: file?.type, size: file?.size, message: fallbackErr?.message, level: 'error' });
+        return file;
+      }
     }
 
     function validateExternalImageUrl(value) {
@@ -1415,74 +1625,89 @@
 
     function xlImageText(uz, ru) { return tr(uz, ru); }
 
-    // Fayl tanlangach: preview DARHOL original File'dan ko'rsatiladi (hech
-    // qanday o'qishga hojatsiz), so'ng fonda siqish tugagach preview
-    // mustaqil (canvas'dan yaratilgan) nusxaga o'tkaziladi.
     async function onImagePicked(event, previewId, buttonId, urlInputId, errorId) {
       const file = event.target.files?.[0];
       if (!file) return;
+      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
 
+      try { validatePickedImageFile(file); }
+      catch (e) {
+        event.target.value = '';
+        alert(pickedImageErrorMessage(e, file));
+        return;
+      }
+
+      // Preview upload'dan mustaqil: object URL darhol ko'rsatiladi (V2:
+      // to'g'ridan-to'g'ri ORIGINAL File'dan — o'qishni talab qilmaydi).
       const selectionVersion = ++tempImageSelectionVersion;
       if (tempImagePreviewUrl && String(tempImagePreviewUrl).startsWith('blob:')) {
         try { URL.revokeObjectURL(tempImagePreviewUrl); } catch (_) {}
       }
       tempImageFile = file;
-      try { tempImagePreviewUrl = URL.createObjectURL(file); } catch (_) { tempImagePreviewUrl = null; }
+      try { tempImagePreviewUrl = URL.createObjectURL(file); }
+      catch (_) { tempImagePreviewUrl = null; }
       tempImageUrl = null;
       const urlInput = urlInputId ? document.getElementById(urlInputId) : null;
       if (urlInput) urlInput.value = '';
       if (errorId) setImageUrlError(errorId, '');
       const prev = document.getElementById(previewId);
-      if (prev && tempImagePreviewUrl) { prev.src = tempImagePreviewUrl; prev.classList.remove('hidden'); }
+      if (prev) {
+        if (tempImagePreviewUrl) {
+          prev.src = tempImagePreviewUrl;
+          prev.classList.remove('hidden');
+        }
+      }
       const pickerButton = buttonId ? document.getElementById(buttonId) : null;
       if (pickerButton) pickerButton.textContent = `🖼 ${tr('Rasmni almashtirish', 'Заменить фото')}`;
 
-      const preparing = compressImageToLimit(file, TARGET_IMAGE_BYTES, 1000, 0.8).then((compressed) => {
-        if (selectionVersion !== tempImageSelectionVersion || tempImagePreparingPromise !== preparing) return compressed;
+      const preparing = captureAndPrepareImageV2(file, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8, (updated) => {
+        // 8-bo'lim: preview yangilanishi kosmetik — muvaffaqiyatsiz bo'lsa
+        // ham bu READ xatosi sifatida yuqoriga chiqmasin.
+        if (selectionVersion !== tempImageSelectionVersion || tempImagePreparingPromise !== preparing) return;
         try {
-          tempImageFile = compressed;
-          const stableUrl = URL.createObjectURL(compressed);
-          const oldUrl = tempImagePreviewUrl;
-          tempImagePreviewUrl = stableUrl;
-          if (prev) { prev.src = stableUrl; prev.classList.remove('hidden'); }
-          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
-        } catch (_) {}
-        return compressed;
-      }).catch((e) => {
-        if (selectionVersion === tempImageSelectionVersion) {
-          if (errorId) setImageUrlError(errorId, tr("Bu rasm formatini o'qib bo'lmadi. Boshqa rasm tanlang.", "Не удалось прочитать этот формат изображения. Выберите другое фото."));
+          tempImageFile = updated;
+          const stablePreviewUrl = URL.createObjectURL(updated);
+          const oldPreviewUrl = tempImagePreviewUrl;
+          tempImagePreviewUrl = stablePreviewUrl;
+          if (prev) { prev.src = stablePreviewUrl; prev.classList.remove('hidden'); }
+          if (oldPreviewUrl && oldPreviewUrl !== stablePreviewUrl && oldPreviewUrl.startsWith('blob:')) {
+            try { URL.revokeObjectURL(oldPreviewUrl); } catch (_) {}
+          }
+        } catch (previewErr) {
+          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
         }
-        throw e;
       });
       tempImagePreparingPromise = preparing;
       showActionToast(tr("🖼️ Rasm tanlandi", "🖼️ Фото выбрано"), 'success', 1200);
     }
 
-    // Barcha rasm joylari (mahsulot/kategoriya/logotip/chek) uchun umumiy:
-    // lokal fayl tanlangan bo'lsa siqilgan baytlar base64 sifatida
-    // qaytariladi (save so'rovi ICHIDA yuboriladi — alohida yuklash
-    // so'rovi shart emas), URL kiritilgan bo'lsa to'g'ridan-to'g'ri shu URL
-    // ishlatiladi. Hech narsi tanlanmagan bo'lsa (tahrirlashda maydon bo'sh
-    // qoldirilsa) `img` umuman qaytarilmaydi — backend eski rasmni
-    // o'zgarishsiz qoldiradi.
-    async function imagePayloadFromSnapshot(snapshot, requireImage = false) {
+    async function fileToBase64(file) {
+      return imageIO.blobToBase64(file);
+    }
+
+    // Mahsulot/kategoriya/logotip bitta pipeline'da: local baytlar darhol
+    // detached nusxaga olinadi va kichraytiriladi. Telegram WebView'da direct
+    // Storage fetch oldingi production testda beqaror bo'lgani uchun PRIMARY
+    // transport app-api server upload. U ishlamasa signed Storage URL fallback.
+    // Admin local rasm tanlagan bo'lsa requireImage=true ishlaydi:
+    // upload xatosi mahsulotni jim rasmsiz saqlab yubormaydi.
+    async function productImagePayloadFromSnapshot(snapshot, requireImage = false) {
       if (snapshot?.file || snapshot?.preparing) {
-        let prepared;
-        try { prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file; }
-        catch (e) { throw e; }
-        if (!prepared) { if (requireImage) throw new Error('image_decode_failed'); return { imageUpload: null, img: undefined }; }
-        if (prepared.size > MAX_STORED_IMAGE_BYTES) throw new Error('image_too_large');
-        return { imageUpload: { mimeType: prepared.type, base64: await blobToBase64(prepared) }, img: undefined };
+        const uploadedUrl = await uploadImageSnapshot(snapshot, null, requireImage);
+        if (!uploadedUrl && requireImage) {
+          throw new Error(tr("Rasm yuklanmadi.", "Изображение не загружено."));
+        }
+        return { imageUpload: null, img: uploadedUrl };
       }
       if (snapshot?.url) return { imageUpload: null, img: validateExternalImageUrl(snapshot.url) };
-      if (requireImage) throw new Error(tr("Rasm tanlang yoki URL kiriting.", "Выберите фото или укажите URL."));
-      return { imageUpload: null, img: undefined };
+      if (requireImage) throw new Error(tr("Rasm faylini tanlang yoki HTTPS rasm URL kiriting.", "Выберите файл изображения или укажите HTTPS URL."));
+      return { imageUpload: null, img: null };
     }
     function friendlyImageError(error) {
       const raw = String(error?.message || error || '');
       if (/failed to fetch|networkerror|load failed/i.test(raw)) return tr("Internet yoki Telegram WebView tarmoq xatosi. Eski rasm o'zgarmadi; internetni tekshirib qayta urinib ko'ring.", "Ошибка сети или Telegram WebView. Старое изображение не изменено; проверьте интернет и повторите.");
       if (/invalid_image_url/i.test(raw)) return tr("Rasm URL noto'g'ri. To'liq HTTPS havola kiriting.", "Неверный URL изображения. Введите полный HTTPS-адрес.");
-      if (/invalid_image_upload|invalid_image_type|image_decode_failed/i.test(raw)) return tr("Bu rasm formatini saqlab bo'lmadi. Boshqa rasm tanlang.", "Не удалось сохранить это изображение. Выберите другое фото.");
+      if (/invalid_image_upload|invalid_image_type/i.test(raw)) return tr("Rasm formati noto'g'ri. JPG, PNG yoki WebP fayl tanlang.", "Неверный формат изображения. Выберите JPG, PNG или WebP.");
       if (/image_too_large/i.test(raw)) return tr("Rasm juda katta. Kichikroq rasm tanlang.", "Изображение слишком большое. Выберите файл меньшего размера.");
       if (/image_upload_failed|image_public_url_failed/i.test(raw)) return tr("Rasm server xotirasiga yuklanmadi. Eski rasm saqlanib qoldi; qayta urinib ko'ring.", "Не удалось загрузить изображение в хранилище. Старое изображение сохранено; повторите попытку.");
       return raw || tr("Noma'lum rasm xatosi.", "Неизвестная ошибка изображения.");
@@ -1492,6 +1717,85 @@
       clearTempImageSelection();
       activePopupModal = null;
       render();
+    }
+
+    async function uploadImageSnapshot(snapshot, existingImg, strict = false) {
+      if (!snapshot || (!snapshot.file && !snapshot.preparing)) return existingImg || null;
+      const pipelineStartedAt = Date.now();
+      let prepared;
+      try {
+        prepared = snapshot.preparing ? await snapshot.preparing : snapshot.file;
+      } catch (e) {
+        console.error(`[image:${e?.code || 'DECODE_FAILED'}]`, e);
+        if (strict) throw e;
+        return existingImg || null;
+      }
+      if (!prepared) return existingImg || null;
+      imageIO.logStage('PREPARED_OK', { mime: prepared.type, size: prepared.size, duration: Date.now() - pipelineStartedAt });
+
+      showActionToast(tr("☁️ Rasm yuklanmoqda...", "☁️ Фото загружается..."), 'saving');
+      const mimeType = String(prepared.type || '').toLowerCase();
+      if (!SUPPORTED_IMAGE_MIME.has(mimeType)) {
+        const err = new Error('invalid_image_type');
+        imageIO.logStage('FINAL_SIZE_FAILED', { mime: mimeType, message: 'invalid_image_type', level: 'warn' });
+        if (strict) throw err;
+        return existingImg || null;
+      }
+      if (prepared.size > MAX_STORED_IMAGE_BYTES) {
+        const err = new Error('image_too_large');
+        imageIO.logStage('FINAL_SIZE_FAILED', { size: prepared.size, message: 'image_too_large', level: 'warn' });
+        if (strict) throw err;
+        return existingImg || null;
+      }
+
+      // V2 PRIMARY: signed URL to'g'ridan-to'g'ri Supabase Storage'ga —
+      // Edge Function bayt ko'rmaydi (base64/JSON emas). Yuklangach
+      // finalize_image_upload orqali Storage'da haqiqatan mavjudligi
+      // tasdiqlanadi (finalize_payment_receipt bilan bir xil pattern:
+      // "yozildi" deb signed URL javobiga emas, haqiqiy Storage `.list()`
+      // natijasiga ishoniladi).
+      const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+      const ext = extByMime[mimeType] || 'jpg';
+      let signedErr = null;
+      const signedUploadStartedAt = Date.now();
+      try {
+        const { path, token } = await callApi('get_upload_url', { ext, size: prepared.size, mimeType });
+        const { error: upErr } = await sb.storage.from(CONFIG.IMAGES_BUCKET).uploadToSignedUrl(path, token, prepared);
+        if (upErr) throw upErr;
+        const finalized = await callApi('finalize_image_upload', { path });
+        if (!finalized?.url) throw new Error('image_public_url_failed');
+        imageIO.logStage('SIGNED_URL_UPLOAD_OK', { duration: Date.now() - signedUploadStartedAt, size: prepared.size });
+        return finalized.url;
+      } catch (e) {
+        signedErr = e;
+        console.warn('[image:SIGNED_URL_UPLOAD_FAILED]', e);
+        imageIO.logStage('SIGNED_URL_UPLOAD_FAILED', { duration: Date.now() - signedUploadStartedAt, name: e?.name, message: e?.message, level: 'warn' });
+      }
+
+      // FALLBACK (o'chirilmagan, ikkinchi darajali): signed URL vaqtincha
+      // ishlamasa (masalan Storage CORS/tarmoq muammosi), base64-in-JSON
+      // orqali app-api server upload — mustaqil ikkinchi yo'l.
+      const serverUploadStartedAt = Date.now();
+      try {
+        const imageUpload = { mimeType, base64: await fileToBase64(prepared) };
+        const result = await callApi('upload_product_image', { imageUpload });
+        if (!result?.url) throw new Error('image_public_url_failed');
+        imageIO.logStage('SERVER_UPLOAD_OK', { duration: Date.now() - serverUploadStartedAt, size: prepared.size });
+        return result.url;
+      } catch (fallbackErr) {
+        console.error('[image:SERVER_UPLOAD_FALLBACK_FAILED]', { signedErr, fallbackErr });
+        imageIO.logStage('SERVER_UPLOAD_FAILED', { duration: Date.now() - serverUploadStartedAt, name: fallbackErr?.name, message: fallbackErr?.message, level: 'error' });
+        imageIO.logStage('UPLOAD_ALL_FAILED', { duration: Date.now() - pipelineStartedAt, level: 'error' });
+        if (strict) throw signedErr || fallbackErr || new Error('image_upload_failed');
+        return existingImg || null;
+      }
+    }
+
+    // Eski chaqiruvlar uchun wrapper.
+    async function uploadImageIfNeeded(existingImg) {
+      const snap = takeTempImageSnapshot();
+      try { return await uploadImageSnapshot(snap, existingImg, false); }
+      finally { releaseImageSnapshot(snap); }
     }
 
     // RENDER ROUTER
@@ -1568,7 +1872,6 @@
       const roleTag = document.getElementById('role-tag');
       if (roleTag && authReady) roleTag.classList.remove('hidden');
       const whBtn = document.getElementById('nav-warehouse-btn');
-      const supportBtn = document.getElementById('nav-support-btn');
       const cartNavBtn = document.getElementById('nav-cart');
 
       if (isAdminMode && isUserAnAdmin) {
@@ -1576,19 +1879,27 @@
         roleTag.dataset.role = 'admin';
         whBtn.classList.remove('hidden');
         whBtn.classList.add('flex');
-        supportBtn.classList.remove('hidden');
-        supportBtn.classList.add('flex');
         cartNavBtn.classList.add('hidden');
         cartNavBtn.classList.remove('flex');
         if (currentTab === 'cart') currentTab = 'home';
+        // 1-band: admin bo'lsa murojaatlar (Support badge) doim fonda yuklab boriladi.
+        loadAdminSupportTicketsLazy();
       } else {
         roleTag.innerText = "STORE";
         roleTag.dataset.role = 'store';
         whBtn.classList.add('hidden');
-        supportBtn.classList.add('hidden');
         cartNavBtn.classList.remove('hidden');
         cartNavBtn.classList.add('flex');
-        if (currentTab === 'warehouse' || currentTab === 'support' || currentTab === 'dashboard' || currentTab === 'users') currentTab = 'home';
+        if (currentTab === 'warehouse') currentTab = 'home';
+      }
+
+      // 1/3-band: Qo'llab-quvvatlash bottom-nav tugmasidagi o'qilmagan-nuqta.
+      const supportNavBtn = document.getElementById('nav-support-btn');
+      if (supportNavBtn) {
+        let dot = supportNavBtn.querySelector('.fc-nav-dot');
+        const unread = (isAdminMode && isUserAnAdmin) ? adminSupportTickets.some(t => t.status === 'OPEN' || supportNeedsAttention(t)) : supportTickets.some(t => t.status === 'ANSWERED');
+        if (unread && !dot) { dot = document.createElement('span'); dot.className = 'fc-nav-dot'; supportNavBtn.appendChild(dot); }
+        else if (!unread && dot) { dot.remove(); }
       }
 
       const container = document.getElementById('app-content');
@@ -1598,13 +1909,312 @@
         case 'cart': renderCart(container); break;
         case 'orders': renderOrders(container); break;
         case 'warehouse': renderWarehouse(container); break;
-        case 'support': renderAdminSupportPage(container); break;
-        case 'dashboard': renderDashboard(container); break;
-        case 'users': renderUsers(container); break;
         case 'profile': renderProfile(container); break;
       }
+
+      // POLISH ROUND 1-bosqich: page-shell — activePage bo'lsa to'liq sahifa
+      // app-content/bottom-nav ustidan chiqadi (currentTab fonda o'zgarmay qoladi).
+      const pageContainer = document.getElementById('page-container');
+      if (activePage) {
+        pageContainer.classList.remove('hidden');
+        renderActivePage(pageContainer);
+      } else {
+        pageContainer.classList.add('hidden');
+        pageContainer.innerHTML = '';
+      }
+
       renderModalContainer();
       lucide.createIcons();
+    }
+
+    // 38-band: custom tasdiqlash dialogi (native confirm() o'rniga) —
+    // eng yuqori-xavfli, QAYTARIB BO'LMAYDIGAN amallar uchun (butunlay
+    // o'chirish). Boshqa joylardagi native confirm() o'zgartirilmadi —
+    // ular allaqachon kam-xavfli/tez-tez ishlatiladigan amallar.
+    let fcConfirmResolver = null;
+    function fcConfirm(title, text, opts = {}) {
+      return new Promise((resolve) => {
+        fcConfirmResolver = resolve;
+        const danger = opts.danger !== false;
+        const root = document.createElement('div');
+        root.id = 'fc-confirm-root';
+        root.innerHTML = `
+          <div class="fc-confirm-backdrop" onclick="window.__fcConfirmAnswer(false)">
+            <div class="fc-confirm-box" onclick="event.stopPropagation()">
+              <p class="fc-confirm-title">${escapeHtml(title)}</p>
+              <p class="fc-confirm-text">${escapeHtml(text)}</p>
+              <div class="fc-confirm-actions">
+                <button onclick="window.__fcConfirmAnswer(false)" class="fc-btn fc-btn-secondary">${tr('Bekor qilish', 'Отмена')}</button>
+                <button onclick="window.__fcConfirmAnswer(true)" class="fc-btn ${danger ? 'fc-btn-danger' : 'fc-btn-primary'}">${tr('Tasdiqlash', 'Подтвердить')}</button>
+              </div>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(root);
+      });
+    }
+    window.__fcConfirmAnswer = function (val) {
+      const root = document.getElementById('fc-confirm-root');
+      if (root) root.remove();
+      if (fcConfirmResolver) { fcConfirmResolver(val); fcConfirmResolver = null; }
+    };
+
+    // ---- page-shell primitive (POLISH ROUND 1-bosqich) ----
+    // Kelgusi vazifalarda renderActivePage() ichiga yangi case'lar qo'shiladi:
+    // SUPPORT, SETTINGS, DASHBOARD, WAREHOUSE_HOLAT va h.k.
+    function renderActivePage(container) {
+      switch (activePage) {
+        case 'SUPPORT': renderSupportPage(container); break;
+        case 'SETTINGS': renderSettingsPage(container); break;
+        case 'DASHBOARD': renderDashboardPage(container); break;
+        case 'FAVORITES': renderFavoritesPage(container); break;
+        case 'RECENT': renderRecentPage(container); break;
+        default:
+          container.innerHTML = '';
+      }
+    }
+
+    function openPage(pageId, navBtnId) {
+      activePage = pageId;
+      render();
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-blue-600', 'font-bold'));
+      if (navBtnId) {
+        const btn = document.getElementById(navBtnId);
+        if (btn) btn.classList.add('text-blue-600', 'font-bold');
+      }
+    }
+
+    function closePage() {
+      activePage = null;
+      render();
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-blue-600', 'font-bold'));
+      const activeNav = document.getElementById(`nav-${currentTab}`);
+      if (activeNav) activeNav.classList.add('text-blue-600', 'font-bold');
+    }
+
+    function goHomePage() {
+      activePage = null;
+      currentTab = 'home';
+      render();
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-blue-600', 'font-bold'));
+      const activeNav = document.getElementById('nav-home');
+      if (activeNav) activeNav.classList.add('text-blue-600', 'font-bold');
+    }
+
+    // Standart sahifa header: ← Orqaga / sarlavha / ⌂ Bosh sahifa (46-band).
+    // onBack berilmasa closePage() ishlatiladi (avvalgi tab/holatga qaytadi).
+    function renderPageShell(container, title, bodyHtml, opts = {}) {
+      const backAction = opts.onBack || 'closePage()';
+      container.innerHTML = `
+        <div class="fc-page-header">
+          <button onclick="${backAction}" class="fc-page-header-btn" aria-label="${escapeHtml(tr('Orqaga', 'Назад'))}" title="${escapeHtml(tr('Orqaga', 'Назад'))}">
+            <i data-lucide="arrow-left" class="w-5 h-5"></i>
+          </button>
+          <div class="fc-page-header-title">${escapeHtml(title)}</div>
+          <button onclick="goHomePage()" class="fc-page-header-btn" aria-label="${escapeHtml(tr('Bosh sahifa', 'Главная'))}" title="${escapeHtml(tr('Bosh sahifa', 'Главная'))}">
+            <i data-lucide="home" class="w-5 h-5"></i>
+          </button>
+        </div>
+        <div class="p-4 max-w-md mx-auto" style="padding-bottom:max(1.5rem, env(safe-area-inset-bottom))">
+          ${bodyHtml}
+        </div>
+      `;
+    }
+
+    // ---- umumiy pagination (POLISH ROUND 1-bosqich, 21/26-band) ----
+    // Mavjud categoryPage/ordersPage 10-tadan patternini umumlashtiradi —
+    // Ombor Holat/Sevimlilar/Yaqinda ko'rilganlar/Trash/Kirim tarixi shundan foydalanadi.
+    function paginate(list, page, pageSize = 10) {
+      const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
+      const clampedPage = Math.min(Math.max(1, page || 1), totalPages);
+      const start = (clampedPage - 1) * pageSize;
+      return { items: list.slice(start, start + pageSize), totalPages, page: clampedPage };
+    }
+
+    // Umumiy pager UI: ‹ 1 2 3 › (ko'p bo'lsa 1 2 … 10). onPageFn — sahifa
+    // raqamini argument sifatida qabul qiladigan global funksiya nomi (masalan "setFavoritesPage").
+    function renderPagerHTML(page, totalPages, onPageFn) {
+      if (totalPages <= 1) return '';
+      const pages = new Set([1, totalPages]);
+      for (let n = page - 1; n <= page + 1; n++) { if (n > 1 && n < totalPages) pages.add(n); }
+      const sorted = [...pages].sort((a, b) => a - b);
+
+      let itemsHtml = '';
+      let prev = 0;
+      for (const n of sorted) {
+        if (prev && n - prev > 1) itemsHtml += `<span class="fc-pager-ellipsis">…</span>`;
+        itemsHtml += `<button onclick="${onPageFn}(${n})" class="fc-pager-btn ${n === page ? 'fc-pager-active' : ''}">${n}</button>`;
+        prev = n;
+      }
+
+      return `
+        <div class="fc-pager">
+          <button onclick="${onPageFn}(${page - 1})" ${page <= 1 ? 'disabled' : ''} class="fc-pager-btn" aria-label="${escapeHtml(tr('Oldingi', 'Предыдущая'))}">‹</button>
+          ${itemsHtml}
+          <button onclick="${onPageFn}(${page + 1})" ${page >= totalPages ? 'disabled' : ''} class="fc-pager-btn" aria-label="${escapeHtml(tr('Keyingi', 'Следующая'))}">›</button>
+        </div>
+      `;
+    }
+
+    // ---- Qo'llab-quvvatlash sahifasi (POLISH ROUND 1-bosqich, 1-3-band) ----
+    // Admin va oddiy user bitta activePage='SUPPORT' orqali keladi, lekin
+    // roliga qarab ikki xil tarkib ko'radi — mantiq (state/API) o'zgarishsiz,
+    // faqat modal->page chrome almashtirildi.
+    function renderSupportPage(container) {
+      const isAdminView = isAdminMode && isUserAnAdmin;
+      if (isAdminView) {
+        const openTicket = adminSupportSelectedTicketId ? adminSupportTickets.find(t => t.id === adminSupportSelectedTicketId) : null;
+        const onBack = openTicket ? 'backToAdminSupportUserTickets()' : (adminSupportSelectedUser ? 'backToAdminSupportUsers()' : 'closePage()');
+        renderPageShell(container, tr("Qo'llab-quvvatlash", 'Поддержка'), renderAdminSupportBodyHtml(), { onBack });
+      } else {
+        const onBack = openSupportTicketId ? 'backToMySupportList()' : 'closePage()';
+        renderPageShell(container, tr("Qo'llab-quvvatlash", 'Поддержка'), renderUserSupportBodyHtml(), { onBack });
+      }
+    }
+
+    function renderUserSupportBodyHtml() {
+      const openTicket = openSupportTicketId ? supportTickets.find(t => t.id === openSupportTicketId) : null;
+      return `
+        <div class="fc-card space-y-3 text-xs">
+          ${openTicket ? `
+            <div class="flex items-center justify-between border-b pb-2">
+              <h3 class="font-bold text-sm text-gray-900">💬 ${openTicket.orderId ? `#${openTicket.orderId}` : tr('Murojaat', 'Обращение')}</h3>
+              <span class="fc-badge ${openTicket.status === 'CLOSED' ? 'fc-badge-muted' : (openTicket.status === 'OPEN' ? 'fc-badge-warning' : 'fc-badge-success')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan', 'Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi', 'Новое') : tr('Javob berilgan', 'Отвечено'))}</span>
+            </div>
+            <div>
+              ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, false)}
+            </div>
+            ${openTicket.status !== 'CLOSED' ? `
+              ${renderSupportReplyBarHtml()}
+              <textarea id="sup-chat-message" rows="2" placeholder="${tr('Xabar yozing...', 'Напишите сообщение...')}" class="w-full p-2.5 border rounded-xl"></textarea>
+              <div class="flex gap-2">
+                <button onclick="submitSupportComposer()" ${supportSendingMessage ? 'disabled' : ''} class="fc-btn fc-btn-primary flex-1">${supportSendingMessage ? tr('Yuborilmoqda...', 'Отправка...') : '✅ ' + tr('Yuborish', 'Отправить')}</button>
+                <button onclick="closeSupportTicket(${openTicket.id})" class="fc-btn fc-btn-secondary">${tr('Tugatish', 'Завершить')}</button>
+              </div>
+            ` : `<p class="text-center text-gray-400 py-2">${tr('Bu murojaat tugallangan.', 'Это обращение завершено.')}</p>`}
+          ` : `
+            ${supportTicketOrderId ? `<p class="text-[10px] text-gray-500">${tr('Buyurtma', 'Заказ')} #${supportTicketOrderId} ${tr('bo‘yicha murojaat', 'по этому заказу')}</p>` : ''}
+            <div>
+              <label class="font-bold text-gray-600">${tr('Murojaatingiz', 'Ваше обращение')}</label>
+              <textarea id="sup-message" rows="4" placeholder="${tr('Savolingiz yoki muammoingizni yozing...', 'Опишите ваш вопрос или проблему...')}" class="w-full mt-1 p-2.5 border rounded-xl"></textarea>
+              <button onclick="submitSupportComposer()" ${supportSendingMessage ? 'disabled' : ''} class="fc-btn fc-btn-primary w-full mt-2">${supportSendingMessage ? tr('Yuborilmoqda...', 'Отправка...') : '✅ ' + tr('Yuborish', 'Отправить')}</button>
+            </div>
+            ${supportTicketsLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : ''}
+            ${(!supportTicketsLoading && !supportTickets.length) ? `
+              <div class="fc-empty-state">
+                <i data-lucide="message-circle" class="w-8 h-8"></i>
+                <p>${tr('Hali murojaatlar yo‘q.', 'Пока нет обращений.')}</p>
+              </div>
+            ` : ''}
+            ${(!supportTicketsLoading && supportTickets.length) ? `
+              <div class="border-t pt-2 space-y-2">
+                <p class="font-bold text-gray-600">${tr('Oldingi murojaatlar', 'Предыдущие обращения')}</p>
+                ${supportTickets.map(t => `
+                  <div class="bg-gray-50 border rounded-xl p-2.5 space-y-1 cursor-pointer" onclick="openMySupportChat(${t.id})">
+                    <div class="flex items-center justify-between">
+                      <span class="text-[10px] text-gray-400">${t.orderId ? `#${t.orderId} · ` : ''}${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</span>
+                      <span class="fc-badge ${t.status === 'CLOSED' ? 'fc-badge-muted' : (t.status === 'OPEN' ? 'fc-badge-warning' : 'fc-badge-success')}">${t.status === 'CLOSED' ? tr('Tugallangan', 'Завершено') : (t.status === 'OPEN' ? tr('Yangi', 'Новое') : tr('Javob berilgan', 'Отвечено'))}</span>
+                    </div>
+                    <p>${escapeHtml((t.lastMessage?.body || '').slice(0, 80))}</p>
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+          `}
+        </div>
+      `;
+    }
+
+    // 3-band: user card — Ism Familiya / Telefon • ID (2-qatorli), aniq ajralgan,
+    // yangi xabar bo'lsa aniq indikator. Ism/telefon usersSummary'dan (agar
+    // yuklangan bo'lsa), bo'lmasa faqat ID ko'rsatiladi (fallback).
+    function supportUserCardInfo(tgId) {
+      const u = usersSummary.find(x => String(x.tgId) === String(tgId));
+      const name = (u?.userName && String(u.userName) !== String(tgId)) ? u.userName : tr('Noma’lum foydalanuvchi', 'Неизвестный пользователь');
+      return { name, phone: u?.phone || null, tgId };
+    }
+
+    function renderAdminSupportBodyHtml() {
+      const grouped = groupAdminSupportTicketsByUser();
+      const selectedUserTickets = adminSupportSelectedUser ? adminSupportTickets.filter(t => t.tgId === adminSupportSelectedUser) : [];
+      const openTicket = adminSupportSelectedTicketId ? adminSupportTickets.find(t => t.id === adminSupportSelectedTicketId) : null;
+      return `
+        <div class="space-y-2 text-xs">
+          ${openTicket ? `
+            <div class="fc-card space-y-2">
+              <div class="flex items-center justify-between border-b pb-2">
+                <h3 class="font-bold text-sm text-gray-900">${openTicket.orderId ? `#${openTicket.orderId} · ` : ''}${escapeHtml(supportUserCardInfo(openTicket.tgId).name)}</h3>
+                <span class="fc-badge ${openTicket.status === 'CLOSED' ? 'fc-badge-muted' : (openTicket.status === 'OPEN' ? 'fc-badge-warning' : 'fc-badge-success')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan', 'Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi', 'Новое') : tr('Javob berilgan', 'Отвечено'))}</span>
+              </div>
+              <div>
+                ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, true)}
+              </div>
+              ${openTicket.status !== 'CLOSED' ? `
+                ${renderSupportReplyBarHtml()}
+                <textarea id="sup-admin-message" rows="2" placeholder="${tr('Javob yozing...', 'Напишите ответ...')}" class="w-full p-2.5 border rounded-xl"></textarea>
+                <button onclick="submitAdminSupportReply()" ${supportSendingMessage ? 'disabled' : ''} class="fc-btn fc-btn-primary w-full">${supportSendingMessage ? tr('Yuborilmoqda...', 'Отправка...') : '✅ ' + tr('Yuborish', 'Отправить')}</button>
+              ` : `<p class="text-center text-gray-400 py-2">${tr('Mijoz bu murojaatni tugatgan.', 'Клиент завершил это обращение.')}</p>`}
+            </div>
+          ` : adminSupportSelectedUser ? `
+            ${(() => { const info = supportUserCardInfo(adminSupportSelectedUser); return `
+              <div class="fc-card">
+                <p class="font-bold text-sm text-gray-900">${escapeHtml(info.name)}</p>
+                <p class="text-[10px] text-gray-500 mt-0.5">${info.phone ? `${escapeHtml(info.phone)} • ` : ''}ID ${escapeHtml(info.tgId)}</p>
+              </div>
+            `; })()}
+            ${selectedUserTickets.map(t => `
+              <div class="fc-card cursor-pointer flex items-center justify-between" onclick="openAdminSupportChat(${t.id})">
+                <div>
+                  <span class="font-bold">${t.orderId ? `📦 #${t.orderId}` : tr('Umumiy', 'Общее')}</span>
+                  <p class="text-[10px] text-gray-400">${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</p>
+                  <p>${escapeHtml((t.lastMessage?.body || '').slice(0, 80))}</p>
+                </div>
+                <span class="fc-badge ${t.status === 'CLOSED' ? 'fc-badge-muted' : (t.status === 'OPEN' ? 'fc-badge-warning' : 'fc-badge-success')}">${t.status === 'CLOSED' ? tr('Tugallangan', 'Завершено') : (t.status === 'OPEN' ? tr('Yangi', 'Новое') : tr('Javob berilgan', 'Отвечено'))}${supportNeedsAttention(t) ? ' •' : ''}</span>
+              </div>
+            `).join('')}
+          ` : `
+            ${adminSupportTicketsLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : ''}
+            ${(!adminSupportTicketsLoading && !grouped.length) ? `
+              <div class="fc-empty-state">
+                <i data-lucide="inbox" class="w-8 h-8"></i>
+                <p>${tr('Murojaatlar yo‘q', 'Обращений нет')}</p>
+              </div>
+            ` : ''}
+            ${grouped.map(g => {
+              const info = supportUserCardInfo(g.tgId);
+              const unread = g.needsAttention || g.hasOpen;
+              return `
+              <div class="fc-card cursor-pointer flex items-center justify-between gap-2 ${unread ? 'fc-border-warning' : ''}" onclick="selectAdminSupportUser('${g.tgId}')">
+                <div class="min-w-0">
+                  <p class="font-bold text-gray-900 truncate">${escapeHtml(info.name)}</p>
+                  <p class="text-[10px] text-gray-500">${info.phone ? `${escapeHtml(info.phone)} • ` : ''}ID ${escapeHtml(info.tgId)}</p>
+                  <p class="text-[10px] text-gray-400 mt-0.5">${g.tickets.length} ${tr('ta murojaat', 'обращений')}</p>
+                </div>
+                ${unread ? `<span class="fc-badge fc-badge-warning shrink-0">${tr('Yangi', 'Новое')}</span>` : ''}
+              </div>
+            `; }).join('')}
+          `}
+        </div>
+      `;
+    }
+
+    // ---- Do'kon sozlamalari sahifasi (POLISH ROUND 1-bosqich, 5/6-band) ----
+    // Ichidagi 3 bo'lim (Buyurtma ma'lumotlari/Yetkazib berish/Dizayn) hozirgidek
+    // modal bo'lib ochiladi (murakkab mavjud mantiqqa tegilmadi) — yopilganda
+    // ostidagi shu sahifa qayta ko'rinadi. Bot /start endi shu yerda, alohida
+    // qatordan boshqa joyga ko'chirilmagan.
+    function renderSettingsPage(container) {
+      const body = `
+        <div class="space-y-2">
+          <button type="button" onclick="openOrderInfoSettings()" class="fc-card w-full flex items-center justify-between text-left"><span class="font-bold flex items-center gap-2"><i data-lucide="receipt" class="w-4 h-4"></i>${tr("Buyurtma ma'lumotlari", "Информация о заказе")}</span><span>›</span></button>
+          <button type="button" onclick="openFulfillmentSettings()" class="fc-card w-full flex items-center justify-between text-left"><span class="font-bold flex items-center gap-2"><i data-lucide="truck" class="w-4 h-4"></i>${tr("Yetkazib berish va to'lov", "Доставка и оплата")}</span><span>›</span></button>
+          <button type="button" onclick="openDesignSettings()" class="fc-card w-full flex items-center justify-between text-left"><span class="font-bold flex items-center gap-2"><i data-lucide="palette" class="w-4 h-4"></i>${tr("Dizayn", "Дизайн")}</span><span>›</span></button>
+          ${(isSuperAdmin && isAdminMode) ? `
+            <button type="button" onclick="activePopupModal='START_MESSAGE'; render();" class="fc-card w-full flex items-center justify-between text-left"><span class="font-bold flex items-center gap-2"><i data-lucide="bot" class="w-4 h-4"></i>${tr("Bot /start xabari", "Сообщение бота /start")}</span><span>›</span></button>
+          ` : ''}
+        </div>
+      `;
+      renderPageShell(container, tr("Do'kon sozlamalari", 'Настройки магазина'), body);
     }
 
     // 1. HOME TAB
@@ -1614,7 +2224,7 @@
         <div class="space-y-4">
           <div class="flex items-center gap-2">
             <div class="relative flex-1">
-              <input type="text" id="search-input" oninput="handleSearchDebounced()" placeholder="${escapeHtml(searchPlaceholderText())}"
+              <input type="text" id="search-input" value="${escapeHtml(homeSearchQuery)}" oninput="handleSearchDebounced()" placeholder="${escapeHtml(searchPlaceholderText())}"
                 class="w-full bg-white pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm shadow-sm focus:ring-2 focus:ring-blue-500 outline-none">
               <i data-lucide="search" class="w-5 h-5 text-gray-400 absolute left-3 top-3.5"></i>
             </div>
@@ -1622,15 +2232,15 @@
               🔍${homeFilterActive ? '•' : ''}
             </button>
           </div>
+          ${renderActiveFilterChipsHtml()}
 
           ${(isAdminMode && isUserAnAdmin) ? `
             <div class="bg-amber-50 border border-amber-200 p-3 rounded-2xl text-xs font-bold text-amber-900 shadow-sm flex items-center justify-between">
-              <span>${tr("🛡️ Admin rejimi", "🛡️ Режим администратора")}</span>
+              <span>${tr("🛡️ Admin rejimi: Bosh sahifa", "🛡️ Режим администратора: Главная")}</span>
             </div>
           ` : ''}
 
           <div id="products-grid" class="grid grid-cols-2 gap-3"></div>
-          <div id="products-pagination" class="flex flex-wrap justify-center items-center gap-1.5 pt-2"></div>
         </div>
       `;
       handleSearch();
@@ -1639,13 +2249,16 @@
     // Qidiruvni har harfda emas, 300ms kutib bir marta ishlatish (tezlik uchun)
     let searchDebounceTimer = null;
     function handleSearchDebounced() {
-      homePage = 1; // 7-band: qidiruv o'zgarsa 1-sahifaga qayt
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(handleSearch, 300);
     }
 
     function handleSearch() {
       const q = document.getElementById('search-input')?.value || '';
+      // 23-band: qidiruv matni JS o'zgaruvchida saqlanadi — product detaildan
+      // orqaga qaytilganda (yoki har qanday full render()da) input bo'sh
+      // chizilib qolmasin (id="search-input"da value= yo'q edi, endi bor).
+      homeSearchQuery = q;
       let filtered = searchProducts(q);
 
       if (currentTab === 'home' && !q.trim()) {
@@ -1656,33 +2269,140 @@
       currentVisibleProductIds = filtered.map(p => p.id);
 
       const grid = document.getElementById('products-grid');
-      const pager = document.getElementById('products-pagination');
       if (!grid) return;
 
       if (filtered.length === 0) {
-        grid.innerHTML = `<div class="col-span-2 text-center py-8 bg-white rounded-2xl p-4 text-xs text-gray-500">${tr("🔍 Bosh sahifa uchun tovar biriktirilmagan yoki topilmadi", "🔍 Для главной страницы нет закреплённых товаров")}</div>`;
-        if (pager) pager.innerHTML = '';
+        // 21-band: qidiruv so'zi kiritilgan bo'lsa aniq "topilmadi" xabari,
+        // aks holda (bosh sahifada hech narsa pin qilinmagan) eski xabar.
+        const notFoundMsg = q.trim()
+          ? `<div class="fc-empty-state col-span-2"><i data-lucide="search-x" class="w-8 h-8"></i><p>${tr('Mahsulot topilmadi. Boshqa so‘z bilan qidirib ko‘ring.', 'Товар не найден. Попробуйте другой запрос.')}</p></div>`
+          : `<div class="fc-empty-state col-span-2"><i data-lucide="package-search" class="w-8 h-8"></i><p>${tr("Bosh sahifa uchun tovar biriktirilmagan", "Для главной страницы нет закреплённых товаров")}</p></div>`;
+        grid.innerHTML = notFoundMsg;
+        lucide.createIcons();
         return;
       }
 
-      // 7-band: bosh sahifada ham 10 tadan pagination (katalog ichidagi bilan
-      // bir xil uslub — 10 tagacha pagination yo'q).
-      const totalPages = Math.max(1, Math.ceil(filtered.length / 10));
-      if (homePage > totalPages) homePage = 1;
-      const start = (homePage - 1) * 10;
-      const pageItems = filtered.slice(start, start + 10);
-
-      grid.innerHTML = pageItems.map((p, i) => renderProductCardHTML(p, start + i, filtered.length)).join('');
+      grid.innerHTML = filtered.map((p, idx) => renderProductCardHTML(p, idx, filtered.length)).join('');
       lucide.createIcons();
-
-      if (pager) {
-        pager.innerHTML = totalPages > 1 ? Array.from({ length: totalPages }, (_, i) => i + 1).map(pNum => `
-          <button onclick="homePage=${pNum}; handleSearch();" class="px-3 py-1.5 rounded-xl text-xs font-bold ${homePage === pNum ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'}">${pNum}</button>
-        `).join('') : '';
-      }
     }
 
     // REUSABLE PRODUCT CARD
+    // ---- Sevimlilar (POLISH ROUND 2-bosqich, 17-band) ----
+    async function loadFavorites(force = false) {
+      if (favoritesLoading || (favoritesLoaded && !force)) return;
+      favoritesLoading = true;
+      try {
+        const data = await callApi('get_favorites', {});
+        favoriteProductIds = new Set(data.productIds || []);
+        favoritesLoaded = true;
+        render();
+      } catch (e) {
+        console.error('Sevimlilarni yuklashda xatolik:', e);
+      } finally {
+        favoritesLoading = false;
+      }
+    }
+    async function toggleFavorite(productId, event) {
+      if (event) event.stopPropagation();
+      const wasFavorite = favoriteProductIds.has(productId);
+      // Optimistik yangilanish — darhol UI o'zgaradi, xato bo'lsa qaytariladi.
+      if (wasFavorite) favoriteProductIds.delete(productId); else favoriteProductIds.add(productId);
+      render();
+      try {
+        await callApi('toggle_favorite', { productId });
+      } catch (e) {
+        console.error(e);
+        if (wasFavorite) favoriteProductIds.add(productId); else favoriteProductIds.delete(productId);
+        render();
+        showActionToast(tr('❌ Amalga oshmadi', '❌ Не удалось'), 'error', 1500);
+      }
+    }
+    function favoriteHeartHtml(productId, size = 'w-3.5 h-3.5') {
+      const active = favoriteProductIds.has(productId);
+      return `
+        <button onclick="toggleFavorite('${productId}', event)" class="w-7 h-7 rounded-full bg-white/90 flex items-center justify-center shadow-sm" aria-label="${tr('Sevimli', 'Избранное')}" title="${tr('Sevimli', 'Избранное')}">
+          <svg class="${size}" viewBox="0 0 24 24" fill="${active ? '#ef4444' : 'none'}" stroke="${active ? '#ef4444' : '#9ca3af'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"></path></svg>
+        </button>
+      `;
+    }
+    function setFavoritesPage(p) { favoritesPage = p; render(); }
+    function renderFavoritesPage(container) {
+      const list = products.filter(p => p.status !== 'DELETED' && favoriteProductIds.has(p.id));
+      const pageData = paginate(list, favoritesPage, 10);
+      const body = !list.length ? `
+        <div class="fc-empty-state">
+          <svg class="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"></path></svg>
+          <p>${tr('Hali sevimli mahsulotlar yo‘q.', 'Пока нет избранных товаров.')}</p>
+        </div>
+      ` : `
+        <div class="grid grid-cols-2 gap-3">${pageData.items.map((p, idx) => renderProductCardHTML(p, idx, pageData.items.length)).join('')}</div>
+        ${renderPagerHTML(pageData.page, pageData.totalPages, 'setFavoritesPage')}
+      `;
+      renderPageShell(container, tr('Sevimlilar', 'Избранное'), body);
+    }
+
+    // ---- Yaqinda ko'rilganlar (POLISH ROUND 2-bosqich, 18-band) ----
+    async function loadRecentViews(force = false) {
+      if (recentViewsLoaded && !force) return;
+      try {
+        const data = await callApi('get_recent_views', {});
+        recentViewProductIds = data.productIds || [];
+        recentViewsLoaded = true;
+        if (activePage === 'RECENT') render();
+      } catch (e) {
+        console.error('Yaqinda ko‘rilganlarni yuklashda xatolik:', e);
+      }
+    }
+    async function recordProductView(productId) {
+      // Optimistik: tepaga chiqarish/qo'shish darhol, so'rov fonda ketadi.
+      recentViewProductIds = [productId, ...recentViewProductIds.filter(id => id !== productId)].slice(0, 20);
+      try { await callApi('record_product_view', { productId }); }
+      catch (e) { console.error('Ko‘rishni saqlashda xatolik:', e); }
+    }
+    function setRecentPage(p) { recentPage = p; render(); }
+    function renderRecentPage(container) {
+      const byId = new Map(products.map(p => [p.id, p]));
+      const list = recentViewProductIds.map(id => byId.get(id)).filter(p => p && p.status !== 'DELETED');
+      const pageData = paginate(list, recentPage, 10);
+      const body = !list.length ? `
+        <div class="fc-empty-state">
+          <i data-lucide="history" class="w-10 h-10"></i>
+          <p>${tr('Hali hech narsa ko‘rilmagan.', 'Пока ничего не просмотрено.')}</p>
+        </div>
+      ` : `
+        <div class="grid grid-cols-2 gap-3">${pageData.items.map((p, idx) => renderProductCardHTML(p, idx, pageData.items.length)).join('')}</div>
+        ${renderPagerHTML(pageData.page, pageData.totalPages, 'setRecentPage')}
+      `;
+      renderPageShell(container, tr('Yaqinda ko‘rilganlar', 'Недавно просмотренные'), body);
+    }
+
+    // ---- O'xshash mahsulotlar (POLISH ROUND 2-bosqich, 19-band) ----
+    // Deterministik: bir xil (leaf) katalog + omborda bor + joriy mahsulot
+    // chiqarilgan. Yetarli bo'lmasa — parent katalogdagi opa-uka kataloglardan
+    // to'ldiriladi. Client-side (products allaqachon yuklangan) — yangi so'rov yo'q.
+    function similarProductsFor(p, limit = 6) {
+      if (!p || !p.categoryId) return [];
+      const sameLeaf = products.filter(x => x.id !== p.id && x.status !== 'DELETED' && x.categoryId === p.categoryId && x.stock > 0);
+      if (sameLeaf.length >= limit) return sameLeaf.slice(0, limit);
+      const cat = categories.find(c => c.id === p.categoryId);
+      if (!cat || !cat.parentId) return sameLeaf;
+      const siblingCatIds = categories.filter(c => c.parentId === cat.parentId && c.id !== cat.id).map(c => c.id);
+      const fromSiblings = products.filter(x => x.id !== p.id && x.status !== 'DELETED' && x.stock > 0 && siblingCatIds.includes(x.categoryId));
+      return [...sameLeaf, ...fromSiblings].slice(0, limit);
+    }
+    function renderSimilarProductsBlockHtml(p) {
+      const similar = similarProductsFor(p, 6);
+      if (!similar.length) return '';
+      return `
+        <div class="pt-2 border-t">
+          <h4 class="font-bold text-xs text-gray-700 mb-2">${tr('O‘xshash mahsulotlar', 'Похожие товары')}</h4>
+          <div class="grid grid-cols-2 gap-3">
+            ${similar.map((sp, i) => renderProductCardHTML(sp, i, similar.length)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
     function renderProductCardHTML(p, idx, totalLen) {
       const inCart = cart[p.id];
       const vars = productVariants(p);
@@ -1699,6 +2419,7 @@
             <div class="relative">
               <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-full h-28 object-cover rounded-xl mb-2" loading="lazy">
               ${hasDiscount ? `<span class="absolute top-1 right-1 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md">${tr("CHEGIRMA", "СКИДКА")}</span>` : ''}
+              ${!(isAdminMode && isUserAnAdmin) ? `<div class="absolute top-1 left-1">${favoriteHeartHtml(p.id)}</div>` : ''}
             </div>
             ${(isAdminMode && isUserAnAdmin) ? `<span class="text-[10px] bg-gray-100 font-mono text-gray-500 px-1.5 py-0.5 rounded">${escapeHtml(p.sku)}</span>` : ''}
             <h4 class="font-bold text-sm text-gray-800 mt-1 leading-tight line-clamp-1">${escapeHtml(productName(p))}</h4>
@@ -1707,7 +2428,7 @@
               ${hasDiscount ? `
                 <div class="flex items-center space-x-1">
                   <span class="text-[10px] text-gray-400 line-through font-bold">${money(p.oldPrice)}</span>
-                  <span class="text-xs text-red-600 font-black">${money(p.price)}</span>
+                  <span class="text-xs fc-text-danger font-black">${money(p.price)}</span>
                 </div>
               ` : `
                 <p class="text-xs text-blue-600 font-black">${money(p.price)}</p>
@@ -1722,11 +2443,11 @@
           ${(isAdminMode && isUserAnAdmin && !bulkSelecting) ? `
             <div class="mt-2 pt-2 border-t flex flex-col space-y-1" onclick="event.stopPropagation()">
               <div class="flex justify-between items-center text-[10px]">
-                <button onclick="moveProductSort('${p.id}', -1)" ${idx === 0 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬆️</button>
-                <button onclick="moveProductSort('${p.id}', 1)" ${idx === totalLen - 1 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬇️</button>
-                <button onclick="toggleProductFeatured('${p.id}')" class="px-1.5 py-0.5 ${p.isFeatured ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'} rounded font-bold">📌</button>
-                <button onclick="openProductDetailModal('${p.id}')" class="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded font-bold">✏️</button>
-                <button onclick="deleteProduct('${p.id}')" class="px-1.5 py-0.5 bg-red-100 text-red-600 rounded font-bold">🗑️</button>
+                <button onclick="moveProductSort('${p.id}', -1)" ${idx === 0 ? 'disabled' : ''} aria-label="${tr('Yuqoriga', 'Вверх')}" class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">${ICON_UP}</button>
+                <button onclick="moveProductSort('${p.id}', 1)" ${idx === totalLen - 1 ? 'disabled' : ''} aria-label="${tr('Pastga', 'Вниз')}" class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">${ICON_DOWN}</button>
+                <button onclick="toggleProductFeatured('${p.id}')" aria-label="${tr('Pin', 'Закрепить')}" class="px-1.5 py-0.5 ${p.isFeatured ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'} rounded font-bold">${ICON_PIN}</button>
+                <button onclick="openProductDetailModal('${p.id}')" class="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded font-bold">${ICON_EDIT}</button>
+                <button onclick="deleteProduct('${p.id}')" aria-label="${tr("O'chirish", 'Удалить')}" class="px-1.5 py-0.5 fc-bg-danger-soft fc-text-danger rounded font-bold">${ICON_TRASH}</button>
               </div>
             </div>
           ` : `
@@ -1800,7 +2521,7 @@
               </div>
               <div class="flex flex-wrap gap-1.5 pt-1">
                 <button onclick="openMissingImageQueue()" title="${tr('Rasmsiz','Без фото')} · ${globalMissingImageCount}" class="flex items-center gap-1 bg-amber-50 text-amber-900 border border-amber-200 font-bold px-2.5 py-1.5 rounded-xl text-[11px] shadow-sm">🖼️ ${globalMissingImageCount}</button>
-                <button onclick="openTrashModal()" title="${tr('Chiqindi (24 soat)','Корзина (24 часа)')}" class="flex items-center gap-1 bg-white border text-gray-600 font-bold px-2.5 py-1.5 rounded-xl text-[11px]">🗑️</button>
+                <button onclick="openTrashModal()" title="${tr('Chiqindi (24 soat)','Корзина (24 часа)')}" aria-label="${tr('Chiqindi', 'Корзина')}" class="flex items-center gap-1 bg-white border text-gray-600 font-bold px-2.5 py-1.5 rounded-xl text-[11px]">${ICON_TRASH}</button>
                 <button onclick="openDuplicateProductsModal()" title="${tr('Duplicate tovarlarni tekshirish','Проверить дубликаты товаров')}" class="flex items-center gap-1 bg-white border text-gray-600 font-bold px-2.5 py-1.5 rounded-xl text-[11px]">🧭</button>
                 <button onclick="toggleBulkProductSelectMode()" title="${bulkProductSelectMode ? tr('Tanlashni tugatish','Завершить выбор') : tr('Tovarlarni tanlash','Выбрать товары')}" class="flex items-center gap-1 ${bulkProductSelectMode ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'} font-bold px-2.5 py-1.5 rounded-xl text-[11px]">☑️</button>
               </div>
@@ -1823,11 +2544,11 @@
                 </div>
                 <div class="flex items-center space-x-1">
                   ${(isAdminMode && isUserAnAdmin) ? `
-                    <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬆️</button>
-                    <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">⬇️</button>
+                    <button onclick="moveCategoryOrder('${sub.id}', -1, event)" ${subIdx === 0 ? 'disabled' : ''} aria-label="${tr('Yuqoriga', 'Вверх')}" class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">${ICON_UP}</button>
+                    <button onclick="moveCategoryOrder('${sub.id}', 1, event)" ${subIdx === subCats.length - 1 ? 'disabled' : ''} aria-label="${tr('Pastga', 'Вниз')}" class="px-1.5 py-0.5 bg-gray-100 rounded font-bold">${ICON_DOWN}</button>
                     <button onclick="openMoveCategoryModal('${sub.id}', event)" title="${tr("Boshqa katalogga ko'chirish", "Переместить в другой каталог")}" class="p-1 bg-slate-100 text-slate-600 rounded text-xs font-bold">📁⇢</button>
-                    <button onclick="openEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">✏️</button>
-                    <button onclick="deleteCategory('${sub.id}', event)" class="p-1 bg-red-100 text-red-600 rounded text-xs font-bold">🗑️</button>
+                    <button onclick="openEditCategoryModal('${sub.id}', event)" class="p-1 bg-blue-100 text-blue-600 rounded text-xs font-bold">${ICON_EDIT}</button>
+                    <button onclick="deleteCategory('${sub.id}', event)" aria-label="${tr("O'chirish", 'Удалить')}" class="p-1 fc-bg-danger-soft fc-text-danger rounded text-xs font-bold">${ICON_TRASH}</button>
                   ` : ''}
                   <i data-lucide="chevron-right" class="w-5 h-5 text-gray-400"></i>
                 </div>
@@ -1848,11 +2569,19 @@
                 ` : ''}
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-3">
-              ${paginatedProds.map((p, idx) => renderProductCardHTML(p, idx, paginatedProds.length)).join('')}
-            </div>
+            ${renderActiveFilterChipsHtml()}
+            ${catProds.length === 0 ? `
+              <div class="fc-empty-state">
+                <i data-lucide="${filterActive ? 'search-x' : 'package-open'}" class="w-8 h-8"></i>
+                <p>${filterActive ? tr('Mahsulot topilmadi. Boshqa so‘z bilan qidirib ko‘ring.', 'Товар не найден. Попробуйте другой запрос.') : tr('Bu katalogda hozircha tovar yo‘q.', 'В этом каталоге пока нет товаров.')}</p>
+              </div>
+            ` : `
+              <div class="grid grid-cols-2 gap-3">
+                ${paginatedProds.map((p, idx) => renderProductCardHTML(p, idx, paginatedProds.length)).join('')}
+              </div>
+            `}
 
-            ${bulkProductSelectMode ? `<div class="sticky bottom-20 z-30 bg-slate-900 text-white rounded-2xl p-2.5 shadow-xl flex flex-wrap items-center gap-2"><b class="text-xs flex-1 min-w-[90px]">${bulkSelectedProductIds.size} ${tr('ta tanlandi','выбрано')}</b><button onclick="openBulkMoveProductsModal()" ${bulkSelectedProductIds.size ? '' : 'disabled'} class="px-3 py-2 rounded-xl bg-blue-600 disabled:opacity-40 text-[11px] font-bold">📁 ${tr('Ko‘chirish','Переместить')}</button><button onclick="bulkTrashSelectedProducts()" ${bulkSelectedProductIds.size ? '' : 'disabled'} class="px-3 py-2 rounded-xl bg-red-600 disabled:opacity-40 text-[11px] font-bold">🗑 ${tr('Chiqindiga','В корзину')}</button><button onclick="clearBulkProductSelection()" class="px-3 py-2 rounded-xl bg-white/10 text-[11px] font-bold">✕</button></div>` : ''}
+            ${bulkProductSelectMode ? `<div class="sticky bottom-20 z-30 bg-slate-900 text-white rounded-2xl p-2.5 shadow-xl flex flex-wrap items-center gap-2"><b class="text-xs flex-1 min-w-[90px]">${bulkSelectedProductIds.size} ${tr('ta tanlandi','выбрано')}</b><button onclick="openBulkMoveProductsModal()" ${bulkSelectedProductIds.size ? '' : 'disabled'} class="px-3 py-2 rounded-xl bg-blue-600 disabled:opacity-40 text-[11px] font-bold flex items-center gap-1">${fcIcon('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>')} ${tr('Ko‘chirish','Переместить')}</button><button onclick="bulkTrashSelectedProducts()" ${bulkSelectedProductIds.size ? '' : 'disabled'} class="px-3 py-2 rounded-xl fc-bg-danger disabled:opacity-40 text-[11px] font-bold flex items-center gap-1">${ICON_TRASH} ${tr('Chiqindiga','В корзину')}</button><button onclick="clearBulkProductSelection()" class="px-3 py-2 rounded-xl bg-white/10 text-[11px] font-bold">✕</button></div>` : ''}
 
             ${totalPages > 1 ? `
               <div class="flex justify-center items-center space-x-2 pt-4">
@@ -1869,7 +2598,7 @@
     }
 
     function isCategoryFilterActive() {
-      return !!(categoryFilter.search || categoryFilter.minPrice || categoryFilter.maxPrice || categoryFilter.sortPrice || categoryFilter.sortNew || categoryFilter.sortSold || categoryFilter.hideOutOfStock);
+      return !!(categoryFilter.search || categoryFilter.minPrice || categoryFilter.maxPrice || categoryFilter.sortPrice || categoryFilter.sortNew || categoryFilter.sortSold || categoryFilter.inStockOnly);
     }
 
     function applyCategoryFilter(list) {
@@ -1878,7 +2607,9 @@
         const matchedIds = new Set(searchProducts(categoryFilter.search).map(p => String(p.id)));
         result = result.filter(p => matchedIds.has(String(p.id)));
       }
-      if (categoryFilter.hideOutOfStock) result = result.filter(p => Number(p.stock) > 0);
+      // 22-band: "Omborda bor" (tugaganlarni yashirish) — bitta toggle, ikkalasi
+      // ham mantiqan bir xil narsa (stock<=0 bo'lganlarni yashirish).
+      if (categoryFilter.inStockOnly) result = result.filter(p => Number(p.stock) > 0);
       const min = parseFloat(categoryFilter.minPrice);
       const max = parseFloat(categoryFilter.maxPrice);
       if (!isNaN(min)) result = result.filter(p => p.price >= min);
@@ -1903,6 +2634,26 @@
       return result;
     }
 
+    // 22-band: tanlangan filterlar chip/badge — har biri alohida ✕ bilan olib
+    // tashlanadi, "Tozalash" hammasini bekor qiladi. Home va Kataloglar bir xil.
+    function renderActiveFilterChipsHtml() {
+      if (!isCategoryFilterActive()) return '';
+      const chips = [];
+      if (categoryFilter.search) chips.push({ key: 'search', label: `"${categoryFilter.search}"` });
+      if (categoryFilter.minPrice || categoryFilter.maxPrice) chips.push({ key: 'price', label: `${categoryFilter.minPrice || '0'}—${categoryFilter.maxPrice || '∞'}` });
+      if (categoryFilter.sortPrice) chips.push({ key: 'sortPrice', label: tr("Narx", "Цена") + (categoryFilter.sortPrice === 'asc' ? ' ↑' : ' ↓') });
+      if (categoryFilter.sortNew) chips.push({ key: 'sortNew', label: tr("Yangi", "Новое") + (categoryFilter.sortNew === 'asc' ? ' ↑' : ' ↓') });
+      if (categoryFilter.sortSold) chips.push({ key: 'sortSold', label: tr("Ko'p sotilgan", "Популярное") + (categoryFilter.sortSold === 'asc' ? ' ↑' : ' ↓') });
+      if (categoryFilter.inStockOnly) chips.push({ key: 'inStockOnly', label: tr("Omborda bor", "В наличии") });
+      if (!chips.length) return '';
+      return `
+        <div class="flex flex-wrap items-center gap-1.5">
+          ${chips.map(c => `<span class="fc-badge fc-badge-primary">${escapeHtml(c.label)} <button onclick="removeCategoryFilterKey('${c.key}')" class="ml-0.5 font-black" aria-label="${tr('Olib tashlash', 'Убрать')}">✕</button></span>`).join('')}
+          <button onclick="clearCategoryFilter()" class="text-[10px] font-bold text-blue-600 underline">${tr('Tozalash', 'Сбросить')}</button>
+        </div>
+      `;
+    }
+
     function openCategoryFilterModal() {
       activePopupModal = 'CAT_FILTER';
       render();
@@ -1916,7 +2667,6 @@
     function setCategoryPriceBound(field, value) {
       categoryFilter[field] = value;
       categoryPage = 1;
-      homePage = 1;
     }
 
     // Har bir saralash: yo'q -> o'suvchi -> kamayuvchi -> yo'q, mustaqil ravishda
@@ -1925,21 +2675,26 @@
       const idx = order.indexOf(categoryFilter[key]);
       categoryFilter[key] = order[(idx + 1) % order.length];
       categoryPage = 1;
-      homePage = 1;
       render();
     }
 
     function clearCategoryFilter() {
-      categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null, hideOutOfStock: false };
+      categoryFilter = { search: '', minPrice: '', maxPrice: '', sortPrice: null, sortNew: null, sortSold: null, inStockOnly: false };
       categoryPage = 1;
-      homePage = 1;
       render();
     }
-
-    function toggleCategoryHideOutOfStock() {
-      categoryFilter.hideOutOfStock = !categoryFilter.hideOutOfStock;
+    function toggleInStockOnlyFilter() {
+      categoryFilter.inStockOnly = !categoryFilter.inStockOnly;
       categoryPage = 1;
-      homePage = 1;
+      render();
+    }
+    // 22-band: bitta faol filtrni olib tashlaydi (chip'dagi ✕ orqali).
+    function removeCategoryFilterKey(key) {
+      if (key === 'search') categoryFilter.search = '';
+      else if (key === 'price') { categoryFilter.minPrice = ''; categoryFilter.maxPrice = ''; }
+      else if (key === 'inStockOnly') categoryFilter.inStockOnly = false;
+      else categoryFilter[key] = null;
+      categoryPage = 1;
       render();
     }
 
@@ -1973,38 +2728,58 @@
       }
 
       container.innerHTML = `
-        <div class="space-y-4">
+        <div class="space-y-4 pb-24">
           <h2 class="text-lg font-bold">${t('cart_title')}</h2>
           <div class="bg-white rounded-2xl p-4 shadow-sm divide-y">
-            ${items.map(item => `
-              <div class="py-3 flex items-center justify-between">
-                <div class="flex items-center gap-2.5">
+            ${items.map(item => {
+              const available = productVariants(item).length ? variantQty(item, item.size, item.color) : item.stock;
+              return `
+              <div class="py-3 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2.5 min-w-0">
                   <img src="${escapeHtml(item.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-12 h-12 object-cover rounded-lg flex-shrink-0" loading="lazy">
-                  <div>
-                    <h4 class="font-bold text-sm text-gray-800">${escapeHtml(productName(item))} ${item.size ? `<span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-500">${escapeHtml(item.size)}</span>` : ''} ${item.color ? `<span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-500">${escapeHtml(item.color)}</span>` : ''}</h4>
-                    <p class="text-xs text-gray-500">${money(item.price)} / ${t('total').toLowerCase()}: <b class="text-gray-700">${money(item.price * item.qty)}</b></p>
+                  <div class="min-w-0">
+                    <h4 class="font-bold text-sm text-gray-800 truncate">${escapeHtml(productName(item))}</h4>
+                    ${(item.size || item.color) ? `<div class="flex items-center gap-1 mt-0.5">${item.size ? `<span class="fc-badge fc-badge-muted">${escapeHtml(item.size)}</span>` : ''}${item.color ? `<span class="fc-badge fc-badge-muted">${escapeHtml(item.color)}</span>` : ''}</div>` : ''}
+                    <p class="text-xs text-gray-500 mt-0.5">${money(item.price)} × ${item.qty} = <b class="text-gray-700">${money(item.price * item.qty)}</b></p>
+                    ${item.qty >= available ? `<p class="text-[10px] fc-text-warning mt-0.5">${tr('Omborda shuncha bor', 'Столько есть на складе')}: ${available}</p>` : ''}
                   </div>
                 </div>
-                <div class="flex items-center space-x-2">
-                  <button onclick="changeCartQty('${item.key}', -1)" class="w-7 h-7 bg-gray-100 rounded-lg font-bold text-sm">-</button>
-                  <span class="font-bold text-sm px-1">${item.qty}</span>
-                  <button onclick="changeCartQty('${item.key}', 1)" class="w-7 h-7 bg-blue-600 text-white rounded-lg font-bold text-sm">+</button>
+                <div class="flex flex-col items-end gap-1.5 shrink-0">
+                  <button onclick="removeCartItem('${item.key}')" class="w-7 h-7 flex items-center justify-center rounded-lg fc-text-danger fc-bg-danger-soft" aria-label="${tr("O'chirish", 'Удалить')}" title="${tr("O'chirish", 'Удалить')}">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                  </button>
+                  <div class="flex items-center gap-2">
+                    <button onclick="changeCartQty('${item.key}', -1)" class="w-9 h-9 bg-gray-100 rounded-lg font-bold text-sm">-</button>
+                    <span class="font-bold text-sm w-5 text-center">${item.qty}</span>
+                    <button onclick="changeCartQty('${item.key}', 1)" ${item.qty >= available ? 'disabled' : ''} class="w-9 h-9 bg-blue-600 disabled:opacity-40 text-white rounded-lg font-bold text-sm">+</button>
+                  </div>
                 </div>
               </div>
-            `).join('')}
+            `; }).join('')}
           </div>
+        </div>
 
-          <div class="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+        <div class="fixed left-0 right-0 z-30 px-4" style="bottom:calc(4.25rem + env(safe-area-inset-bottom))">
+          <div class="bg-white rounded-2xl p-4 shadow-xl border space-y-3 max-w-md mx-auto">
             <div class="flex justify-between items-center text-lg font-black">
               <span>${t('total')}:</span>
               <span class="text-green-600">${money(total)}</span>
             </div>
-            <button onclick="openCheckoutForm()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl text-sm shadow-md">
+            <button onclick="openCheckoutForm()" class="fc-btn fc-btn-success w-full text-sm">
               ✅ ${t('place_order')}
             </button>
           </div>
         </div>
       `;
+    }
+
+    // 24-band: bitta tovarni to'liq savatchadan olib tashlash (miqdorni
+    // birma-bir kamaytirishdan farqli, aniq/tezkor o'chirish).
+    function removeCartItem(key) {
+      delete cart[key];
+      localStorage.setItem('cart', JSON.stringify(cart));
+      updateCartBadge();
+      render();
     }
 
     function topLevelRegionLabel(regionId) {
@@ -2042,16 +2817,9 @@
       return tr('Yetkazib berish narxi hozir to‘lanadigan jami summaga qo‘shiladi.', 'Стоимость доставки включена в итоговую сумму к оплате.');
     }
 
-    let checkoutReceiptFile = null;
-    let checkoutReceiptPreparing = null;
-    let checkoutReceiptPreviewUrl = null;
-    let checkoutReceiptSelectionVersion = 0;
-
     function clearCheckoutReceipt() {
       checkoutReceiptSelectionVersion += 1;
-      if (checkoutReceiptPreviewUrl && String(checkoutReceiptPreviewUrl).startsWith('blob:')) {
-        try { URL.revokeObjectURL(checkoutReceiptPreviewUrl); } catch (_) {}
-      }
+      if (checkoutReceiptPreviewUrl) URL.revokeObjectURL(checkoutReceiptPreviewUrl);
       checkoutReceiptFile = null;
       checkoutReceiptPreparing = null;
       checkoutReceiptPreviewUrl = null;
@@ -2081,43 +2849,6 @@
       const regionKey = document.getElementById('chk-region-key')?.value || checkoutDraft.regionKey || 'tashkent_city';
       const selectedPayment = commerce.paymentOptions(fulfillmentConfig, regionKey).find(m => m.id === selectedPayMethod);
       wrap.innerHTML = renderReceiptPicker(!!selectedPayment?.receiptRequired);
-    }
-
-    async function onCheckoutReceiptPicked(event) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      const selectionVersion = ++checkoutReceiptSelectionVersion;
-      checkoutReceiptFile = file;
-      if (checkoutReceiptPreviewUrl) { try { URL.revokeObjectURL(checkoutReceiptPreviewUrl); } catch (_) {} }
-      try { checkoutReceiptPreviewUrl = URL.createObjectURL(file); } catch (_) { checkoutReceiptPreviewUrl = null; }
-      checkoutReceiptPreparing = compressImageToLimit(file, MAX_RECEIPT_BYTES, 1600, 0.85).then((compressed) => {
-        if (selectionVersion !== checkoutReceiptSelectionVersion) return compressed;
-        checkoutReceiptFile = compressed;
-        try {
-          const stableUrl = URL.createObjectURL(compressed);
-          const oldUrl = checkoutReceiptPreviewUrl;
-          checkoutReceiptPreviewUrl = stableUrl;
-          rerenderReceiptPicker();
-          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
-        } catch (_) {}
-        return compressed;
-      });
-      rerenderReceiptPicker();
-    }
-
-    async function prepareReceiptImageUpload() {
-      if (!checkoutReceiptFile && !checkoutReceiptPreparing) return null;
-      let prepared;
-      try {
-        prepared = checkoutReceiptPreparing ? await checkoutReceiptPreparing : checkoutReceiptFile;
-      } catch (e) {
-        console.error('[receipt:READ_FAILED]', e);
-        clearCheckoutReceipt();
-        rerenderReceiptPicker();
-        throw new Error('receipt_read_failed');
-      }
-      if (!prepared || prepared.size > MAX_RECEIPT_BYTES) throw new Error('receipt_too_large');
-      return { base64: await blobToBase64(prepared), mimeType: prepared.type, fileName: 'payment-receipt.jpg' };
     }
 
     function openCheckoutForm() {
@@ -2378,7 +3109,7 @@
         <button type="button" onclick="selectDelivery('${escapeHtml(option.id)}')" class="w-full text-left p-2.5 border rounded-xl font-bold text-xs ${option.id === selectedDeliveryMethodId ? 'border-blue-600 bg-blue-50 text-blue-700' : 'bg-white text-gray-700'} ${disabledLook ? 'opacity-40' : ''}">
           ${deliveryOptionLabel(option)}
         </button>`;
-      }).join('') : `<div class="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl font-bold">${tr('Bu hudud uchun yetkazib berish usuli yoqilmagan.', 'Для этого региона способы доставки не настроены.')}</div>`;
+      }).join('') : `<div class="fc-bg-danger-soft border fc-border-danger fc-text-danger p-3 rounded-xl font-bold">${tr('Bu hudud uchun yetkazib berish usuli yoqilmagan.', 'Для этого региона способы доставки не настроены.')}</div>`;
 
       const notice = document.getElementById('delivery-notice');
       if (notice) {
@@ -2403,7 +3134,7 @@
       if (payWrap) payWrap.innerHTML = paymentOptions.length ? paymentOptions.map(method => `
         <button type="button" onclick="selectPayment('${method.id}')" class="p-2.5 border rounded-xl font-bold text-xs ${method.id === selectedPayMethod ? 'border-blue-600 bg-blue-50 text-blue-700' : 'bg-white text-gray-700'}">
           ${method.id === 'CASH' ? '💵' : '💳'} ${escapeHtml(method.id === 'CASH' ? tr('Naqd','Наличные') : method.id === 'CARD' ? tr('Karta orqali','Картой') : method.name)}
-        </button>`).join('') : `<div class="col-span-2 bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl font-bold">${tr("Bu hudud uchun to'lov usuli yoqilmagan.", 'Для этого региона способы оплаты не настроены.')}</div>`;
+        </button>`).join('') : `<div class="col-span-2 fc-bg-danger-soft border fc-border-danger fc-text-danger p-3 rounded-xl font-bold">${tr("Bu hudud uchun to'lov usuli yoqilmagan.", 'Для этого региона способы оплаты не настроены.')}</div>`;
 
       const cardDetails = document.getElementById('card-payment-details');
       if (cardDetails) {
@@ -2428,6 +3159,68 @@
       if (subtotalEl) subtotalEl.textContent = money(totals.subtotal);
       if (deliveryFeeEl) deliveryFeeEl.textContent = selectedDelivery?.kind === 'FIXED' ? money(totals.deliveryFee) : (selectedDelivery?.kind === 'TAXI' ? tr('Alohida', 'Отдельно') : (selectedDelivery?.kind === 'POST' && selectedDelivery.payer === 'CUSTOMER' ? tr('Pochta tarifida', 'По тарифу почты') : money(0)));
       if (payableEl) payableEl.textContent = money(totals.payableTotal);
+    }
+
+    async function onCheckoutReceiptPicked(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
+        event.target.value = '';
+        return alert(isLikelyHeicFile(file)
+          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. Chekni JPG/PNG formatida yuklang.", "⚠️ Формат HEIC/HEIF пока не поддерживается. Загрузите чек в формате JPG/PNG.")
+          : tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
+      }
+      // 1.11: preview tanlangan zahoti ORIGINAL File'dan ko'rsatiladi — V2:
+      // FileReader/ArrayBuffer orqali oldindan o'qish shart emas.
+      const selectionVersion = ++checkoutReceiptSelectionVersion;
+      checkoutReceiptFile = file;
+      if (checkoutReceiptPreviewUrl) { try { URL.revokeObjectURL(checkoutReceiptPreviewUrl); } catch (_) {} }
+      checkoutReceiptPreviewUrl = URL.createObjectURL(file);
+      checkoutReceiptPreparing = captureAndPrepareImageV2(file, MAX_RECEIPT_BYTES, 1600, 0.85, (updated) => {
+        if (selectionVersion !== checkoutReceiptSelectionVersion) return;
+        try {
+          const stableUrl = URL.createObjectURL(updated);
+          const oldUrl = checkoutReceiptPreviewUrl;
+          checkoutReceiptPreviewUrl = stableUrl;
+          rerenderReceiptPicker();
+          if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) {
+            try { URL.revokeObjectURL(oldUrl); } catch (_) {}
+          }
+        } catch (previewErr) {
+          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
+        }
+      });
+      rerenderReceiptPicker();
+    }
+
+    // 1.7: chek order bilan BIR VAQTDA, bitta create_order so'rovida yuboriladi
+    // (order avval yaratilib, chek keyin "ixtiyoriy qo'shimcha" sifatida
+    // yuborilmaydi) — shunday qilib order chekssiz "muvaffaqiyatli" holatda
+    // qolib ketmaydi. Product rasmlaridagi kabi Telegram WebView -> Storage
+    // cross-origin signed upload'ga tayanmaymiz; baytlar autentifikatsiyalangan
+    // app-api orqali yuboriladi.
+    async function prepareReceiptImageUpload() {
+      if (!checkoutReceiptFile && !checkoutReceiptPreparing) return null;
+      let prepared;
+      try {
+        prepared = checkoutReceiptPreparing ? await checkoutReceiptPreparing : checkoutReceiptFile;
+      } catch (e) {
+        console.error('[receipt:READ_ORIGINAL_FAILED]', e);
+        // 5.2: eski (allaqachon rad etilgan) promise qayta-qayta kutilib,
+        // "Yuborish" cheksiz bir xil xato bilan qaytmasligi uchun — chek
+        // holatini tozalaymiz, foydalanuvchi ochiq ko'rinishda qayta tanlaydi.
+        clearCheckoutReceipt();
+        rerenderReceiptPicker();
+        throw new Error('receipt_read_failed');
+      }
+      if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
+      return {
+        base64: await fileToBase64(prepared),
+        mimeType: prepared.type,
+        fileName: prepared.name || 'payment-receipt.jpg',
+      };
     }
 
     let submittingOrder = false;
@@ -2460,17 +3253,17 @@
       requiredFields.forEach(([id, val]) => {
         const el = document.getElementById(id);
         if (!val || val === '+998') {
-          el.classList.add('border-red-500', 'bg-red-50');
+          el.classList.add('fc-border-danger', 'fc-bg-danger-soft');
           hasError = true;
         } else {
-          el.classList.remove('border-red-500', 'bg-red-50');
+          el.classList.remove('fc-border-danger', 'fc-bg-danger-soft');
         }
       });
 
       if (hasError) return alert(tr("Iltimos, barcha qizil maydonlarni to'ldiring!", "Заполните все поля, отмеченные красным!"));
 
       if (!isValidPhone(phone)) {
-        document.getElementById('chk-phone').classList.add('border-red-500', 'bg-red-50');
+        document.getElementById('chk-phone').classList.add('fc-border-danger', 'fc-bg-danger-soft');
         return alert(tr("Iltimos, telefon raqamini to'g'ri formatda kiriting: +998901234567", "Введите телефон в формате +998901234567"));
       }
 
@@ -2504,17 +3297,17 @@
       }));
 
       try {
-        // 1.7: chek order bilan BIR VAQTDA, bitta create_order so'rovida
-        // yuboriladi — order avval yaratilib, chek keyin "ixtiyoriy
-        // qo'shimcha" sifatida yuborilmaydi.
+        // 1.7: chek order bilan BIR so'rovda, atomik tarzda yuboriladi — order
+        // avval yaratilib, chek "keyinroq, ixtiyoriy" tarzda ulanmaydi.
         let receiptImageUpload = null;
         try { receiptImageUpload = await prepareReceiptImageUpload(); }
         catch (prepError) {
           if (String(prepError?.message) === 'receipt_read_failed') {
             return alert(tr("Chek rasmini o'qib bo'lmadi. Iltimos, chek rasmini qaytadan tanlang.", "Не удалось прочитать фото чека. Пожалуйста, выберите фото чека заново."));
           }
-          return alert(tr("Chek rasmi yaroqsiz yoki juda katta.", 'Файл чека повреждён или слишком большой.'));
+          return alert(tr("Chek rasmi yaroqsiz yoki juda katta (JPG/PNG/WebP, 6MB gacha).", 'Файл чека повреждён или слишком большой (JPG/PNG/WebP, до 6 МБ).'));
         }
+
         const result = await callApi('create_order', {
           items: itemsPayload, fullname, phone, regionKey, district, address,
           deliveryMethodId: selectedDeliveryMethodId, paymentMethodId: selectedPayMethod,
@@ -2690,12 +3483,12 @@
                 `).join('')}
               </div>
               ${o.status === 'CANCELLED' && o.cancelReason ? `
-                <p class="text-[10px] text-red-500">${tr('Bekor qilindi','Отменён')} (${o.cancelledBy === 'ADMIN' ? tr("do'kon","магазин") : tr('siz','вы')}): ${escapeHtml(o.cancelReason)}</p>
+                <p class="text-[10px] fc-text-danger">${tr('Bekor qilindi','Отменён')} (${o.cancelledBy === 'ADMIN' ? tr("do'kon","магазин") : tr('siz','вы')}): ${escapeHtml(o.cancelReason)}</p>
               ` : ''}
               <div class="border-t pt-2 flex justify-between items-center font-bold text-sm">
                 <span class="text-green-600">${money(o.payableTotal ?? o.totalPrice)}</span>
                 ${o.status === 'NEW' ? `
-                  <button onclick="cancelUserOrder(${o.id}, event)" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded-lg font-bold">
+                  <button onclick="cancelUserOrder(${o.id}, event)" class="text-xs fc-bg-danger-soft fc-text-danger border fc-border-danger px-2.5 py-1 rounded-lg font-bold">
                     ❌ ${tr("Bekor qilish", "Отмена")}
                   </button>
                 ` : ''}
@@ -2727,180 +3520,300 @@
       render();
     }
 
-    // 5. WAREHOUSE TAB — Ombor 2.0: bir nechta ichki bo'lim.
-    function warehouseLowStockThreshold() { return 5; }
-    function warehouseActiveProducts() { return products.filter(p => p.status !== 'DELETED'); }
-    function setWarehouseSection(section) {
-      warehouseSection = section;
-      render();
-      if (section === 'tarix') loadInventoryMovements();
-    }
+    // 5. WAREHOUSE TAB — 11-16-band: uch sub-bo'lim (Holat / Qoldiqni yangilash / Kirim).
     function renderWarehouse(container) {
-      const sections = [
-        { id: 'holat', label: tr('Holat', 'Состояние') },
-        { id: 'yangilash', label: tr('Yangilash', 'Обновить') },
-        { id: 'kirim', label: tr('Kirim', 'Приход') },
-        { id: 'kam', label: tr('Kam qolgan', 'Мало') },
-        { id: 'tugagan', label: tr('Tugagan', 'Нет в наличии') },
-        { id: 'tarix', label: tr('Tarix', 'История') },
-      ];
       container.innerHTML = `
         <div class="space-y-4">
-          <div class="flex items-center justify-between gap-2">
-            <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
-            <button onclick="openDashboard()" class="px-2 py-1.5 rounded-xl text-[10px] font-bold bg-slate-900 text-white">📊 ${tr('Hisobot', 'Отчёт')}</button>
+          <h2 class="text-lg font-bold text-slate-800">${t('warehouse_title')}</h2>
+          <div class="flex gap-2">
+            <button onclick="switchWarehouseSubTab('HOLAT')" class="flex-1 py-2 rounded-xl text-xs font-bold ${warehouseSubTab === 'HOLAT' ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">${tr('Holat', 'Состояние')}</button>
+            <button onclick="switchWarehouseSubTab('UPDATE')" class="flex-1 py-2 rounded-xl text-xs font-bold ${warehouseSubTab === 'UPDATE' ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">${tr("Qoldiqni yangilash", 'Обновить остаток')}</button>
+            <button onclick="switchWarehouseSubTab('KIRIM')" class="flex-1 py-2 rounded-xl text-xs font-bold ${warehouseSubTab === 'KIRIM' ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">${tr("Kirim", 'Приход')}</button>
           </div>
-
-          <div class="flex flex-wrap gap-1.5">
-            ${sections.map(s => `<button onclick="setWarehouseSection('${s.id}')" class="px-2.5 py-1.5 rounded-xl text-[11px] font-bold ${warehouseSection === s.id ? 'bg-slate-900 text-white' : 'bg-white border text-gray-600'}">${s.label}</button>`).join('')}
-          </div>
-
-          ${warehouseSection === 'holat' ? renderWarehouseHolatHtml()
-            : warehouseSection === 'yangilash' ? renderWarehouseYangilashHtml()
-            : warehouseSection === 'kirim' ? renderWarehouseKirimHtml()
-            : warehouseSection === 'kam' ? renderWarehouseProductListHtml(warehouseActiveProducts().filter(p => Number(p.stock) > 0 && Number(p.stock) <= warehouseLowStockThreshold()), tr("Kam qolgan mahsulotlar yo'q.", 'Товаров с малым остатком нет.'))
-            : warehouseSection === 'tugagan' ? renderWarehouseProductListHtml(warehouseActiveProducts().filter(p => Number(p.stock) <= 0), tr("Tugagan mahsulotlar yo'q.", 'Закончившихся товаров нет.'))
-            : renderWarehouseTarixHtml()}
+          ${warehouseSubTab === 'HOLAT' ? renderWarehouseHolatHtml() : warehouseSubTab === 'UPDATE' ? renderWarehouseUpdateHtml() : renderWarehouseKirimHtml()}
         </div>
       `;
     }
 
-    // A. Ombor holati — umumiy son ko'rsatkichlari + mavjud katalog daraxti.
+    // 11/13-band: Holat — faqat SUMMARY cardlar (daraxt yo'q). Kam qolgan/
+    // Tugagan cardlari bosiladigan (15-band) — get_warehouse_summary'dan
+    // kelgan id-ro'yxat orqali PRODUCT CARDLAR ko'rinishida filtrlanadi.
     function renderWarehouseHolatHtml() {
-      const active = warehouseActiveProducts();
-      const totalStock = active.reduce((sum, p) => sum + (Number(p.stock) || 0), 0);
-      const lowCount = active.filter(p => Number(p.stock) > 0 && Number(p.stock) <= warehouseLowStockThreshold()).length;
-      const outCount = active.filter(p => Number(p.stock) <= 0).length;
-      const topCats = categories.filter(c => !c.parentId);
+      if (warehouseStockFilter) return renderWarehouseStockFilterListHtml();
+      if (warehouseSummaryLoading || !warehouseSummaryData) {
+        return `<div class="fc-empty-state"><div class="fc-spinner"></div><p>${tr('Yuklanmoqda...', 'Загрузка...')}</p></div>`;
+      }
+      const s = warehouseSummaryData;
+      const missingImageCount = getMissingImageProducts().length;
+      const importMissingImageCount = products.filter(p => p.status !== 'DELETED' && !hasProductImage(p) && p.importBatchId).length;
       return `
         <div class="grid grid-cols-2 gap-2">
-          ${dashboardStatCard({ icon: '📚', label: tr('Jami mahsulot', 'Всего товаров'), value: String(active.length), tint: 'emerald' })}
-          ${dashboardStatCard({ icon: '📦', label: tr('Jami qoldiq', 'Общий остаток'), value: String(totalStock), tint: 'blue' })}
-          ${dashboardStatCard({ icon: '⚠️', label: tr('Kam qolgan', 'Мало на складе'), value: String(lowCount), tint: 'amber' })}
-          ${dashboardStatCard({ icon: '🚫', label: tr('Tugagan', 'Закончились'), value: String(outCount), tint: 'red' })}
-        </div>
-        <div class="flex gap-1.5">
-          <button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly ? 'bg-amber-500 text-white' : 'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz', 'Без фото')} (${getMissingImageProducts().length})</button>
-          <button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly ? 'bg-blue-600 text-white' : 'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz', 'Импорт без фото')} (${products.filter(p => p.status !== 'DELETED' && !hasProductImage(p) && p.importBatchId).length})</button>
-        </div>
-        <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
-          ${topCats.map(parent => renderCategoryTreeNodeHTML(parent, 0)).join('')}
+          <button type="button" onclick="openWarehouseStockFilter('LOW')" class="fc-card fc-border-warning text-left"><p class="text-gray-500 text-[11px]">${tr('Kam qolgan', 'Заканчивается')}</p><b class="text-xl block fc-text-warning">${s.lowStock}</b></button>
+          <button type="button" onclick="openWarehouseStockFilter('OUT')" class="fc-card fc-border-danger text-left"><p class="text-gray-500 text-[11px]">${tr('Tugagan', 'Нет в наличии')}</p><b class="text-xl block fc-text-danger">${s.outOfStock}</b></button>
+          <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Rasmsiz', 'Без фото')}</p><b class="text-xl block">${missingImageCount}</b></div>
+          <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Import rasmsiz', 'Импорт без фото')}</p><b class="text-xl block">${importMissingImageCount}</b></div>
+          <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Jami mahsulot', 'Всего товаров')}</p><b class="text-xl block">${s.totalProducts}</b></div>
+          <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Jami qoldiq', 'Всего на складе')}</p><b class="text-xl block">${s.totalStock}</b></div>
         </div>
       `;
     }
 
-    // B. Qoldiqni yangilash — HOZIRGI ishlayotgan funksiya, o'zgarishsiz,
-    // faqat Ombor ichki bo'limiga ko'chirilgan.
-    function renderWarehouseYangilashHtml() {
+    function renderWarehouseStockFilterListHtml() {
+      const ids = new Set(warehouseStockFilter === 'LOW' ? (warehouseSummaryData?.lowStockIds || []) : (warehouseSummaryData?.outOfStockIds || []));
+      const list = products.filter(p => ids.has(p.id));
+      const pageData = paginate(list, warehouseStockFilterPage, 10);
+      const title = warehouseStockFilter === 'LOW' ? tr('Kam qolgan', 'Заканчивается') : tr('Tugagan', 'Нет в наличии');
       return `
-        <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
-          <h3 class="font-bold text-sm text-gray-800">${tr("⚡ ID orqali ko'p tovar qoldig'ini yangilash", "⚡ Массовое обновление остатков по ID")}</h3>
-          <p class="text-[10px] text-gray-500">${tr("SKU va sonini kiriting (Masalan:", "Введите SKU и количество (Например:")} <b>111001 35</b>)</p>
-          <textarea id="bulk-input" rows="4" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="111001 35&#10;111002 20"></textarea>
-          <button onclick="saveBulkStock()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs">${tr("💾 Barchasini saqlash", "💾 Сохранить все")}</button>
+        <div class="space-y-2">
+          <button onclick="closeWarehouseStockFilter()" class="text-xs font-bold text-blue-600">‹ ${tr('Holatga qaytish', 'Назад к состоянию')}</button>
+          <h3 class="font-bold text-sm text-gray-800">${title} (${list.length})</h3>
+          ${list.length === 0 ? `
+            <div class="fc-empty-state"><i data-lucide="package-check" class="w-8 h-8"></i><p>${tr('Bu holatda mahsulot yo‘q.', 'Нет товаров с таким статусом.')}</p></div>
+          ` : `
+            <div class="space-y-2">${pageData.items.map(p => renderWarehouseStockProductCardHtml(p)).join('')}</div>
+            ${renderPagerHTML(pageData.page, pageData.totalPages, 'setWarehouseStockFilterPage')}
+          `}
         </div>
       `;
     }
 
-    // C. Kirim — mavjud qoldiqqa QO'SHISH (almashtirish emas).
+    function renderWarehouseStockProductCardHtml(p) {
+      const vars = productVariants(p);
+      const variantSummary = vars.length ? vars.map(v => `${escapeHtml(variantLabel(v))}: ${v.qty}`).join(', ') : null;
+      return `
+        <div class="fc-card flex items-center gap-3">
+          <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-12 h-12 object-cover rounded-xl flex-shrink-0">
+          <div class="min-w-0 flex-1">
+            <p class="font-bold text-xs text-gray-800 truncate">${escapeHtml(productName(p))}</p>
+            <p class="text-[10px] text-gray-400">ID: ${escapeHtml(p.sku)}</p>
+            ${variantSummary ? `<p class="text-[10px] text-gray-500 mt-0.5 truncate">${variantSummary}</p>` : `<p class="text-[10px] text-gray-500 mt-0.5">${tr('Qoldiq', 'Остаток')}: ${p.stock}</p>`}
+          </div>
+        </div>
+      `;
+    }
+
+    // 14-16-band: "Qoldiqni yangilash" — mavjud daraxt + tezkor SKU/ID
+    // yangilash, O'ZGARISHSIZ saqlangan (faqat Holatdan alohida sub-tabga ko'chdi).
+    function renderWarehouseUpdateHtml() {
+      const topCats = categories.filter(c => !c.parentId);
+      return `
+        <div class="space-y-4">
+          <div class="flex items-center justify-end gap-2">
+            <div class="flex gap-1"><button onclick="warehouseMissingImageOnly=!warehouseMissingImageOnly; if(warehouseMissingImageOnly)warehouseImportedMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseMissingImageOnly ? 'bg-amber-500 text-white' : 'bg-white border text-amber-700'}">🖼 ${tr('Rasmsiz', 'Без фото')} (${getMissingImageProducts().length})</button><button onclick="warehouseImportedMissingImageOnly=!warehouseImportedMissingImageOnly; if(warehouseImportedMissingImageOnly)warehouseMissingImageOnly=false; render();" class="px-2 py-1.5 rounded-xl text-[10px] font-bold ${warehouseImportedMissingImageOnly ? 'bg-blue-600 text-white' : 'bg-white border text-blue-700'}">📊 ${tr('Import rasmsiz', 'Импорт без фото')} (${products.filter(p => p.status !== 'DELETED' && !hasProductImage(p) && p.importBatchId).length})</button></div>
+          </div>
+
+          <p class="text-[10px] text-gray-400 -mb-2">${tr("Daraxtdan mahsulotni bosib to'g'ridan-to'g'ri qoldig'ini tahrirlang.", "Нажмите на товар в дереве, чтобы сразу изменить остаток.")}</p>
+          <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm font-mono text-xs">
+            ${topCats.map(parent => renderCategoryTreeNodeHTML(parent, 0)).join('')}
+          </div>
+
+          <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
+            <h3 class="font-bold text-sm text-gray-800">${tr("⚡ ID orqali ko'p tovar qoldig'ini yangilash", "⚡ Массовое обновление остатков по ID")}</h3>
+            <p class="text-[10px] text-gray-500">${tr("SKU va sonini kiriting (Masalan:", "Введите SKU и количество (Например:")} <b>111001 35</b>)</p>
+            <textarea id="bulk-input" rows="4" class="w-full p-2.5 font-mono text-xs border rounded-xl bg-gray-50" placeholder="111001 35&#10;111002 20"></textarea>
+            <button onclick="saveBulkStock()" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs">${tr("💾 Barchasini saqlash", "💾 Сохранить все")}</button>
+          </div>
+        </div>
+      `;
+    }
+
+    // 15-16-band: Kirim (stock-in ADD) + harakatlar tarixi.
     function renderWarehouseKirimHtml() {
-      const eligible = warehouseActiveProducts().filter(p => !(Array.isArray(p.variants) && p.variants.length));
-      return `
-        <div class="bg-white p-4 rounded-2xl border space-y-3 shadow-sm">
-          <h3 class="font-bold text-sm text-gray-800">📥 ${tr('Yangi kirim', 'Новое поступление')}</h3>
-          <p class="text-[10px] text-gray-500">${tr("Hozirgi qoldiqqa qo'shiladi (masalan: hozir 5, kirim +10, yangi qoldiq 15). O'lchamli/variantli tovarlar hozircha bu yerdan qo'llab-quvvatlanmaydi.", 'Добавляется к текущему остатку (например: сейчас 5, приход +10, новый остаток 15). Товары с вариантами пока не поддерживаются здесь.')}</p>
-          <div>
-            <label class="block font-bold text-gray-600 mb-1">${tr('Mahsulot', 'Товар')}</label>
-            <select id="kirim-product" class="w-full p-2.5 border rounded-xl bg-gray-50">
-              <option value="">${tr('— tanlang —', '— выберите —')}</option>
-              ${eligible.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(productName(p))} (SKU ${escapeHtml(p.sku)}, ${tr('hozir', 'сейчас')} ${p.stock})</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <label class="block font-bold text-gray-600 mb-1">${tr('Kirim miqdori (+)', 'Количество прихода (+)')}</label>
-            <input id="kirim-qty" type="number" min="1" step="1" placeholder="10" class="w-full p-2.5 border rounded-xl">
-          </div>
-          <button onclick="submitStockIncoming()" class="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-xl text-xs">✅ ${tr("Kirimni qo'shish", 'Добавить приход')}</button>
-        </div>
-      `;
-    }
+      const searchQ = warehouseKirimSearch.trim().toLowerCase();
+      const matches = searchQ ? products.filter(p => p.status !== 'DELETED' && (productName(p).toLowerCase().includes(searchQ) || String(p.sku).toLowerCase().includes(searchQ))).slice(0, 8) : [];
+      const selected = warehouseKirimSelectedProduct;
+      const vars = selected ? productVariants(selected) : [];
+      const qtyNum = Number.parseInt(warehouseKirimQty, 10);
+      const qtyValid = Number.isInteger(qtyNum) && qtyNum > 0;
+      const currentQty = vars.length ? (Number(vars.find(v => v.sku === warehouseKirimSelectedVariantSku)?.qty) || 0) : Number(selected?.stock || 0);
 
-    // D/E. Kam qolganlar / Tugaganlar — bir xil ro'yxat ko'rinishi.
-    function renderWarehouseProductListHtml(list, emptyText) {
-      if (!list.length) return `<p class="text-center text-gray-400 py-10 text-xs">${emptyText}</p>`;
-      return `
-        <div class="bg-white rounded-2xl border divide-y overflow-hidden">
-          ${list.map(p => `
-            <div class="p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-50" onclick="openProductDetailModal('${p.id}')">
-              <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-10 h-10 rounded-lg object-cover flex-shrink-0">
-              <div class="min-w-0 flex-1">
-                <p class="font-bold text-sm text-gray-800 truncate">${escapeHtml(productName(p))}</p>
-                <p class="text-[10px] text-gray-400 font-mono">SKU: ${escapeHtml(p.sku)}</p>
-              </div>
-              <span class="font-black text-xs ${Number(p.stock) <= 0 ? 'text-red-600' : 'text-amber-600'}">${p.stock}</span>
+      const formHtml = !selected ? `
+        <div class="fc-card space-y-2">
+          <label class="font-bold text-xs text-gray-700">${tr('Mahsulot qidirish', 'Поиск товара')}</label>
+          <input type="text" value="${escapeHtml(warehouseKirimSearch)}" oninput="warehouseKirimSearch=this.value; render();" placeholder="${tr('Nomi yoki ID', 'Название или ID')}" class="w-full p-2.5 border rounded-xl text-xs">
+          ${matches.length ? `
+            <div class="divide-y border rounded-xl overflow-hidden">
+              ${matches.map(p => `<div onclick="pickKirimProduct('${p.id}')" class="p-2.5 text-xs cursor-pointer hover:bg-blue-50 flex justify-between gap-2"><span class="truncate">${escapeHtml(productName(p))}</span><span class="text-gray-400 shrink-0">ID: ${escapeHtml(p.sku)}</span></div>`).join('')}
             </div>
-          `).join('')}
+          ` : (searchQ ? `<p class="text-[11px] text-gray-400">${tr('Topilmadi', 'Не найдено')}</p>` : '')}
         </div>
-      `;
-    }
-
-    // F. Harakatlar tarixi.
-    function renderWarehouseTarixHtml() {
-      if (inventoryMovementsLoading || inventoryMovements === null) return `<p class="text-center text-gray-400 py-10 text-xs">${tr('Yuklanmoqda...', 'Загрузка...')}</p>`;
-      if (!inventoryMovements.length) return `<p class="text-center text-gray-400 py-10 text-xs">${tr("Hali harakatlar yo'q.", 'Движений пока нет.')}</p>`;
-      const typeLabel = (mt) => mt === 'INCOMING' ? tr('Kirim', 'Приход') : mt === 'ORDER' ? tr('Buyurtma', 'Заказ') : tr("Qo'lda yangilash", 'Ручное обновление');
-      return `
-        <div class="bg-white rounded-2xl border divide-y overflow-hidden">
-          ${inventoryMovements.map(m => `
-            <div class="p-3 text-xs">
-              <div class="flex items-center justify-between">
-                <span class="font-bold text-gray-800 truncate">${escapeHtml(m.productName || m.productId || '—')}</span>
-                <span class="font-black ${Number(m.changeQty) >= 0 ? 'text-emerald-600' : 'text-red-600'}">${Number(m.changeQty) >= 0 ? '+' : ''}${m.changeQty}</span>
-              </div>
-              <div class="flex items-center justify-between mt-0.5 text-[10px] text-gray-400">
-                <span>${typeLabel(m.movementType)}${m.reason ? ` · ${escapeHtml(m.reason)}` : ''}</span>
-                <span>${m.oldStock} → ${m.newStock}</span>
-              </div>
-              <p class="text-[9px] text-gray-300 mt-0.5">${new Date(m.createdAt).toLocaleString()}</p>
+      ` : `
+        <div class="fc-card space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <p class="font-bold text-sm text-gray-900 truncate">${escapeHtml(productName(selected))}</p>
+              <p class="text-[10px] text-gray-400">ID: ${escapeHtml(selected.sku)}</p>
             </div>
-          `).join('')}
+            <button onclick="clearKirimSelection()" class="text-[11px] font-bold text-blue-600 shrink-0">${tr("O'zgartirish", 'Изменить')}</button>
+          </div>
+          ${vars.length ? `
+            <div>
+              <label class="font-bold text-xs text-gray-700">${tr('Variant', 'Вариант')}</label>
+              <select onchange="warehouseKirimSelectedVariantSku=this.value||null; render();" class="w-full p-2.5 border rounded-xl text-xs mt-1">
+                <option value="">${tr('Tanlang', 'Выберите')}</option>
+                ${vars.map(v => `<option value="${escapeHtml(v.sku)}" ${warehouseKirimSelectedVariantSku === v.sku ? 'selected' : ''}>${escapeHtml(variantLabel(v))} (${tr('hozir', 'сейчас')}: ${v.qty})</option>`).join('')}
+              </select>
+            </div>
+          ` : `<p class="text-xs text-gray-500">${tr('Hozirgi qoldiq', 'Текущий остаток')}: <b>${selected.stock}</b></p>`}
+          <div>
+            <label class="font-bold text-xs text-gray-700">${tr('Kirim miqdori (+)', 'Количество прихода (+)')}</label>
+            <input type="number" min="1" value="${escapeHtml(warehouseKirimQty)}" oninput="warehouseKirimQty=this.value; render();" class="w-full p-2.5 border rounded-xl text-xs mt-1" placeholder="10">
+          </div>
+          ${qtyValid && (!vars.length || warehouseKirimSelectedVariantSku) ? `
+            <p class="text-[11px] fc-bg-success-soft rounded-lg p-2">
+              ${tr('Hozirgi qoldiq', 'Текущий остаток')}: ${currentQty} → <b class="fc-text-success">${tr('Yangi qoldiq', 'Новый остаток')}: ${currentQty + qtyNum}</b>
+            </p>
+          ` : ''}
+          <button onclick="submitKirim()" ${warehouseKirimSaving ? 'disabled' : ''} class="fc-btn fc-btn-success w-full">${warehouseKirimSaving ? tr('Saqlanmoqda...', 'Сохранение...') : '✅ ' + tr('Kirimni saqlash', 'Сохранить приход')}</button>
+        </div>
+      `;
+
+      const filterChips = [
+        { key: 'null', label: tr('Barchasi', 'Все') },
+        { key: 'KIRIM', label: tr('Kirim', 'Приход') },
+        { key: 'BUYURTMA', label: tr('Buyurtma', 'Заказ') },
+        { key: 'MANUAL', label: tr("Qo'lda", 'Вручную') },
+      ];
+
+      return `
+        <div class="space-y-4">
+          ${formHtml}
+          <div>
+            <h3 class="font-bold text-sm text-gray-800 mb-2">${tr('Harakatlar tarixi', 'История движений')}</h3>
+            <div class="flex gap-1.5 mb-2 flex-wrap">
+              ${filterChips.map(c => `<button onclick="setWarehouseMovementsFilter(${c.key === 'null' ? 'null' : `'${c.key}'`})" class="fc-badge ${(warehouseMovementsFilter || 'null') === c.key ? 'fc-badge-primary' : 'fc-badge-muted'}">${c.label}</button>`).join('')}
+            </div>
+            ${warehouseMovementsLoading ? `<div class="fc-empty-state"><div class="fc-spinner"></div><p>${tr('Yuklanmoqda...', 'Загрузка...')}</p></div>` :
+              (!warehouseMovements.length ? `<div class="fc-empty-state"><i data-lucide="history" class="w-8 h-8"></i><p>${tr('Harakatlar yo‘q.', 'Движений пока нет.')}</p></div>` : `
+                <div class="space-y-1.5">${warehouseMovements.map(m => renderMovementRowHtml(m)).join('')}</div>
+                ${renderPagerHTML(warehouseMovementsPage, Math.max(1, Math.ceil(warehouseMovementsTotal / 20)), 'setWarehouseMovementsPage')}
+              `)}
+          </div>
         </div>
       `;
     }
 
-    async function loadInventoryMovements() {
-      inventoryMovementsLoading = true;
+    function renderMovementRowHtml(m) {
+      const typeLabel = m.operationType === 'KIRIM' ? tr('Kirim', 'Приход') : m.operationType === 'BUYURTMA' ? tr('Buyurtma', 'Заказ') : tr("Qo'lda", 'Вручную');
+      const typeVariant = m.operationType === 'KIRIM' ? 'success' : m.operationType === 'BUYURTMA' ? 'primary' : 'muted';
+      const deltaText = m.delta > 0 ? `+${m.delta}` : String(m.delta);
+      return `
+        <div class="fc-card flex items-center justify-between gap-2 text-xs">
+          <div class="min-w-0">
+            <p class="font-bold text-gray-800 truncate">${escapeHtml(m.productName)}${m.productSku ? ` <span class="text-gray-400 font-normal">(ID: ${escapeHtml(m.productSku)})</span>` : ''}</p>
+            <p class="text-[10px] text-gray-400">${new Date(m.createdAt).toLocaleString()}</p>
+          </div>
+          <div class="text-right shrink-0">
+            <span class="fc-badge fc-badge-${typeVariant}">${typeLabel}</span>
+            <p class="font-bold mt-0.5 ${m.delta > 0 ? 'fc-text-success' : (m.delta < 0 ? 'fc-text-danger' : '')}">${m.priorStock} → ${m.newStock} (${deltaText})</p>
+          </div>
+        </div>
+      `;
+    }
+
+    function pickKirimProduct(productId) {
+      warehouseKirimSelectedProduct = products.find(p => p.id === productId) || null;
+      warehouseKirimSelectedVariantSku = null;
+      warehouseKirimQty = '';
       render();
-      try {
-        const data = await callApi('get_inventory_movements', { limit: 100 });
-        inventoryMovements = data.movements || [];
-      } catch (e) {
-        console.error(e);
-        inventoryMovements = [];
-      } finally {
-        inventoryMovementsLoading = false;
-        if (currentTab === 'warehouse' && warehouseSection === 'tarix') render();
-      }
     }
-
-    async function submitStockIncoming() {
-      const productId = document.getElementById('kirim-product')?.value || '';
-      const qty = Number.parseInt(document.getElementById('kirim-qty')?.value || '', 10);
-      if (!productId) return alert(tr('Mahsulotni tanlang.', 'Выберите товар.'));
-      if (!Number.isInteger(qty) || qty <= 0) return alert(tr("Kirim miqdorini to'g'ri kiriting.", 'Введите корректное количество прихода.'));
+    function clearKirimSelection() {
+      warehouseKirimSelectedProduct = null;
+      warehouseKirimSelectedVariantSku = null;
+      warehouseKirimQty = '';
+      render();
+    }
+    async function submitKirim() {
+      const p = warehouseKirimSelectedProduct;
+      if (!p || warehouseKirimSaving) return;
+      const qty = Number.parseInt(warehouseKirimQty, 10);
+      if (!Number.isInteger(qty) || qty <= 0) return alert(tr('Musbat son kiriting.', 'Введите положительное число.'));
+      const vars = productVariants(p);
+      if (vars.length && !warehouseKirimSelectedVariantSku) return alert(tr('Variant tanlang.', 'Выберите вариант.'));
+      warehouseKirimSaving = true;
+      render();
       showActionToast(tr('⏳ Saqlanmoqda...', '⏳ Сохранение...'), 'saving');
       try {
-        const result = await callApi('stock_incoming', { productId, qty });
-        const idx = products.findIndex(p => p.id === productId);
-        if (idx >= 0) Object.assign(products[idx], mapProductFromDB(result.product));
+        const data = await callApi('record_stock_in', { productId: p.id, variantSku: warehouseKirimSelectedVariantSku || null, qty });
+        const idx = products.findIndex(x => x.id === p.id);
+        if (idx >= 0 && data.product) products[idx] = mapProductFromDB(data.product);
         saveCatalogCache();
-        showActionToast(tr('✅ Kirim saqlandi', '✅ Приход сохранён'), 'success', 1500);
+        warehouseKirimSelectedProduct = null;
+        warehouseKirimSelectedVariantSku = null;
+        warehouseKirimQty = '';
+        warehouseSummaryLoaded = false; // Holat keyingi tashrifda qayta hisoblansin
+        warehouseMovementsPage = 1;
+        warehouseKirimSaving = false;
         render();
+        showActionToast(tr('✅ Kirim saqlandi', '✅ Приход сохранён'), 'success', 1500);
+        loadWarehouseMovements(true);
       } catch (e) {
+        warehouseKirimSaving = false;
+        render();
         console.error(e);
-        showActionToast(tr('❌ Saqlanmadi', '❌ Не сохранено'), 'error', 1800);
-        alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+        showActionToast(tr('❌ Saqlanmadi', '❌ Не сохранено'), 'error', 2000);
+        alert(tr('Xatolik: ', 'Ошибка: ') + (e.message || e));
       }
+    }
+
+    async function loadWarehouseMovements(force = false) {
+      if (!isUserAnAdmin || warehouseMovementsLoading || (warehouseMovementsLoaded && !force)) return;
+      warehouseMovementsLoading = true;
+      render();
+      try {
+        const data = await callApi('get_stock_movements', { type: warehouseMovementsFilter, page: warehouseMovementsPage });
+        warehouseMovements = data.movements || [];
+        warehouseMovementsTotal = data.total || 0;
+        warehouseMovementsLoaded = true;
+      } catch (e) {
+        console.error('Harakatlar tarixini yuklashda xatolik:', e);
+      } finally {
+        warehouseMovementsLoading = false;
+        render();
+      }
+    }
+    function setWarehouseMovementsFilter(type) {
+      warehouseMovementsFilter = type;
+      warehouseMovementsPage = 1;
+      loadWarehouseMovements(true);
+    }
+    function setWarehouseMovementsPage(p) {
+      warehouseMovementsPage = p;
+      loadWarehouseMovements(true);
+    }
+
+    async function loadWarehouseSummary(force = false) {
+      if (!isUserAnAdmin || warehouseSummaryLoading || (warehouseSummaryLoaded && !force)) return;
+      warehouseSummaryLoading = true;
+      if (currentTab === 'warehouse') render();
+      try {
+        warehouseSummaryData = await callApi('get_warehouse_summary', {});
+        warehouseSummaryLoaded = true;
+      } catch (e) {
+        console.error('Ombor holatini yuklashda xatolik:', e);
+      } finally {
+        warehouseSummaryLoading = false;
+        if (currentTab === 'warehouse') render();
+      }
+    }
+    function switchWarehouseSubTab(tabName) {
+      warehouseSubTab = tabName;
+      warehouseStockFilter = null;
+      render();
+      if (tabName === 'KIRIM') loadWarehouseMovements();
+    }
+    function openWarehouseStockFilter(kind) {
+      warehouseStockFilter = kind;
+      warehouseStockFilterPage = 1;
+      render();
+    }
+    function closeWarehouseStockFilter() {
+      warehouseStockFilter = null;
+      render();
+    }
+    function setWarehouseStockFilterPage(p) {
+      warehouseStockFilterPage = p;
+      render();
     }
 
     function renderCategoryTreeNodeHTML(cat, depth) {
@@ -2916,17 +3829,21 @@
           ${catProds.map(p => {
             const vars = productVariants(p);
             if (vars.length > 0) {
+              // 14-band: variantli mahsulotning istalgan variant qatorini bosish
+              // to'liq mahsulot tahrirlash oynasini ochadi (variant qty'lari shu yerda).
               return vars.map(v => `
-                <div class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1 gap-2">
+                <div onclick="openProductDetailModal('${p.id}')" class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1 gap-2 cursor-pointer hover:bg-blue-50 -mx-1 px-1 rounded">
                   <span>${indent}&nbsp;&nbsp;* [ID: ${escapeHtml(v.sku)}] ${escapeHtml(productName(p))} ${escapeHtml(variantLabel(v))}</span>
-                  <b class="${v.qty > 0 ? 'text-green-600' : 'text-red-500'}">${v.qty} ${tr('ta','шт.')}</b>
+                  <b class="${v.qty > 0 ? 'text-green-600' : 'fc-text-danger'}">${v.qty} ${tr('ta','шт.')}</b>
                 </div>
               `).join('');
             }
+            // 14-band: oddiy (variantsiz) mahsulot qatorini bosish to'g'ridan-to'g'ri
+            // qoldiq (stock) tezkor tahrirlash oynasini ochadi — daraxt orqali topish.
             return `
-              <div class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1">
+              <div onclick="openEditFieldModal('${p.id}','stock')" class="pl-4 text-[11px] text-gray-700 flex justify-between border-b pb-1 cursor-pointer hover:bg-blue-50 -mx-1 px-1 rounded">
                 <span>${indent}&nbsp;&nbsp;* [ID: ${escapeHtml(p.sku)}] ${escapeHtml(productName(p))}</span>
-                <b class="${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ${tr('ta','шт.')}</b>
+                <b class="${p.stock > 0 ? 'text-green-600' : 'fc-text-danger'}">${p.stock} ${tr('ta','шт.')}</b>
               </div>
             `;
           }).join('')}
@@ -2935,95 +3852,112 @@
       `;
     }
 
-    // QO'LLAB-QUVVATLASH TAB (admin) — to'liq sahifa, avval modal edi.
-    // Ichki tuzilma (Support -> User -> Chatlar -> Chat) o'zgarmagan, faqat
-    // taqdimot modal → sahifa bo'lib o'zgardi.
-    function renderAdminSupportPage(container) {
-      const grouped = groupAdminSupportTicketsByUser();
-      const selectedUserTickets = adminSupportSelectedUser ? adminSupportTickets.filter(t => t.tgId === adminSupportSelectedUser) : [];
-      const openTicket = adminSupportSelectedTicketId ? adminSupportTickets.find(t => t.id === adminSupportSelectedTicketId) : null;
-      container.innerHTML = `
-        <div class="space-y-3 text-xs">
-          ${openTicket ? `
-            <div class="flex items-center justify-between border-b pb-2">
-              <button onclick="backToAdminSupportUserTickets()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga', 'Назад')}</button>
-              <h3 class="font-bold text-sm text-gray-900">${openTicket.orderId ? `#${openTicket.orderId} · ` : ''}${escapeHtml(supportUserLabel(openTicket.tgId))}</h3>
-              <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${openTicket.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (openTicket.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan', 'Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi', 'Новое') : tr('Javob berilgan', 'Отвечено'))}</span>
-            </div>
-            <div>
-              ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, true)}
-            </div>
-            ${openTicket.status !== 'CLOSED' ? `
-              ${renderSupportReplyBarHtml()}
-              <textarea id="sup-admin-message" rows="2" placeholder="${tr('Javob yozing...', 'Напишите ответ...')}" class="w-full p-2.5 border rounded-xl"></textarea>
-              <button onclick="submitAdminSupportReply()" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
-            ` : `<p class="text-center text-gray-400 py-2">${tr('Mijoz bu murojaatni tugatgan.', 'Клиент завершил это обращение.')}</p>`}
-          ` : adminSupportSelectedUser ? `
-            <div class="flex items-center justify-between border-b pb-2">
-              <button onclick="backToAdminSupportUsers()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga', 'Назад')}</button>
-              <h3 class="font-bold text-sm text-gray-900">${escapeHtml(supportUserLabel(adminSupportSelectedUser))}</h3>
-              <span></span>
-            </div>
-            ${selectedUserTickets.map(t => `
-              <div class="border rounded-xl p-2.5 space-y-1 cursor-pointer bg-white" onclick="openAdminSupportChat(${t.id})">
-                <div class="flex items-center justify-between">
-                  <span class="font-bold">${t.orderId ? `📦 #${t.orderId}` : tr('Umumiy', 'Общее')}</span>
-                  <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${t.status === 'CLOSED' ? tr('Tugallangan', 'Завершено') : (t.status === 'OPEN' ? tr('Yangi', 'Новое') : tr('Javob berilgan', 'Отвечено'))}${supportNeedsAttention(t) ? ' •' : ''}</span>
-                </div>
-                <p class="text-[10px] text-gray-400">${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</p>
-                <p>${escapeHtml((t.lastMessage?.body || '').slice(0, 80))}</p>
-              </div>
-            `).join('')}
-          ` : `
-            <h2 class="text-lg font-bold text-slate-800">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</h2>
-            <div class="bg-white rounded-2xl border divide-y overflow-hidden">
-              ${adminSupportTicketsLoading ? `<p class="text-center text-gray-400 py-4">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : ''}
-              ${(!adminSupportTicketsLoading && !grouped.length) ? `<p class="text-center text-gray-400 py-4">${tr('Murojaatlar yo‘q', 'Обращений нет')}</p>` : ''}
-              ${grouped.map(g => `
-                <div class="p-2.5 flex items-center justify-between cursor-pointer hover:bg-gray-50" onclick="selectAdminSupportUser('${g.tgId}')">
-                  <div>
-                    <p class="font-bold">${escapeHtml(supportUserLabel(g.tgId))}</p>
-                    <p class="text-[10px] text-gray-400">${g.tickets.length} ${tr('ta murojaat', 'обращений')}</p>
-                  </div>
-                  ${g.needsAttention || g.hasOpen ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">${tr('Yangi', 'Новое')}</span>` : ''}
-                </div>
-              `).join('')}
-            </div>
-          `}
-        </div>
-      `;
-    }
+    // ---- Dashboard sahifasi (POLISH ROUND 1-bosqich, 9-band) ----
+    // Eski renderUsers() (Mijozlar tab) tarkibi shu yerdagi "Mijozlar"
+    // bo'limiga ko'chirildi — foydalanuvchi qaroriga ko'ra to'liq mijozlar
+    // ro'yxati endi alohida nav o'rniga shu Dashboard sahifasida.
+    function renderDashboardPage(container) {
+      const d = dashboardLiteData;
+      if (dashboardLiteLoading || !d) {
+        renderPageShell(container, tr('Dashboard / Hisobot', 'Dashboard / Отчёт'), `<div class="fc-empty-state"><div class="fc-spinner"></div><p>${tr('Yuklanmoqda...', 'Загрузка...')}</p></div>`);
+        return;
+      }
+      const salesCard = (label, amount, count) => `
+        <div class="fc-card">
+          <p class="text-gray-500 text-[11px]">${label}</p>
+          <b class="text-lg block">${money(amount)}</b>
+          <p class="text-[10px] text-gray-400">${count} ${tr('ta buyurtma', 'заказов')}</p>
+        </div>`;
+      const orderStatusBadge = (label, count, variant) => `
+        <div class="fc-card flex items-center justify-between">
+          <span class="text-xs font-bold">${label}</span>
+          <span class="fc-badge fc-badge-${variant}">${count}</span>
+        </div>`;
 
-    // 5.5. FOYDALANUVCHILAR (MIJOZLAR) TAB — faqat admin ko'radi
-    function renderUsers(container) {
-      container.innerHTML = `
-        <div class="space-y-4">
-          <div class="flex items-center justify-between gap-2">
-            <button onclick="openDashboard()" class="text-xs font-bold text-blue-600 flex items-center gap-1">‹ ${tr('Dashboard', 'Dashboard')}</button>
-            <h2 class="text-lg font-bold text-slate-800">👥 ${t('users_title')}</h2>
-            <span class="w-16"></span>
-          </div>
-          <p class="text-[11px] text-gray-500">${tr("Mijozlar buyurtmalar soni bo'yicha tartiblangan.", "Клиенты отсортированы по количеству заказов.")}</p>
-          <div class="bg-white rounded-2xl border divide-y">
-            ${usersLoading ? `<p class="text-xs text-blue-500 p-4 text-center">${tr("⏳ Yuklanmoqda...", "⏳ Загрузка...")}</p>` : (usersSummary.length === 0 ? `<p class="text-xs text-gray-400 p-4 text-center">${tr("Hozircha mijozlar yo'q", "Клиентов пока нет")}</p>` : '')}
-            ${usersSummary.map(u => `
-              <div onclick="openUserModal('${u.tgId}')" class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50">
-                <div>
-                  <div class="flex items-center gap-1.5">
-                    <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
-                    ${u.isBlocked ? `<span class="text-[9px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded">${tr("🚫 BLOK", "🚫 БЛОК")}</span>` : (u.warned ? `<span class="text-[9px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded">${tr("⚠️ OGOH", "⚠️ ПРЕДУПР.")}</span>` : '')}
-                  </div>
-                  <p class="text-[10px] text-gray-400">${escapeHtml(u.phone || '')} · ID: ${escapeHtml(u.tgId)}</p>
-                </div>
-                <div class="text-right">
-                  <p class="font-black text-blue-600 text-sm">${u.totalOrders} ${tr("buyurtma", "заказов")}</p>
-                  <p class="text-[10px] text-gray-400">✅${u.delivered} ⏳${u.active} ❌${u.cancelled}</p>
-                </div>
+      const custPage = paginate([...usersSummary].sort((a, b) => b.totalOrders - a.totalOrders), dashboardCustomerPage, 10);
+
+      const body = `
+        <div class="space-y-5">
+          <section>
+            <h3 class="font-bold text-sm text-gray-700 mb-2">💰 ${tr('Savdo', 'Продажи')}</h3>
+            <div class="grid grid-cols-2 gap-2">
+              ${salesCard(tr('Bugungi savdo', 'Продажи сегодня'), d.sales.today, d.sales.todayCount)}
+              ${salesCard(tr('7 kun', '7 дней'), d.sales.week, d.sales.weekCount)}
+              ${salesCard(tr('30 kun', '30 дней'), d.sales.days30, d.sales.days30Count)}
+              ${salesCard(tr('Shu oy', 'Этот месяц'), d.sales.month, d.sales.monthCount)}
+            </div>
+            <div class="fc-card mt-2">
+              <p class="text-gray-500 text-[11px]">${tr('Jami tushum (hammasi)', 'Общая выручка (всё время)')}</p>
+              <b class="text-xl block">${money(d.sales.allTime)}</b>
+              <p class="text-[10px] text-gray-400">${d.sales.allTimeCount} ${tr('ta buyurtma', 'заказов')}</p>
+            </div>
+          </section>
+
+          <section>
+            <h3 class="font-bold text-sm text-gray-700 mb-2">📦 ${tr('Buyurtmalar', 'Заказы')}</h3>
+            <div class="grid grid-cols-2 gap-2">
+              ${orderStatusBadge(tr('Yangi', 'Новые'), d.orders.NEW, 'warning')}
+              ${orderStatusBadge(tr('Tayyorlanmoqda', 'В обработке'), d.orders.PROCESSING, 'primary')}
+              ${orderStatusBadge(tr('Yetkazilgan', 'Доставлены'), d.orders.DELIVERED, 'success')}
+              ${orderStatusBadge(tr('Bekor/rad', 'Отменены/откл.'), d.orders.CANCELLED + d.orders.REJECTED, 'danger')}
+            </div>
+          </section>
+
+          <section>
+            <h3 class="font-bold text-sm text-gray-700 mb-2">🏷️ ${tr('Tovarlar', 'Товары')}</h3>
+            <div class="grid grid-cols-2 gap-2">
+              <div class="fc-card"><p class="text-gray-500 text-[11px]">${tr('Jami mahsulot', 'Всего товаров')}</p><b class="text-lg block">${d.products.total}</b></div>
+              <div class="fc-card fc-border-warning"><p class="text-gray-500 text-[11px]">${tr('Kam qolgan', 'Заканчивается')}</p><b class="text-lg block fc-text-warning">${d.products.lowStock}</b></div>
+              <div class="fc-card fc-border-danger col-span-2"><p class="text-gray-500 text-[11px]">${tr('Tugagan', 'Нет в наличии')}</p><b class="text-lg block fc-text-danger">${d.products.outOfStock}</b></div>
+            </div>
+            ${d.products.bestSellers.length ? `
+              <div class="fc-card mt-2">
+                <p class="text-gray-500 text-[11px] mb-1">${tr('Eng ko‘p sotilgan', 'Самые продаваемые')}</p>
+                ${d.products.bestSellers.map((p, i) => `<div class="flex items-center justify-between py-1 ${i ? 'border-t' : ''}"><span class="text-xs truncate">${i + 1}. ${escapeHtml(p.name)}</span><b class="text-xs shrink-0">${p.soldCount}</b></div>`).join('')}
               </div>
-            `).join('')}
-          </div>
+            ` : ''}
+          </section>
+
+          <section>
+            <h3 class="font-bold text-sm text-gray-700 mb-2">👥 ${tr('Mijozlar', 'Клиенты')}</h3>
+            <div class="grid grid-cols-3 gap-2">
+              <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Jami', 'Всего')}</p><b class="text-lg block">${d.customers.total}</b></div>
+              <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Yangi (30 kun)', 'Новые (30д)')}</p><b class="text-lg block">${d.customers.new30d}</b></div>
+              <div class="fc-card"><p class="text-gray-500 text-[10px]">${tr('Qayta buyurtma', 'Повторные')}</p><b class="text-lg block">${d.customers.repeat}</b></div>
+            </div>
+
+            <p class="text-[11px] text-gray-500 mt-3">${tr("Mijozlar buyurtmalar soni bo'yicha tartiblangan.", "Клиенты отсортированы по количеству заказов.")}</p>
+            <div class="bg-white rounded-2xl border divide-y mt-1">
+              ${usersLoading ? `<p class="text-xs text-blue-500 p-4 text-center">${tr("⏳ Yuklanmoqda...", "⏳ Загрузка...")}</p>` : (usersSummary.length === 0 ? `<p class="text-xs text-gray-400 p-4 text-center">${tr("Hozircha mijozlar yo'q", "Клиентов пока нет")}</p>` : custPage.items.map(u => `
+                <div onclick="openUserModal('${u.tgId}')" class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50">
+                  <div>
+                    <div class="flex items-center gap-1.5">
+                      <p class="font-bold text-sm text-gray-800">${escapeHtml(u.userName)}</p>
+                      ${u.isBlocked ? `<span class="fc-badge fc-badge-danger">${tr("BLOK", "БЛОК")}</span>` : (u.warned ? `<span class="fc-badge fc-badge-warning">${tr("OGOH", "ПРЕДУПР.")}</span>` : '')}
+                    </div>
+                    <p class="text-[10px] text-gray-400">${escapeHtml(u.phone || '')} · ID: ${escapeHtml(u.tgId)}</p>
+                  </div>
+                  <div class="text-right">
+                    <p class="font-black text-blue-600 text-sm">${u.totalOrders} ${tr("buyurtma", "заказов")}</p>
+                    <p class="text-[10px] text-gray-400">✅${u.delivered} ⏳${u.active} ❌${u.cancelled}</p>
+                  </div>
+                </div>
+              `).join(''))}
+            </div>
+            ${renderPagerHTML(custPage.page, custPage.totalPages, 'setDashboardCustomerPage')}
+          </section>
+
+          ${d.regions.length ? `
+            <section>
+              <h3 class="font-bold text-sm text-gray-700 mb-2">📍 ${tr('Hududlar', 'Регионы')}</h3>
+              <div class="fc-card space-y-1.5">
+                ${d.regions.map((r, i) => `<div class="flex items-center justify-between text-xs ${i ? 'border-t pt-1.5' : ''}"><span>${i + 1}. ${escapeHtml(r.label)}</span><b>${r.count} ${tr('ta buyurtma', 'заказов')}</b></div>`).join('')}
+              </div>
+            </section>
+          ` : ''}
         </div>
       `;
+      renderPageShell(container, tr('Dashboard / Hisobot', 'Dashboard / Отчёт'), body);
     }
 
     function openUserModal(tgId) {
@@ -3144,10 +4078,14 @@
     function encodedRegionId(regionId) { return encodeURIComponent(regionId); }
     function decodedRegionId(regionId) { return decodeURIComponent(regionId); }
 
+    // 5-band: Do'kon sozlamalari endi modal emas, header sozlama iconi orqali
+    // ochiladigan ALOHIDA SAHIFA. Ichidagi 3 bo'lim (Buyurtma ma'lumotlari/
+    // Yetkazib berish/Dizayn) hozirgidek modal bo'lib ochilib turadi — ular
+    // yopilganda (activePopupModal=null) ostidagi shu sahifa qayta ko'rinadi,
+    // shuning uchun murakkab mavjud mantiqqa (Fulfillment/Dizayn) tegilmadi.
     function openShopParams() {
       if (!isUserAnAdmin || !isAdminMode) return;
-      activePopupModal = 'SHOP_PARAMS';
-      render();
+      openPage('SETTINGS');
     }
 
     // ==================== 4-BLOK: DO'KON DIZAYNI ====================
@@ -3589,6 +4527,27 @@
       }
     }
 
+    // 7-band: logo shakliga qarab joylashuvni moslashtiradi — kvadratga
+    // yaqin (en/bo'y nisbati past) -> logo chapda matn o'ngda (default);
+    // uzunchoq/gorizontal (en/bo'y nisbati baland) -> logo tepada, matn pastda.
+    function adjustShopLogoLayout() {
+      const img = document.getElementById('shop-about-logo');
+      const wrap = document.getElementById('shop-about-header');
+      if (!img || !wrap || !img.naturalWidth || !img.naturalHeight) return;
+      const ratio = img.naturalWidth / img.naturalHeight;
+      if (ratio > 1.4) {
+        wrap.classList.remove('items-center');
+        wrap.classList.add('flex-col');
+        img.classList.remove('h-16');
+        img.classList.add('h-14', 'w-full');
+      } else {
+        wrap.classList.remove('flex-col');
+        wrap.classList.add('items-center');
+        img.classList.remove('h-14', 'w-full');
+        img.classList.add('h-16');
+      }
+    }
+
     function renderProfile(container) {
       const phones = [shopContact.phone, shopContact.phone2, shopContact.phone3].filter(Boolean);
       const instagramNick = cleanSocialNick(shopContact.instagram);
@@ -3610,18 +4569,22 @@
             </div>
           </div>
 
-          ${!(isUserAnAdmin && isAdminMode) ? `
-            <button onclick="openSupportModal(null)" class="w-full bg-white text-slate-700 p-3 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-              <span>💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</span>
-              <span>›</span>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="openPage('FAVORITES')" class="fc-card flex items-center gap-2 text-left">
+              <svg class="w-5 h-5 fc-text-danger shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"></path></svg>
+              <span class="font-bold text-xs">${tr('Sevimlilar', 'Избранное')}</span>
             </button>
-          ` : ''}
+            <button onclick="openPage('RECENT')" class="fc-card flex items-center gap-2 text-left">
+              <i data-lucide="history" class="w-5 h-5 text-blue-500 shrink-0"></i>
+              <span class="font-bold text-xs">${tr('Yaqinda ko‘rilgan', 'Недавно просмотренные')}</span>
+            </button>
+          </div>
 
           ${myStatus.isBlocked ? `
-            <div class="bg-red-50 border border-red-300 p-4 rounded-2xl text-xs">
-              <p class="font-bold text-red-700">${tr("🚫 Siz botdan foydalanish huquqidan mahrum qilingansiz", "🚫 Доступ к оформлению заказов заблокирован")}</p>
-              <p class="text-red-600 mt-1">${tr("Sabab", "Причина")}: ${escapeHtml(myStatus.blockReason || tr("ko'rsatilmagan", "не указана"))}</p>
-              <p class="text-red-500 mt-1 text-[10px]">${tr("Buyurtma berish imkoni yopilgan. Savol bo'lsa, do'kon bilan bog'laning.", "Оформление заказов недоступно. По вопросам свяжитесь с магазином.")}</p>
+            <div class="fc-bg-danger-soft border fc-border-danger p-4 rounded-2xl text-xs">
+              <p class="font-bold fc-text-danger">${tr("🚫 Siz botdan foydalanish huquqidan mahrum qilingansiz", "🚫 Доступ к оформлению заказов заблокирован")}</p>
+              <p class="fc-text-danger mt-1">${tr("Sabab", "Причина")}: ${escapeHtml(myStatus.blockReason || tr("ko'rsatilmagan", "не указана"))}</p>
+              <p class="fc-text-danger mt-1 text-[10px]">${tr("Buyurtma berish imkoni yopilgan. Savol bo'lsa, do'kon bilan bog'laning.", "Оформление заказов недоступно. По вопросам свяжитесь с магазином.")}</p>
             </div>
           ` : myStatus.isWarned ? `
             <div class="bg-amber-50 border border-amber-300 p-4 rounded-2xl text-xs">
@@ -3632,20 +4595,27 @@
           ` : ''}
 
           <div class="shop-about-card bg-white p-4 rounded-2xl shadow-sm border space-y-3">
-            <div class="flex items-center justify-between gap-3 border-b pb-2 flex-wrap">
-              <div class="flex items-center gap-2 min-w-0 flex-wrap">
-                <h3 class="font-bold text-sm text-gray-900 truncate">📍 ${escapeHtml(shopDisplayName())}</h3>
-                <div class="flex items-center gap-1.5 flex-shrink-0">
-                  ${instagramNick ? `<a href="https://instagram.com/${encodeURIComponent(instagramNick)}" target="_blank" title="Instagram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-gray-600"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg></a>` : ''}
-                  ${telegramNick ? `<a href="https://t.me/${encodeURIComponent(telegramNick)}" target="_blank" title="Telegram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-gray-600"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"></path><path d="M22 2 15 22 11 13 2 9z"></path></svg></a>` : ''}
-                  ${facebookNick ? `<a href="https://facebook.com/${encodeURIComponent(facebookNick)}" target="_blank" title="Facebook" class="w-6 h-6 flex items-center justify-center rounded-full bg-blue-600 text-white"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h2.6l.4-4H14V7a1 1 0 0 1 1-1h3z"></path></svg></a>` : ''}
+            <!-- 7-band: LOGO eng muhim/eng yuqoridagi element. Kvadratga yaqin
+                 logo -> chapda (logo yuklangach adjustShopLogoLayout() aniqlaydi);
+                 uzunchoq/gorizontal logo -> tepada, matn pastda. -->
+            <div id="shop-about-header" class="flex items-center gap-3 border-b pb-2">
+              ${shopLogoUrl ? `<img id="shop-about-logo" src="${escapeHtml(shopLogoUrl)}" onload="adjustShopLogoLayout()" class="h-16 rounded-xl bg-slate-50 p-1 border flex-shrink-0 object-contain">` : `<div id="shop-about-logo-empty" class="h-16 px-3 rounded-xl bg-slate-50 border flex items-center justify-center text-xs font-bold text-slate-400 flex-shrink-0">${escapeHtml(shopDisplayName())}</div>`}
+              <div class="min-w-0 flex-1">
+                <h3 class="font-bold text-base text-gray-900 truncate">📍 ${escapeHtml(shopDisplayName())}</h3>
+                <div class="flex items-center gap-2 flex-wrap mt-1">
+                  <div class="flex items-center gap-1.5 flex-shrink-0">
+                    ${instagramNick ? `<a href="https://instagram.com/${encodeURIComponent(instagramNick)}" target="_blank" title="Instagram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-gray-600"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg></a>` : ''}
+                    ${telegramNick ? `<a href="https://t.me/${encodeURIComponent(telegramNick)}" target="_blank" title="Telegram" class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-gray-600"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"></path><path d="M22 2 15 22 11 13 2 9z"></path></svg></a>` : ''}
+                    ${facebookNick ? `<a href="https://facebook.com/${encodeURIComponent(facebookNick)}" target="_blank" title="Facebook" class="w-6 h-6 flex items-center justify-center rounded-full bg-blue-600 text-white"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h2.6l.4-4H14V7a1 1 0 0 1 1-1h3z"></path></svg></a>` : ''}
+                  </div>
+                  ${(isUserAnAdmin && isAdminMode) ? `
+                    <button onclick="activePopupModal='SHOP_INFO'; render();" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">${ICON_EDIT} ${tr("Tahrirlash", "Изменить")}</button>
+                    <label class="cursor-pointer text-[10px] font-bold px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200" title="${tr("Logotip qo'shish/almashtirish","Добавить/заменить логотип")}">
+                      🖼️
+                      <input type="file" accept="image/*" class="hidden" onchange="saveShopLogoFromPicker(event)">
+                    </label>
+                  ` : ''}
                 </div>
-                ${(isUserAnAdmin && isAdminMode) ? `
-                  <button onclick="initializeTempImageEditor(shopLogoUrl); activePopupModal='SHOP_INFO'; render();" class="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">✏️ ${tr("Tahrirlash", "Изменить")}</button>
-                ` : ''}
-              </div>
-              <div class="flex items-center gap-2 flex-shrink-0">
-                ${shopLogoUrl ? `<img id="shop-about-logo" src="${escapeHtml(shopLogoUrl)}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border">` : `<div id="shop-about-logo-empty" class="h-10 min-w-10 px-2 rounded-lg bg-slate-50 border flex items-center justify-center text-[9px] font-bold text-slate-400">${escapeHtml(shopDisplayName())}</div>`}
               </div>
             </div>
 
@@ -3660,7 +4630,7 @@
               <a href="${escapeHtml(mapsUrl)}" target="_blank" class="flex items-center space-x-3 active:bg-gray-50 rounded-xl p-1 -m-1">
                 <i data-lucide="navigation" class="w-4 h-4 text-blue-600 flex-shrink-0"></i>
                 <div>
-                  <p class="text-xs font-bold text-blue-700">${tr("Xaritada ochish", "Открыть на карте")} →</p>
+                  <p class="text-xs font-bold text-blue-700">${tr("Joylashuv", "Местоположение")} →</p>
                 </div>
               </a>
             ` : ''}
@@ -3683,23 +4653,16 @@
           </div>
 
           ${(isUserAnAdmin && isAdminMode) ? `
+            <button onclick="openDashboardLite()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
+              <span>📊 ${tr("Dashboard / Hisobot", 'Dashboard / Отчёт')}</span>
+              <span>›</span>
+            </button>
             <button onclick="openShopParams()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-              <span>⚙️ ${tr("Do'kon sozlamalari", 'Настройки магазина')}</span>
-              <span>›</span>
-            </button>
-            <button onclick="openAdminSupportModal()" class="w-full bg-white text-slate-800 p-4 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-              <span>💬 ${tr("Qo'llab-quvvatlash murojaatlari", 'Обращения в поддержку')}${adminSupportTicketsLoaded && adminSupportTickets.some(t => t.status === 'OPEN' || supportNeedsAttention(t)) ? ` <span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">${adminSupportTickets.filter(t => t.status === 'OPEN' || supportNeedsAttention(t)).length}</span>` : ''}</span>
+              <span class="inline-flex items-center gap-1.5">${ICON_SETTINGS} ${tr("Do'kon sozlamalari", 'Настройки магазина')}</span>
               <span>›</span>
             </button>
           ` : ''}
 
-
-          ${(isSuperAdmin && isAdminMode) ? `
-            <button onclick="activePopupModal='START_MESSAGE'; render();" class="w-full bg-white text-slate-700 p-3 rounded-2xl flex items-center justify-between font-bold shadow-sm border border-slate-200 text-xs">
-              <span>🤖 ${tr("Bot /start xabarini ulash", "Подключить сообщение /start")}</span>
-              <i data-lucide="link" class="w-4 h-4"></i>
-            </button>
-          ` : ''}
 
           <!-- BOSH ADMINGA VA ADMINLARGA KO'RINADIGAN BO'LIM -->
           ${(isSuperAdmin && isAdminMode) ? `
@@ -3716,7 +4679,7 @@
                   <div class="flex justify-between items-center p-2 bg-gray-50 rounded-xl border">
                     <span class="font-mono text-gray-700">ID: ${escapeHtml(admId)} ${admId === currentTgId && isSuperAdmin ? `<b>${tr("(Bosh Admin)", "(Главный админ)")}</b>` : ''}</span>
                     ${!(admId === currentTgId && isSuperAdmin) ? `
-                      <button onclick="removeAdmin('${admId}')" class="text-red-600 font-bold px-2 py-0.5 bg-red-50 rounded-lg">🗑️</button>
+                      <button onclick="removeAdmin('${admId}')" aria-label="${tr("O'chirish", 'Удалить')}" class="fc-text-danger font-bold px-2 py-0.5 fc-bg-danger-soft rounded-lg">${ICON_TRASH}</button>
                     ` : ''}
                   </div>
                 `).join('')}
@@ -3745,33 +4708,65 @@
         return alert(tr("Kordinatani '41.217408,69.211225' ko'rinishida yozing.", "Введите координаты в формате '41.217408,69.211225'."));
       }
 
-      const imageSnap = takeTempImageSnapshot();
-      let imagePayload;
-      try { imagePayload = await imagePayloadFromSnapshot(imageSnap, false); }
-      catch (e) { releaseImageSnapshot(imageSnap); return alert(friendlyImageError(e)); }
-      const logoChanged = !!(imagePayload.imageUpload || imagePayload.img !== undefined);
-
       const old = { ...shopContact };
-      const oldLogo = shopLogoUrl;
       shopContact = { ...next, startMessage: shopContact.startMessage };
-      if (logoChanged && imagePayload.img !== undefined) shopLogoUrl = imagePayload.img;
       activePopupModal = null;
       render(); // optimistic UI — darhol ko'rinadi
       try {
         await callApi('set_shop_contact', next);
-        if (logoChanged) {
-          const logoResult = await callApi('set_shop_logo', { logoUrl: imagePayload.img, imageUpload: imagePayload.imageUpload });
-          shopLogoUrl = logoResult?.logoUrl ?? shopLogoUrl;
-          render();
-        }
       } catch (e) {
         console.error(e);
         shopContact = old;
-        shopLogoUrl = oldLogo;
         render();
-        alert(tr("❌ Do'kon ma'lumotlarini saqlab bo'lmadi: ", "❌ Не удалось сохранить данные магазина: ") + friendlyImageError(e));
+        alert(tr("❌ Do'kon ma'lumotlarini saqlab bo'lmadi: ", "❌ Не удалось сохранить данные магазина: ") + (e.message || e));
+      }
+    }
+
+    // 1.11: boshqa rasm oqimlaridagi (yangi tovar/tahrirlash/Rasmsiz queue)
+    // kabi bir xil barqaror pipeline: baytlar avval mustaqil nusxalanadi,
+    // vaqtinchalik File obyektiga (upload tugagunicha) keyin ishonilmaydi.
+    async function saveShopLogoFromPicker(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      imageIO.logStage('FILE_SELECTED', { mime: file.type, size: file.size });
+      try { validatePickedImageFile(file); }
+      catch (e) {
+        event.target.value = '';
+        return alert(pickedImageErrorMessage(e, file));
+      }
+
+      // 5.3 root cause (hamon amal qiladi): bu picker render()ni chaqirishdan
+      // OLDIN mustaqil nusxa tayyorlaydi — render() <input type=file>ni
+      // DOM'dan qayta yaratishi mumkin, shu orada Telegram WebView native File
+      // handle'ni yaroqsiz qilib qo'yardi. V2: captureAndPrepareImageV2
+      // FileReader/ArrayBuffer orqali oldindan o'qishga hojatsiz — to'g'ridan-
+      // to'g'ri createImageBitmap(file) orqali xavfsiz dekodlaydi.
+      const old = shopLogoUrl;
+      let prepared;
+      try {
+        prepared = await captureAndPrepareImageV2(file, TARGET_PRODUCT_IMAGE_BYTES, 1000, 0.8);
+      } catch (e) {
+        console.error('[logo:READ_ORIGINAL_FAILED]', e);
+        event.target.value = '';
+        return alert(tr("Logotip faylini o'qib bo'lmadi. Qaytadan tanlab ko'ring.", "Не удалось прочитать файл логотипа. Попробуйте выбрать заново."));
+      }
+
+      const localPreview = URL.createObjectURL(prepared);
+      shopLogoUrl = localPreview;
+      render(); // darhol preview
+      try {
+        const url = await uploadImageSnapshot({ file: prepared, preparing: Promise.resolve(prepared), url: null }, old, true);
+        await callApi('set_shop_logo', { logoUrl: url });
+        shopLogoUrl = url;
+        render();
+      } catch (e) {
+        console.error(e);
+        shopLogoUrl = old;
+        render();
+        alert(tr("❌ Logotipni saqlab bo'lmadi: ", "❌ Не удалось сохранить логотип: ") + (e.message || e));
       } finally {
-        releaseImageSnapshot(imageSnap);
+        URL.revokeObjectURL(localPreview);
+        event.target.value = '';
       }
     }
 
@@ -3856,17 +4851,7 @@
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; render();">
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-xl text-xs" onclick="event.stopPropagation()">
-              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("✏️ Do'kon haqida", "✏️ О магазине")}</h3>
-              <div>
-                <label class="font-bold text-gray-600">${tr("Logotip", "Логотип")}</label>
-                <div class="flex items-center gap-3 mt-1">
-                  <img id="sc-logo-prev" src="${escapeHtml(shopLogoUrl || '')}" class="h-10 max-w-[100px] object-contain rounded-lg bg-slate-50 p-1 border ${shopLogoUrl ? '' : 'hidden'}">
-                  <input id="sc-logo-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'sc-logo-prev', 'sc-logo-image-button', 'sc-logo-url', 'sc-logo-url-error')" class="hidden">
-                  <button id="sc-logo-image-button" type="button" onclick="document.getElementById('sc-logo-image-input').click()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs">🖼️ ${shopLogoUrl ? tr('Almashtirish', 'Заменить') : tr('Rasm tanlash', 'Выбрать изображение')}</button>
-                </div>
-                <input id="sc-logo-url" type="url" inputmode="url" value="${escapeHtml(shopLogoUrl || '')}" oninput="onImageUrlInput(this.value, 'sc-logo-prev', 'sc-logo-url-error', 'sc-logo-image-button')" placeholder="${tr('yoki Logotip URL (https://...)','или URL логотипа (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
-                <p id="sc-logo-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
-              </div>
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2 flex items-center gap-1.5">${ICON_EDIT} ${tr("Do'kon haqida", "О магазине")}</h3>
               <div>
                 <label class="font-bold text-gray-600">${tr("Do'kon nomi", "Название магазина")}</label>
                 <input type="text" id="sc-name" value="${escapeHtml(shopContact.name || '')}" placeholder="FITCORE" class="w-full mt-1 p-2 border rounded-xl">
@@ -3940,31 +4925,16 @@
         return;
       }
 
-      if (activePopupModal === 'SHOP_PARAMS') {
+      // POLISH ROUND 1-bosqich: SHOP_PARAMS endi modal emas — renderSettingsPage()
+      // (activePage='SETTINGS') ga ko'chirildi.
+
+      if (activePopupModal === 'ORDER_INFO') {
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();">
             <div class="bg-white rounded-t-3xl sm:rounded-3xl p-4 max-w-md w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
               <div class="flex items-center justify-between border-b pb-2">
-                <h3 class="font-black text-sm">⚙️ ${tr("Do'kon parametrlari", "Параметры магазина")}</h3>
-                <button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
-              </div>
-              <div class="space-y-2">
-                <button type="button" onclick="openOrderInfoSettings()" class="w-full flex items-center justify-between bg-gray-50 border rounded-2xl p-3.5 font-bold text-left"><span>🧾 ${tr("Buyurtma ma'lumotlari", "Информация о заказе")}</span><span>›</span></button>
-                <button type="button" onclick="openFulfillmentSettings()" class="w-full flex items-center justify-between bg-gray-50 border rounded-2xl p-3.5 font-bold text-left"><span>🚚 ${tr("Yetkazib berish va to'lov", "Доставка и оплата")}</span><span>›</span></button>
-                <button type="button" onclick="openDesignSettings()" class="w-full flex items-center justify-between bg-gray-50 border rounded-2xl p-3.5 font-bold text-left"><span>🎨 ${tr("Dizayn", "Дизайн")}</span><span>›</span></button>
-              </div>
-            </div>
-          </div>`;
-        return;
-      }
-
-      if (activePopupModal === 'ORDER_INFO') {
-        container.innerHTML = `
-          <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal='SHOP_PARAMS'; render();">
-            <div class="bg-white rounded-t-3xl sm:rounded-3xl p-4 max-w-md w-full space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              <div class="flex items-center justify-between border-b pb-2">
                 <h3 class="font-black text-sm">🧾 ${tr("Buyurtma ma'lumotlari", "Информация о заказе")}</h3>
-                <button onclick="activePopupModal='SHOP_PARAMS'; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
               </div>
               <p class="text-gray-400 text-center py-8">${tr("Bu bo'lim tez orada qo'shiladi.", "Этот раздел скоро будет добавлен.")}</p>
             </div>
@@ -4038,8 +5008,8 @@
                 <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
                 <input id="m-prod-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'm-prod-prev', 'm-prod-image-button', 'm-prod-image-url', 'm-prod-image-url-error')" class="hidden">
                 <button id="m-prod-image-button" type="button" onclick="document.getElementById('m-prod-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr("Rasm tanlash", "Выбрать фото")}</button>
-                <input id="m-prod-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-prod-prev', 'm-prod-image-url-error', 'm-prod-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
-                <p id="m-prod-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
+                <input id="m-prod-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-prod-prev', 'm-prod-image-url-error', 'm-prod-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full mt-2 p-2 border rounded-xl">
+                <p id="m-prod-image-url-error" class="hidden mt-1 text-[10px] fc-text-danger"></p>
                 <img id="m-prod-prev" src="" class="w-24 h-24 object-cover rounded-xl mt-2 hidden border">
               </div>
 
@@ -4066,11 +5036,10 @@
                 <label class="font-bold text-gray-600">${tr("Katalog rasmi", "Изображение каталога")}</label>
                 <div class="flex items-center gap-3 mt-1">
                   <img id="m-cat-prev" src="" class="w-16 h-16 object-cover rounded-xl hidden border">
-                  <input id="m-cat-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'm-cat-prev', 'm-cat-image-button', 'm-cat-image-url', 'm-cat-image-url-error')" class="hidden">
-                  <button id="m-cat-image-button" type="button" onclick="document.getElementById('m-cat-image-input').click()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs">🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}</button>
+                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}
+                    <input type="file" accept="image/*" onchange="onImagePicked(event, 'm-cat-prev')" class="hidden">
+                  </label>
                 </div>
-                <input id="m-cat-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'm-cat-prev', 'm-cat-image-url-error', 'm-cat-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
-                <p id="m-cat-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
               </div>
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveCategoryFromModal()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("Saqlash", "Сохранить")}</button>
@@ -4087,7 +5056,7 @@
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
-              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("✏️ Katalogni tahrirlash", "✏️ Редактировать каталог")}</h3>
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2 flex items-center gap-1.5">${ICON_EDIT} ${tr("Katalogni tahrirlash", "Редактировать каталог")}</h3>
               <div>
                 <label class="font-bold text-gray-600">${tr("Katalog nomi *", "Название каталога *")}</label>
                 <input type="text" id="ec-name" value="${escapeHtml(c.name)}" class="w-full mt-1 p-2 border rounded-xl">
@@ -4096,11 +5065,10 @@
                 <label class="font-bold text-gray-600">${tr("Katalog rasmi", "Изображение каталога")}</label>
                 <div class="flex items-center gap-3 mt-1">
                   <img id="ec-img-prev" src="${escapeHtml((c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? c.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-16 h-16 object-cover rounded-xl ${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? '' : 'hidden'} border">
-                  <input id="ec-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'ec-img-prev', 'ec-image-button', 'ec-image-url', 'ec-image-url-error')" class="hidden">
-                  <button id="ec-image-button" type="button" onclick="document.getElementById('ec-image-input').click()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs">${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? `🔄 ${tr('Rasmni almashtirish', 'Заменить изображение')}` : `🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}`}</button>
+                  <label class="cursor-pointer inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-blue-600 text-white">${(c.img && (c.img.startsWith('http') || c.img.startsWith('data:'))) ? `🔄 ${tr('Rasmni almashtirish', 'Заменить изображение')}` : `🖼️ ${tr('Rasm tanlash', 'Выбрать изображение')}`}
+                    <input type="file" accept="image/*" onchange="onImagePicked(event, 'ec-img-prev')" class="hidden">
+                  </label>
                 </div>
-                <input id="ec-image-url" type="url" inputmode="url" value="${(c.img && c.img.startsWith('http')) ? escapeHtml(c.img) : ''}" oninput="onImageUrlInput(this.value, 'ec-img-prev', 'ec-image-url-error', 'ec-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
-                <p id="ec-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
               </div>
               <div class="flex space-x-2 pt-2">
                 <button onclick="saveCategoryEdit('${c.id}')" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("Saqlash", "Сохранить")}</button>
@@ -4138,8 +5106,8 @@
                 </div>
                 <input id="miq-image-input" type="file" accept="image/*" onchange="document.getElementById('miq-empty-preview')?.classList.add('hidden'); onImagePicked(event, 'miq-img-prev', 'miq-image-button', 'miq-image-url', 'miq-image-url-error')" class="hidden">
                 <button id="miq-image-button" type="button" onclick="document.getElementById('miq-image-input').click()" class="w-full bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${tr('Rasm tanlash','Выбрать фото')}</button>
-                <input id="miq-image-url" type="url" inputmode="url" oninput="document.getElementById('miq-empty-preview')?.classList.toggle('hidden', !!this.value.trim()); onImageUrlInput(this.value, 'miq-img-prev', 'miq-image-url-error', 'miq-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2.5 border rounded-xl">
-                <p id="miq-image-url-error" class="hidden text-[10px] text-red-600"></p>
+                <input id="miq-image-url" type="url" inputmode="url" oninput="document.getElementById('miq-empty-preview')?.classList.toggle('hidden', !!this.value.trim()); onImageUrlInput(this.value, 'miq-img-prev', 'miq-image-url-error', 'miq-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full p-2.5 border rounded-xl">
+                <p id="miq-image-url-error" class="hidden text-[10px] fc-text-danger"></p>
                 <button onclick="saveMissingImageQueueItem('${p.id}')" ${missingImageQueueSaving ? 'disabled' : ''} class="w-full ${missingImageQueueSaving ? 'bg-gray-300 text-gray-500' : 'bg-emerald-600 text-white'} font-black py-3 rounded-xl">${missingImageQueueSaving ? tr('⏳ Saqlanmoqda…','⏳ Сохранение…') : tr('✅ Saqlash','✅ Сохранить')}</button>
                 <div class="grid grid-cols-2 gap-2 sticky bottom-0 bg-white pt-2">
                   <button onclick="moveMissingImageQueue(-1)" ${missingImageQueueSaving || missingImageQueueIndex === 0 ? 'disabled' : ''} class="bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl disabled:opacity-40">⬅️ ${tr('Oldingi','Предыдущий')}</button>
@@ -4236,58 +5204,24 @@
         return;
       }
 
+      // POLISH ROUND 1-bosqich: Dashboard endi modal emas — renderDashboardPage()
+      // (activePage='DASHBOARD') ga ko'chirildi, sezilarli kengaytirilgan.
+
       // 2.5: Chiqindi (24 soatlik trash) ko'rinishi.
       if (activePopupModal === 'TRASH') {
         const batches = trashBatches || [];
-        const totalPages = Math.max(1, Math.ceil(batches.length / 10));
-        if (trashPage > totalPages) trashPage = 1;
-        const pageItems = batches.slice((trashPage - 1) * 10, trashPage * 10);
-        const selectedCount = trashSelectedBatchIds.size;
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onclick="activePopupModal=null; render();">
             <div class="bg-white rounded-t-3xl sm:rounded-3xl max-w-sm w-full max-h-[90dvh] flex flex-col shadow-2xl text-xs overflow-hidden" onclick="event.stopPropagation()">
               <div class="sticky top-0 z-10 bg-white flex items-center justify-between border-b p-4">
-                <h3 class="font-bold text-sm text-gray-900">${tr("🗑️ Chiqindi", "🗑️ Корзина")}</h3>
-                <div class="flex items-center gap-1.5">
-                  ${batches.length ? `<button onclick="toggleTrashSelectMode()" class="px-2.5 py-1.5 rounded-xl font-bold ${trashSelectMode ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">${trashSelectMode ? tr('Bekor qilish', 'Отмена') : tr('Tanlash', 'Выбрать')}</button>` : ''}
-                  <button onclick="activePopupModal=null; trashSelectMode=false; trashSelectedBatchIds.clear(); render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
-                </div>
+                <h3 class="font-bold text-sm text-gray-900 flex items-center gap-1.5">${ICON_TRASH} ${tr("Chiqindi", "Корзина")}</h3>
+                <button onclick="activePopupModal=null; render();" class="bg-gray-100 px-3 py-1.5 rounded-xl font-bold">✕</button>
               </div>
               <div class="overflow-y-auto p-4 space-y-3"><p class="text-[10px] text-gray-400">${tr("O'chirilgan kataloglar/tovarlar shu yerda 24 soat turadi, keyin butunlay o'chadi.", "Удалённые каталоги/товары хранятся здесь 24 часа, затем удаляются навсегда.")}</p>
-              ${trashSelectMode ? `
-                <div class="flex flex-wrap items-center gap-1.5 bg-slate-50 border rounded-xl p-2">
-                  <button onclick="selectAllVisibleTrashBatches()" class="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-white border">${tr('Sahifadagi barchasi', 'Все на странице')} (${pageItems.length})</button>
-                  <button onclick="selectAllTrashBatches()" class="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-white border">${tr('Barcha', 'Все')} ${batches.length} ${tr('ta', '')}</button>
-                  <button onclick="clearTrashSelection()" class="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-white border">${tr('Tanlovni bekor qilish', 'Снять выбор')}</button>
-                </div>
-              ` : ''}
               ${trashBatches === null ? `<p class="text-center text-gray-400 py-6">${tr('Yuklanmoqda...', 'Загрузка...')}</p>`
-                : batches.length === 0 ? `<p class="text-center text-gray-400 py-6">${tr("Chiqindi bo'sh.", 'Корзина пуста.')}</p>`
-                : `<div class="space-y-2">${pageItems.map(b => `
-                    <div class="border rounded-xl p-2.5 space-y-1 ${trashSelectMode && trashSelectedBatchIds.has(String(b.id)) ? 'border-blue-500 bg-blue-50' : ''}" ${trashSelectMode ? `onclick="toggleTrashBatchSelection(${b.id}, event)"` : ''}>
-                      <div class="flex items-center gap-2">
-                        ${trashSelectMode ? `<span class="w-5 h-5 flex-shrink-0 rounded-full flex items-center justify-center font-black text-[10px] ${trashSelectedBatchIds.has(String(b.id)) ? 'bg-blue-600 text-white' : 'bg-white border text-gray-400'}">${trashSelectedBatchIds.has(String(b.id)) ? '✓' : ''}</span>` : ''}
-                        <p class="font-bold flex-1 min-w-0 truncate">${b.kind === 'CATEGORY' ? `📁 ${escapeHtml(b.rootCategoryName || ('#' + b.id))}` : `📦 ${escapeHtml((b.productNames || [])[0] || ('#' + b.id))}`}</p>
-                      </div>
-                      <p class="text-[10px] text-gray-500">${b.categoryCount ? `${b.categoryCount} ${tr('katalog','кат.')} · ` : ''}${b.productCount} ${tr('tovar','тов.')}</p>
-                      <p class="text-[10px] text-gray-400">${tr("Muddati", "Истекает")}: ${new Date(b.expiresAt).toLocaleString()}</p>
-                      ${!trashSelectMode ? `<div class="grid grid-cols-2 gap-1.5"><button onclick="restoreTrashBatch(${b.id})" class="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded-lg">${tr("♻️ Tiklash", "♻️ Восстановить")}</button><button onclick="purgeTrashBatchNow(${b.id})" class="bg-red-50 text-red-700 border border-red-200 font-bold py-1.5 rounded-lg">${tr("🗑 Butunlay", "🗑 Навсегда")}</button></div>` : ''}
-                    </div>
-                  `).join('')}</div>
-                  ${totalPages > 1 ? `
-                    <div class="flex justify-center items-center flex-wrap gap-1.5 pt-1">
-                      ${Array.from({ length: totalPages }, (_, i) => i + 1).map(pNum => `
-                        <button onclick="trashPage=${pNum}; renderModalContainer();" class="px-3 py-1.5 rounded-xl text-xs font-bold ${trashPage === pNum ? 'bg-blue-600 text-white' : 'bg-white border text-gray-700'}">${pNum}</button>
-                      `).join('')}
-                    </div>
-                  ` : ''}`}
+                : batches.length === 0 ? `<div class="fc-empty-state"><i data-lucide="trash-2" class="w-8 h-8"></i><p>${tr("Chiqindi bo'sh.", 'Корзина пуста.')}</p></div>`
+                : `<div class="space-y-2">${batches.map(b => renderTrashBatchHtml(b)).join('')}</div>`}
               </div>
-              ${trashSelectMode && selectedCount ? `
-                <div class="sticky bottom-0 bg-white border-t p-3 grid grid-cols-2 gap-2">
-                  <button onclick="restoreSelectedTrashBatches()" class="bg-emerald-600 text-white font-bold py-2.5 rounded-xl">♻️ ${tr('Tiklash', 'Восстановить')} (${selectedCount})</button>
-                  <button onclick="purgeSelectedTrashBatches()" class="bg-red-600 text-white font-bold py-2.5 rounded-xl">🗑 ${tr('Butunlay', 'Навсегда')} (${selectedCount})</button>
-                </div>
-              ` : ''}
             </div>
           </div>`;
         return;
@@ -4400,7 +5334,7 @@
         container.innerHTML = `
           <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
-              <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("✏️ Ma'lumotni tahrirlash", "✏️ Редактирование данных")}</h3>
+              <h3 class="font-bold text-sm text-gray-900 border-b pb-2 flex items-center gap-1.5">${ICON_EDIT} ${tr("Ma'lumotni tahrirlash", "Редактирование данных")}</h3>
 
               ${field === 'name' ? `
                 <label class="font-bold text-gray-600">${tr("Yangi nomi:", "Новое название:")}</label>
@@ -4432,8 +5366,8 @@
                 <label class="font-bold text-gray-600">${tr("Tovar rasmi", "Фото товара")}</label>
                 <input id="ef-image-input" type="file" accept="image/*" onchange="onImagePicked(event, 'ef-img-prev', 'ef-image-button', 'ef-image-url', 'ef-image-url-error')" class="hidden">
                 <button id="ef-image-button" type="button" onclick="document.getElementById('ef-image-input').click()" class="w-full mt-1 bg-slate-800 text-white font-bold py-3 rounded-xl shadow-sm">🖼 ${hasProductImage(p) ? tr("Rasmni almashtirish", "Заменить фото") : tr("Rasm tanlash", "Выбрать фото")}</button>
-                <input id="ef-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'ef-img-prev', 'ef-image-url-error', 'ef-image-button')" placeholder="${tr('yoki Rasm URL (https://...)','или URL изображения (https://...)')}" class="w-full mt-2 p-2 border rounded-xl">
-                <p id="ef-image-url-error" class="hidden mt-1 text-[10px] text-red-600"></p>
+                <input id="ef-image-url" type="url" inputmode="url" oninput="onImageUrlInput(this.value, 'ef-img-prev', 'ef-image-url-error', 'ef-image-button')" placeholder="${tr('Rasm URL (ixtiyoriy)','URL изображения (необязательно)')}" class="w-full mt-2 p-2 border rounded-xl">
+                <p id="ef-image-url-error" class="hidden mt-1 text-[10px] fc-text-danger"></p>
                 <img id="ef-img-prev" src="${escapeHtml(hasProductImage(p) ? p.img : '')}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-24 h-24 object-cover rounded-xl mt-2 border ${hasProductImage(p) ? '' : 'hidden'}">
               ` : ''}
 
@@ -4465,7 +5399,7 @@
             <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-3 shadow-2xl text-xs">
               <h3 class="font-bold text-sm text-gray-900 border-b pb-2">${tr("🚫 Mijozni bloklash", "🚫 Заблокировать клиента")}</h3>
               <p class="text-gray-600">${tr("Mijoz:", "Клиент:")} <b>${escapeHtml(u.userName)}</b></p>
-              <p class="text-red-600 text-[11px]">${tr("⚠️ Bloklangan mijoz buyurtma bera olmaydi.", "⚠️ Заблокированный клиент не сможет оформлять заказы.")}</p>
+              <p class="fc-text-danger text-[11px]">${tr("⚠️ Bloklangan mijoz buyurtma bera olmaydi.", "⚠️ Заблокированный клиент не сможет оформлять заказы.")}</p>
               <div>
                 <label class="font-bold text-gray-600">${tr("Sabab *", "Причина *")}</label>
                 <select id="bl-reason" class="w-full mt-1 p-2 border rounded-xl bg-gray-50 font-bold">
@@ -4479,7 +5413,7 @@
                 <textarea id="bl-note" rows="2" placeholder="${tr("Qo'shimcha tushuntirish...",'Дополнительное пояснение...')}" class="w-full mt-1 p-2 border rounded-xl"></textarea>
               </div>
               <div class="flex gap-2 pt-2">
-                <button onclick="submitBlockUser('${u.tgId}')" class="flex-1 bg-red-600 text-white font-bold py-2.5 rounded-xl">${tr("🚫 Bloklash", "🚫 Заблокировать")}</button>
+                <button onclick="submitBlockUser('${u.tgId}')" class="flex-1 fc-bg-danger text-white font-bold py-2.5 rounded-xl">${tr("🚫 Bloklash", "🚫 Заблокировать")}</button>
                 <button onclick="activePopupModal=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr("Bekor qilish", "Отмена")}</button>
               </div>
             </div>
@@ -4596,6 +5530,10 @@
                 <input type="text" value="${escapeHtml(categoryFilter.search || '')}" oninput="categoryFilter.search=this.value; categoryPage=1;" placeholder="${escapeHtml(searchPlaceholderText())}" class="w-full mt-1 p-2.5 border rounded-xl">
               </div>
 
+              <button onclick="toggleInStockOnlyFilter()" class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold ${categoryFilter.inStockOnly ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
+                <span>${tr('Omborda bor (tugaganlarni yashirish)', 'В наличии (скрыть закончившиеся)')}</span><span>${categoryFilter.inStockOnly ? '✓' : ''}</span>
+              </button>
+
               <div>
                 <label class="font-bold text-gray-600">${tr("Narx oralig'i (so'm)", "Диапазон цен (сум)")}</label>
                 <div class="flex items-center gap-2 mt-1">
@@ -4603,13 +5541,6 @@
                   <span class="text-gray-400">—</span>
                   <input type="number" inputmode="numeric" placeholder="${tr('Gacha','До')}" value="${escapeHtml(categoryFilter.maxPrice)}" oninput="setCategoryPriceBound('maxPrice', this.value)" class="w-full p-2.5 border rounded-xl">
                 </div>
-              </div>
-
-              <div>
-                <label class="font-bold text-gray-600">${tr("Mavjudlik", "Наличие")}</label>
-                <button onclick="toggleCategoryHideOutOfStock()" class="w-full mt-1 flex items-center justify-between px-3 py-2.5 rounded-xl font-bold ${categoryFilter.hideOutOfStock ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}">
-                  <span>📦 ${tr("Tugaganlarni yashirish", "Скрыть закончившиеся")}</span><span>${categoryFilter.hideOutOfStock ? '✓' : ''}</span>
-                </button>
               </div>
 
               <div class="space-y-2">
@@ -4627,7 +5558,7 @@
               </div>
 
               <div class="flex gap-2 pt-1">
-                <button onclick="clearCategoryFilter()" class="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl">${tr("🗑️ Filtrni tozalash", "🗑️ Сбросить фильтр")}</button>
+                <button onclick="clearCategoryFilter()" class="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl flex items-center justify-center gap-1.5">${ICON_TRASH} ${tr("Filtrni tozalash", "Сбросить фильтр")}</button>
                 <button onclick="closeCategoryFilterModal()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">${tr("✅ Tayyor", "✅ Готово")}</button>
               </div>
             </div>
@@ -4649,7 +5580,7 @@
                 <img src="${escapeHtml(p.img || FALLBACK_IMG.replace('150','300'))}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-full h-48 object-cover rounded-2xl border">
                 ${(isAdminMode && isUserAnAdmin) ? `
                   <button onclick="openEditFieldModal('${p.id}', 'img')" class="absolute bottom-2 right-2 bg-blue-600 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-xl flex items-center space-x-1 shadow">
-                    <span>${tr("✏️ Rasmni o'zgartirish", "✏️ Изменить фото")}</span>
+                    <span class="inline-flex items-center gap-1">${ICON_EDIT} ${tr("Rasmni o'zgartirish", "Изменить фото")}</span>
                   </button>
                 ` : ''}
               </div>
@@ -4660,7 +5591,7 @@
                   ${(isAdminMode && isUserAnAdmin) ? `
                     <div class="flex gap-1">
                       <button onclick="duplicateProduct('${p.id}')" class="text-xs bg-slate-50 text-slate-600 font-bold px-2 py-1 rounded-lg">${tr("📄 Nusxalash", "📄 Копировать")}</button>
-                      <button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs bg-red-50 text-red-600 font-bold px-2 py-1 rounded-lg">${tr("🗑️ O'chirish", "🗑️ Удалить")}</button>
+                      <button onclick="deleteProduct('${p.id}'); selectedProductModal=null; render();" class="text-xs fc-bg-danger-soft fc-text-danger font-bold px-2 py-1 rounded-lg flex items-center gap-1">${ICON_TRASH} ${tr("O'chirish", "Удалить")}</button>
                     </div>
                   ` : ''}
                 </div>
@@ -4668,7 +5599,7 @@
                 <!-- NAME WITH EDIT -->
                 <div class="flex justify-between items-center pt-1">
                   <h2 class="text-lg font-black text-gray-900">${escapeHtml(productName(p))}</h2>
-                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
+                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'name')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">${ICON_EDIT}</button>` : ''}
                 </div>
 
                 <!-- PRICE WITH EDIT -->
@@ -4677,25 +5608,25 @@
                     ${hasDiscount ? `
                       <div class="flex items-center space-x-2">
                         <span class="text-xs text-gray-400 line-through font-bold">${money(p.oldPrice)}</span>
-                        <span class="text-base text-red-600 font-black">${money(p.price)}</span>
+                        <span class="text-base fc-text-danger font-black">${money(p.price)}</span>
                       </div>
                     ` : `
                       <p class="text-base font-black text-blue-600">${money(p.price)}</p>
                     `}
                   </div>
-                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'price')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
+                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'price')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">${ICON_EDIT}</button>` : ''}
                 </div>
                 ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openPriceHistoryModal('${p.id}')" class="text-[10px] text-gray-400 underline">${tr("🕘 Narx tarixi", "🕘 История цен")}</button>` : ''}
 
                 <!-- STOCK WITH EDIT -->
                 ${(isAdminMode && isUserAnAdmin) ? `
                   <div class="flex justify-between items-center pt-1 text-xs">
-                    <span class="font-bold text-gray-600">${tr("Ombor qoldig'i:", "Остаток на складе:")} <b class="${p.stock > 0 ? 'text-green-600' : 'text-red-500'}">${p.stock} ${tr('ta','шт.')}</b></span>
-                    ${productVariants(p).length ? '' : `<button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>`}
+                    <span class="font-bold text-gray-600">${tr("Ombor qoldig'i:", "Остаток на складе:")} <b class="${p.stock > 0 ? 'text-green-600' : 'fc-text-danger'}">${p.stock} ${tr('ta','шт.')}</b></span>
+                    ${productVariants(p).length ? '' : `<button onclick="openEditFieldModal('${p.id}', 'stock')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">${ICON_EDIT}</button>`}
                   </div>
                   <div class="flex justify-between items-start gap-2 pt-1 text-xs">
                     <span class="font-bold text-gray-600 flex-1">${tr("Variantlar:", "Варианты:")} <b>${productVariants(p).length ? escapeHtml(productVariants(p).map(v => `${variantLabel(v)} (${v.qty} ${tr('ta','шт.')}, ID:${v.sku})`).join(', ')) : tr('kiritilmagan','не указано')}</b></span>
-                    <button onclick="openEditFieldModal('${p.id}', 'variants')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>
+                    <button onclick="openEditFieldModal('${p.id}', 'variants')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">${ICON_EDIT}</button>
                   </div>
                   <div class="flex justify-between items-center pt-1 text-xs">
                     <span class="font-bold text-gray-600">${tr("Katalog:", "Каталог:")} <b>${escapeHtml(categoryName(categories.find(c => c.id === p.categoryId)) || tr('belgilanmagan','не указан'))}</b></span>
@@ -4704,16 +5635,24 @@
                 ` : ''}
               </div>
 
-              <!-- TAVSIF WITH EDIT -->
-              <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1 relative">
-                <div class="flex justify-between items-center">
-                  <h4 class="font-bold text-gray-700">${tr("📝 Tavsif / Izoh:", "📝 Описание:")}</h4>
-                  ${(isAdminMode && isUserAnAdmin) ? `<button onclick="openEditFieldModal('${p.id}', 'desc')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">✏️</button>` : ''}
+              <!-- TAVSIF WITH EDIT (faqat admin — mijoz uchun 25-band tartibida pastda, o'qish-only) -->
+              ${(isAdminMode && isUserAnAdmin) ? `
+                <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1 relative">
+                  <div class="flex justify-between items-center">
+                    <h4 class="font-bold text-gray-700">${tr("📝 Tavsif / Izoh:", "📝 Описание:")}</h4>
+                    <button onclick="openEditFieldModal('${p.id}', 'desc')" class="text-xs p-1 bg-blue-50 text-blue-600 rounded-lg font-bold">${ICON_EDIT}</button>
+                  </div>
+                  <p class="text-gray-600 leading-relaxed">${escapeHtml(productDesc(p) || tr('Tavsif kiritilmagan.','Описание не указано.'))}</p>
                 </div>
-                <p class="text-gray-600 leading-relaxed">${escapeHtml(productDesc(p) || tr('Tavsif kiritilmagan.','Описание не указано.'))}</p>
-              </div>
+              ` : ''}
 
               ${!isAdminMode ? `
+                <!-- 25-band: mijoz uchun tartib — rasm/nom/narx (yuqorida) -> mavjudlik -> variant/savatga -> tavsif -> sevimli -> o'xshash. -->
+                <div class="flex items-center gap-1.5 text-xs font-bold ${p.stock > 0 ? 'fc-text-success' : 'fc-text-danger'}">
+                  <i data-lucide="${p.stock > 0 ? 'check-circle' : 'x-circle'}" class="w-3.5 h-3.5"></i>
+                  ${p.stock > 0 ? tr('Omborda bor', 'В наличии') : tr('Mahsulot tugagan', 'Товара нет в наличии')}
+                </div>
+
                 <div>
                   ${p.stock > 0 ? (
                     productVariants(p).length > 0 ? `
@@ -4757,6 +5696,20 @@
                     `
                   )) : `<button disabled class="w-full bg-gray-100 text-gray-400 font-bold py-3 rounded-2xl text-sm">${tr("❌ Mahsulot tugagan", "❌ Товар закончился")}</button>`}
                 </div>
+
+                ${productDesc(p) ? `
+                  <div class="bg-gray-50 p-3 rounded-2xl border text-xs space-y-1">
+                    <h4 class="font-bold text-gray-700">${tr("📝 Tavsif", "📝 Описание")}</h4>
+                    <p class="text-gray-600 leading-relaxed">${escapeHtml(productDesc(p))}</p>
+                  </div>
+                ` : ''}
+
+                <button onclick="toggleFavorite('${p.id}', event)" class="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border font-bold text-xs ${favoriteProductIds.has(p.id) ? 'fc-bg-danger-soft fc-border-danger fc-text-danger' : 'bg-white border-gray-200 text-gray-600'}">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="${favoriteProductIds.has(p.id) ? '#ef4444' : 'none'}" stroke="${favoriteProductIds.has(p.id) ? '#ef4444' : 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"></path></svg>
+                  ${favoriteProductIds.has(p.id) ? tr('Sevimlilarda', 'В избранном') : tr('Sevimlilarga qo‘shish', 'Добавить в избранное')}
+                </button>
+
+                ${renderSimilarProductsBlockHtml(p)}
               ` : ''}
             </div>
           </div>
@@ -4775,7 +5728,7 @@
                 <textarea id="rr-reason" rows="3" placeholder="${tr('Masalan: rasm noaniq, summa mos emas...', 'Например: изображение нечёткое, сумма не совпадает...')}" class="w-full mt-1 p-2.5 border rounded-xl"></textarea>
               </div>
               <div class="flex gap-2 pt-1">
-                <button onclick="submitRejectReceipt()" class="flex-1 bg-red-600 text-white font-bold py-2.5 rounded-xl">❌ ${tr('Rad etish', 'Отклонить')}</button>
+                <button onclick="submitRejectReceipt()" class="flex-1 fc-bg-danger text-white font-bold py-2.5 rounded-xl">❌ ${tr('Rad etish', 'Отклонить')}</button>
                 <button onclick="activePopupModal=null; rejectReceiptOrderId=null; render();" class="bg-gray-100 text-gray-700 font-bold px-4 py-2.5 rounded-xl">${tr('Bekor qilish', 'Отмена')}</button>
               </div>
             </div>
@@ -4811,62 +5764,8 @@
         return;
       }
 
-      // 16-band: mijoz uchun qo'llab-quvvatlash — yangi murojaat yozish +
-      // o'z murojaatlari/admin javoblari tarixi.
-      // 2-9-band: mijoz tomon — agar shu order/umumiy kontekst uchun ochiq
-      // ticket bo'lsa to'g'ridan-to'g'ri chat, bo'lmasa yangi xabar yozish
-      // ko'rinishi + o'zining oldingi murojaatlari ro'yxati.
-      if (activePopupModal === 'SUPPORT') {
-        const openTicket = openSupportTicketId ? supportTickets.find(t => t.id === openSupportTicketId) : null;
-        container.innerHTML = `
-          <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="activePopupModal=null; supportTicketOrderId=null; openSupportTicketId=null; render();">
-            <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-3 shadow-2xl text-xs" onclick="event.stopPropagation()">
-              ${openTicket ? `
-                <div class="flex items-center justify-between border-b pb-2">
-                  <button onclick="backToMySupportList()" class="text-[11px] font-bold text-blue-600">‹ ${tr('Orqaga','Назад')}</button>
-                  <h3 class="font-bold text-sm text-gray-900">💬 ${openTicket.orderId ? `#${openTicket.orderId}` : tr('Murojaat','Обращение')}</h3>
-                  <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${openTicket.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (openTicket.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${openTicket.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (openTicket.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}</span>
-                </div>
-                <div>
-                  ${supportMessagesLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...','Загрузка...')}</p>` : renderSupportThreadHtml(supportMessages, false)}
-                </div>
-                ${openTicket.status !== 'CLOSED' ? `
-                  ${renderSupportReplyBarHtml()}
-                  <textarea id="sup-chat-message" rows="2" placeholder="${tr('Xabar yozing...','Напишите сообщение...')}" class="w-full p-2.5 border rounded-xl"></textarea>
-                  <div class="flex gap-2">
-                    <button onclick="submitSupportComposer()" class="flex-1 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish','Отправить')}</button>
-                    <button onclick="closeSupportTicket(${openTicket.id})" class="bg-gray-100 text-gray-700 font-bold px-3 py-2.5 rounded-xl">${tr('Tugatish','Завершить')}</button>
-                  </div>
-                ` : `<p class="text-center text-gray-400 py-2">${tr('Bu murojaat tugallangan.','Это обращение завершено.')}</p>`}
-              ` : `
-                <h3 class="font-bold text-sm text-gray-900 border-b pb-2">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</h3>
-                ${supportTicketOrderId ? `<p class="text-[10px] text-gray-500">${tr('Buyurtma','Заказ')} #${supportTicketOrderId} ${tr('bo‘yicha murojaat','по этому заказу')}</p>` : ''}
-                <div>
-                  <label class="font-bold text-gray-600">${tr('Murojaatingiz', 'Ваше обращение')}</label>
-                  <textarea id="sup-message" rows="4" placeholder="${tr('Savolingiz yoki muammoingizni yozing...', 'Опишите ваш вопрос или проблему...')}" class="w-full mt-1 p-2.5 border rounded-xl"></textarea>
-                  <button onclick="submitSupportComposer()" class="w-full mt-2 bg-blue-600 text-white font-bold py-2.5 rounded-xl">✅ ${tr('Yuborish', 'Отправить')}</button>
-                </div>
-                ${supportTicketsLoading ? `<p class="text-center text-gray-400 py-2">${tr('Yuklanmoqda...','Загрузка...')}</p>` : ''}
-                ${(!supportTicketsLoading && supportTickets.length) ? `
-                  <div class="border-t pt-2 space-y-2">
-                    <p class="font-bold text-gray-600">${tr('Oldingi murojaatlar', 'Предыдущие обращения')}</p>
-                    ${supportTickets.map(t => `
-                      <div class="bg-gray-50 border rounded-xl p-2.5 space-y-1 cursor-pointer" onclick="openMySupportChat(${t.id})">
-                        <div class="flex items-center justify-between">
-                          <span class="text-[10px] text-gray-400">${t.orderId ? `#${t.orderId} · ` : ''}${new Date(t.lastMessage?.createdAt || t.createdAt).toLocaleString()}</span>
-                          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'CLOSED' ? 'bg-gray-100 text-gray-600' : (t.status === 'OPEN' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}">${t.status === 'CLOSED' ? tr('Tugallangan','Завершено') : (t.status === 'OPEN' ? tr('Yangi','Новое') : tr('Javob berilgan','Отвечено'))}</span>
-                        </div>
-                        <p>${escapeHtml((t.lastMessage?.body || '').slice(0, 80))}</p>
-                      </div>
-                    `).join('')}
-                  </div>
-                ` : ''}
-              `}
-            </div>
-          </div>
-        `;
-        return;
-      }
+      // POLISH ROUND 1-bosqich: Qo'llab-quvvatlash endi modal emas, to'liq
+      // sahifa (page-shell) — renderSupportPage() ga ko'chirildi (activePage='SUPPORT').
 
       // ORDER DETAILS MODAL
       if (selectedOrderModal) {
@@ -4905,6 +5804,8 @@
                 <div class="flex justify-between font-black text-sm"><span>${tr("Hozir to'lanadigan jami",'Итого к оплате сейчас')}:</span><span class="text-green-600">${money(o.payableTotal ?? o.totalPrice)}</span></div>
               </div>
 
+              ${!isAdminMode ? `<button onclick="reorderFromOrder(${o.id})" class="fc-btn fc-btn-secondary w-full"><i data-lucide="rotate-ccw" class="w-4 h-4"></i>${tr('Qayta buyurtma', 'Повторить заказ')}</button>` : ''}
+
               ${o.delivery?.warning ? `<div class="bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[11px] text-amber-900">ℹ️ ${escapeHtml(o.delivery.warning)}</div>` : ''}
               ${o.delivery?.comment ? `<div class="bg-blue-50 border border-blue-200 p-2.5 rounded-xl text-[11px] text-blue-900">💬 ${escapeHtml(o.delivery.comment)}</div>` : ''}
 
@@ -4919,7 +5820,7 @@
               ${(isAdminMode && isUserAnAdmin && o.hasReceipt && (o.receiptReviewStatus || 'PENDING') === 'PENDING') ? `
                 <div class="grid grid-cols-2 gap-2">
                   <button onclick="approvePaymentReceipt(${o.id})" class="bg-emerald-600 text-white font-bold py-2 rounded-xl text-[11px]">✅ ${tr('Tasdiqlash', 'Подтвердить')}</button>
-                  <button onclick="openRejectReceiptModal(${o.id})" class="bg-red-600 text-white font-bold py-2 rounded-xl text-[11px]">❌ ${tr('Rad etish', 'Отклонить')}</button>
+                  <button onclick="openRejectReceiptModal(${o.id})" class="fc-bg-danger text-white font-bold py-2 rounded-xl text-[11px]">❌ ${tr('Rad etish', 'Отклонить')}</button>
                 </div>
               ` : ''}
 
@@ -4943,18 +5844,18 @@
                 </div>` : ''}
 
               ${o.status === 'CANCELLED' && o.cancelReason ? `
-                <div class="bg-red-50 border border-red-200 p-2.5 rounded-xl text-[11px] text-red-700">
+                <div class="fc-bg-danger-soft border fc-border-danger p-2.5 rounded-xl text-[11px] fc-text-danger">
                   ❌ Bekor qilindi (${o.cancelledBy === 'ADMIN' ? "do'kon tomonidan" : 'mijoz tomonidan'}): ${escapeHtml(o.cancelReason)}
                 </div>
               ` : ''}
 
               ${o.receiptReviewStatus === 'REJECTED' ? `
-                <div class="bg-red-50 border border-red-200 p-2.5 rounded-xl text-[11px] text-red-700 space-y-2">
+                <div class="fc-bg-danger-soft border fc-border-danger p-2.5 rounded-xl text-[11px] fc-text-danger space-y-2">
                   <p>❌ ${tr('Chek rad etildi', 'Чек отклонён')}${o.receiptRejectReason ? `: ${escapeHtml(o.receiptRejectReason)}` : ''}</p>
                   ${!isAdminMode ? `
                     <div class="flex gap-2">
                       <button onclick="openResubmitReceiptModal(${o.id})" class="flex-1 bg-blue-600 text-white font-bold py-2 rounded-xl text-[11px]">📎 ${tr('Yangi chek yuborish', 'Отправить новый чек')}</button>
-                      <button onclick="openSupportModal(${o.id})" class="flex-1 bg-white border border-red-200 text-red-700 font-bold py-2 rounded-xl text-[11px]">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</button>
+                      <button onclick="openSupportModal(${o.id})" class="flex-1 bg-white border fc-border-danger fc-text-danger font-bold py-2 rounded-xl text-[11px]">💬 ${tr("Qo'llab-quvvatlash", 'Поддержка')}</button>
                     </div>
                   ` : ''}
                 </div>
@@ -4966,7 +5867,7 @@
                   <div class="grid grid-cols-2 gap-2">
                     ${o.status === 'NEW' ? `<button onclick="updateOrderStatus(${o.id}, 'PROCESSING')" class="bg-blue-600 text-white font-bold py-2 rounded-xl text-[11px]">${tr("⏳ Jarayonda", "⏳ В обработке")}</button>` : ''}
                     <button onclick="updateOrderStatus(${o.id}, 'DELIVERED')" class="bg-green-600 text-white font-bold py-2 rounded-xl text-[11px] ${o.status === 'PROCESSING' ? 'col-span-2' : ''}">${tr("✅ Yetkazib berilgan", "✅ Доставлен")}</button>
-                    <button onclick="updateOrderStatus(${o.id}, 'CANCELLED')" class="bg-red-600 text-white font-bold py-2 rounded-xl text-[11px] col-span-2">❌ ${tr("Bekor qilish", "Отмена")}</button>
+                    <button onclick="updateOrderStatus(${o.id}, 'CANCELLED')" class="fc-bg-danger text-white font-bold py-2 rounded-xl text-[11px] col-span-2">❌ ${tr("Bekor qilish", "Отмена")}</button>
                   </div>
                 </div>
               ` : ''}
@@ -4990,9 +5891,9 @@
               <p>🆔 <b>${tr("Telegram ID:", "Telegram ID:")}</b> ${escapeHtml(u.tgId)}</p>
 
               ${u.isBlocked ? `
-                <div class="bg-red-50 border border-red-200 p-2.5 rounded-xl">
-                  <p class="font-bold text-red-700">${tr("🚫 Bloklangan", "🚫 Заблокирован")}</p>
-                  <p class="text-red-600">${tr("Sabab", "Причина")}: ${escapeHtml(u.blockReason || '-')}</p>
+                <div class="fc-bg-danger-soft border fc-border-danger p-2.5 rounded-xl">
+                  <p class="font-bold fc-text-danger">${tr("🚫 Bloklangan", "🚫 Заблокирован")}</p>
+                  <p class="fc-text-danger">${tr("Sabab", "Причина")}: ${escapeHtml(u.blockReason || '-')}</p>
                 </div>
               ` : (u.warned ? `
                 <div class="bg-amber-50 border border-amber-200 p-2.5 rounded-xl">
@@ -5024,7 +5925,7 @@
                 ${u.isBlocked ? `
                   <button onclick="unblockUser('${u.tgId}')" class="flex-1 bg-emerald-600 text-white font-bold py-2 rounded-xl text-[11px]">${tr("✅ Blokdan chiqarish", "✅ Разблокировать")}</button>
                 ` : `
-                  <button onclick="openBlockUserModal('${u.tgId}')" class="flex-1 bg-red-600 text-white font-bold py-2 rounded-xl text-[11px]">${tr("🚫 Bloklash", "🚫 Заблокировать")}</button>
+                  <button onclick="openBlockUserModal('${u.tgId}')" class="flex-1 fc-bg-danger text-white font-bold py-2 rounded-xl text-[11px]">${tr("🚫 Bloklash", "🚫 Заблокировать")}</button>
                 `}
               </div>
             </div>
@@ -5072,6 +5973,9 @@
       selectedVariantQtys = {};
       selectedSizeQtys = {};
       renderModalContainer();
+      // 18-band: faqat mijoz ko'rinishida (admin tahrirlash klikini "ko'rish"
+      // sifatida hisoblamaymiz) — recentViewProductIds optimistik yangilanadi.
+      if (!(isAdminMode && isUserAnAdmin) && selectedProductModal) recordProductView(id);
     }
 
     function openEditFieldModal(prodId, fieldName) {
@@ -5226,7 +6130,15 @@
       }
     }
 
-    // 15-band: rad etilgan chekni qayta yuborish oynasi.
+    // 15-band: rad etilgan chekni qayta yuborish — mavjud rasm pipeline
+    // primitivlaridan (readBlobAsArrayBuffer/makeDetachedImageFile/
+    // compressImageToLimit/fileToBase64) checkout oqimidagi bilan bir xil
+    // tarzda foydalanadi, lekin alohida state/modal'da (checkout draft'ga
+    // aralashmaydi). Checkout'dagi prepareReceiptImageUpload'dan farqli
+    // o'laroq bu ALLAQACHON mavjud orderga bog'liq — shuning uchun o'z
+    // alohida callApi('upload_payment_receipt', ...) chaqiruviga ega
+    // (create_order bilan bitta so'rovda yuborilishi mumkin emas, chunki
+    // order allaqachon yaratilgan).
     function openResubmitReceiptModal(orderId) {
       resubmitOrderId = orderId;
       resubmitReceiptFile = null;
@@ -5247,24 +6159,36 @@
     async function onResubmitReceiptPicked(event) {
       const file = event.target.files?.[0];
       if (!file) return;
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 15 * 1024 * 1024) {
+        event.target.value = '';
+        return alert(isLikelyHeicFile(file)
+          ? tr("⚠️ HEIC/HEIF formati hali qo'llab-quvvatlanmaydi. Chekni JPG/PNG formatida yuklang.", "⚠️ Формат HEIC/HEIF пока не поддерживается. Загрузите чек в формате JPG/PNG.")
+          : tr('Chek JPG, PNG yoki WebP bo‘lishi va 15MB dan oshmasligi kerak.', 'Чек должен быть JPG, PNG или WebP размером до 15 МБ.'));
+      }
       const selectionVersion = ++resubmitReceiptSelectionVersion;
       resubmitReceiptFile = file;
       if (resubmitReceiptPreviewUrl) { try { URL.revokeObjectURL(resubmitReceiptPreviewUrl); } catch (_) {} }
-      try { resubmitReceiptPreviewUrl = URL.createObjectURL(file); } catch (_) { resubmitReceiptPreviewUrl = null; }
-      resubmitReceiptPreparing = compressImageToLimit(file, MAX_RECEIPT_BYTES, 1600, 0.85).then((compressed) => {
-        if (selectionVersion !== resubmitReceiptSelectionVersion) return compressed;
-        resubmitReceiptFile = compressed;
+      resubmitReceiptPreviewUrl = URL.createObjectURL(file);
+      resubmitReceiptPreparing = captureAndPrepareImageV2(file, MAX_RECEIPT_BYTES, 1600, 0.85, (updated) => {
+        if (selectionVersion !== resubmitReceiptSelectionVersion) return;
         try {
-          const stableUrl = URL.createObjectURL(compressed);
+          const stableUrl = URL.createObjectURL(updated);
           const oldUrl = resubmitReceiptPreviewUrl;
           resubmitReceiptPreviewUrl = stableUrl;
           renderModalContainer();
           if (oldUrl && oldUrl !== stableUrl && oldUrl.startsWith('blob:')) { try { URL.revokeObjectURL(oldUrl); } catch (_) {} }
-        } catch (_) {}
-        return compressed;
+        } catch (previewErr) {
+          imageIO.logStage('PREVIEW_FAILED', { message: previewErr?.message, level: 'warn' });
+        }
       });
       renderModalContainer();
     }
+    // 5-band/13-band: chekni qayta yuborish — endi signed URL PRIMARY
+    // (get_payment_receipt_upload_url + finalize_payment_receipt, avval
+    // yozilgan-lekin-ishlatilmagan actionlar jonlantirildi), base64
+    // (upload_payment_receipt) ikkinchi darajali fallback sifatida saqlanadi.
+    // Receipt approve/reject/resubmit/order-association business logikasi
+    // (finalize_payment_receipt ichida) o'zgarishsiz qoladi — faqat transport.
     async function submitResubmitReceipt() {
       if (!resubmitOrderId || (!resubmitReceiptFile && !resubmitReceiptPreparing)) {
         return alert(tr("Iltimos, chek rasmini tanlang.", "Пожалуйста, выберите изображение чека."));
@@ -5273,9 +6197,25 @@
       showActionToast(tr('⏳ Yuborilmoqda...', '⏳ Отправка...'), 'saving');
       try {
         const prepared = resubmitReceiptPreparing ? await resubmitReceiptPreparing : resubmitReceiptFile;
-        if (!prepared || prepared.size > MAX_RECEIPT_BYTES) throw new Error('receipt_too_large');
-        const imageUpload = { base64: await blobToBase64(prepared), mimeType: prepared.type, fileName: 'payment-receipt.jpg' };
-        await callApi('upload_payment_receipt', { orderId, imageUpload });
+        if (!prepared || prepared.size > 6 * 1024 * 1024) throw new Error('receipt_too_large');
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(prepared.type)) throw new Error('invalid_receipt_file');
+
+        let signedOk = false;
+        try {
+          const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+          const ext = extByMime[prepared.type];
+          const { path, token } = await callApi('get_payment_receipt_upload_url', { orderId, mimeType: prepared.type, size: prepared.size });
+          const { error: upErr } = await sb.storage.from('payment-receipts').uploadToSignedUrl(path, token, prepared);
+          if (upErr) throw upErr;
+          await callApi('finalize_payment_receipt', { orderId, path });
+          signedOk = true;
+        } catch (signedErr) {
+          console.warn('[receipt:SIGNED_URL_RESUBMIT_FAILED]', signedErr);
+        }
+        if (!signedOk) {
+          const imageUpload = { base64: await fileToBase64(prepared), mimeType: prepared.type, fileName: prepared.name || 'payment-receipt.jpg' };
+          await callApi('upload_payment_receipt', { orderId, imageUpload });
+        }
         const patch = { hasReceipt: true, receiptReviewStatus: 'PENDING', receiptRejectReason: null };
         const idx = orders.findIndex(o => o.id === orderId);
         if (idx >= 0) orders[idx] = { ...orders[idx], ...patch };
@@ -5285,7 +6225,7 @@
       } catch (e) {
         console.error(e);
         showActionToast(tr('❌ Yuborilmadi', '❌ Не отправлено'), 'error', 2200);
-        alert(tr('Xatolik: ', 'Ошибка: ') + friendlyImageError(e));
+        alert(tr('Xatolik: ', 'Ошибка: ') + (e.message || e));
       }
     }
 
@@ -5335,7 +6275,8 @@
       // name/price/stock/description yo'qolmasligi kerak.
       showActionToast(tr("⏳ Tovar saqlanmoqda...", "⏳ Товар сохраняется..."), 'saving');
       try {
-        const imagePayload = await imagePayloadFromSnapshot(imageSnap, false);
+        const localImageWasSelected = !!(imageSnap?.file || imageSnap?.preparing);
+        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, localImageWasSelected);
         const result = await callApi('add_product', {
           name, price, oldPrice,
           stock: isNaN(stock) ? 0 : stock,
@@ -5371,8 +6312,8 @@
       render();
       showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
       try {
-        const imagePayload = await imagePayloadFromSnapshot(imageSnap, false);
-        const result = await callApi('add_category', { name, img: imagePayload.img, imageUpload: imagePayload.imageUpload, parentId });
+        const imgUrl = await uploadImageSnapshot(imageSnap, null, false);
+        const result = await callApi('add_category', { name, img: imgUrl, parentId });
         upsertLocalCategory(result.category);
         saveCatalogCache();
         showActionToast(tr("✅ Katalog yaratildi", "✅ Каталог создан"), 'success', 1200);
@@ -5380,7 +6321,7 @@
       } catch (e) {
         console.error(e);
         showActionToast(tr("❌ Katalog saqlanmadi", "❌ Каталог не сохранён"), 'error', 1800);
-        alert(tr("❌ Katalogni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения каталога: ") + friendlyImageError(e));
+        alert(tr("❌ Katalogni saqlashda xatolik yuz berdi: ", "❌ Ошибка сохранения каталога: ") + (e.message || e));
       } finally { releaseImageSnapshot(imageSnap); }
     }
 
@@ -5437,8 +6378,7 @@
         imageSnap = takeTempImageSnapshot();
         if (!imageSnap.file && !imageSnap.preparing && !imageSnap.url) { activePopupModal = null; render(); return; }
         // Tanlangan rasm kartochkada ham darhol ko'rinsin.
-        if (imageSnap.preview) p.img = imageSnap.preview;
-        else if (imageSnap.url) p.img = imageSnap.url;
+        if (imageSnap.preview || imageSnap.url) p.img = imageSnap.preview || imageSnap.url;
       } else if (field === 'sizes' || field === 'variants') {
         const sizeText = document.getElementById('ef-size-val').value;
         const colorText = document.getElementById('ef-color-val').value;
@@ -5464,7 +6404,7 @@
 
       try {
         if (field === 'img') {
-          const imagePayload = await imagePayloadFromSnapshot(imageSnap, true);
+          const imagePayload = await productImagePayloadFromSnapshot(imageSnap, true);
           payload.value = imagePayload.img;
           payload.imageUpload = imagePayload.imageUpload;
         }
@@ -5504,7 +6444,7 @@
       renderModalContainer();
       showActionToast(tr("⏳ Rasm saqlanmoqda...", "⏳ Изображение сохраняется..."), 'saving');
       try {
-        const imagePayload = await imagePayloadFromSnapshot(imageSnap, true);
+        const imagePayload = await productImagePayloadFromSnapshot(imageSnap, true);
         const result = await callApi('edit_product_field', {
           productId: prodId,
           field: 'img',
@@ -5573,7 +6513,7 @@
       const c = categories.find(cat => cat.id === id);
       if (!c) return;
       selectedCategoryModal = c;
-      initializeTempImageEditor(c.img);
+      clearTempImageSelection();
       activePopupModal = 'EDIT_CAT';
       render();
     }
@@ -5589,14 +6529,13 @@
 
       c.name = name;
       if (imageSnap.preview) c.img = imageSnap.preview;
-      else if (imageSnap.url) c.img = imageSnap.url;
       activePopupModal = null;
       render();
       showActionToast(tr("⏳ Katalog saqlanmoqda...", "⏳ Каталог сохраняется..."), 'saving');
 
       try {
-        const imagePayload = await imagePayloadFromSnapshot(imageSnap, false);
-        const result = await callApi('edit_category', { categoryId: id, name, img: imagePayload.img, imageUpload: imagePayload.imageUpload });
+        const newImg = await uploadImageSnapshot(imageSnap, old.img, !!(imageSnap.file || imageSnap.preparing));
+        const result = await callApi('edit_category', { categoryId: id, name, img: newImg });
         const current = categories.find(cat => cat.id === id);
         if (current) Object.assign(current, mapCategoryFromDB(result.category));
         saveCatalogCache();
@@ -5823,15 +6762,6 @@
     }
 
     // 2.1: tartib tugmalari — faqat bir xil ota-katalog ichidagi qo'shnilar bilan almashadi.
-    //
-    // MUHIM TUZATISH (real production DB'da tasdiqlangan): bazadagi barcha
-    // kategoriyalarning sort_order'i 0 ekan (hech qachon farqlantirilmagan).
-    // Eski kod faqat ikkita qo'shnining QIYMATINI almashtirar edi — 0 bilan
-    // 0'ni almashtirish esa hech narsani o'zgartirmaydi, shuning uchun tugma
-    // "ishlamayotganday" ko'rinardi. Endi ikkalasi ARRAY ICHIDA joy
-    // almashadi, so'ng BUTUN qo'shnilar ro'yxati 0..N-1 tarzida qaytadan
-    // raqamlanadi — bu bir martalik ishlatishning o'zi shu guruhdagi
-    // barcha 0 qiymatlarni ham tuzatib (normalizatsiya qilib) qo'yadi.
     async function moveCategoryOrder(categoryId, direction, e) {
       if (e) e.stopPropagation();
       const cat = categories.find(c => c.id === categoryId);
@@ -5841,20 +6771,19 @@
       const idx = siblings.findIndex(c => c.id === categoryId);
       const swapIdx = idx + direction;
       if (swapIdx < 0 || swapIdx >= siblings.length) return;
+      const other = siblings[swapIdx];
+      const catOrder = cat.sortOrder || 0, otherOrder = other.sortOrder || 0;
+      cat.sortOrder = otherOrder; other.sortOrder = catOrder;
 
-      const reordered = siblings.slice();
-      [reordered[idx], reordered[swapIdx]] = [reordered[swapIdx], reordered[idx]];
-      const previousOrders = reordered.map(c => c.sortOrder);
-      reordered.forEach((c, i) => { c.sortOrder = i; });
-
-      // Optimistic: tugma darhol ishlaydi, server javobi fon rejimida keladi.
+      // Optimistic: tugma darhol ishlaydi, server javobi fon rejimida keladi
+      // (moveProductSort bilan bir xil sodda pattern — qo'shimcha guard yo'q).
       render();
       try {
-        await callApi('reorder_categories', { items: reordered.map(c => ({ id: c.id, sortOrder: c.sortOrder })) });
+        await callApi('reorder_categories', { items: [{ id: cat.id, sortOrder: cat.sortOrder }, { id: other.id, sortOrder: other.sortOrder }] });
         saveCatalogCache();
       } catch (err) {
         console.error(err);
-        reordered.forEach((c, i) => { c.sortOrder = previousOrders[i]; });
+        cat.sortOrder = catOrder; other.sortOrder = otherOrder;
         render();
         alert(tr('❌ Tartibni saqlab bo\'lmadi: ', '❌ Не удалось сохранить порядок: ') + (err.message || err));
       }
@@ -5952,7 +6881,8 @@
       } catch (e) { console.error(e); alert(tr('❌ Xatolik: ','❌ Ошибка: ') + (e.message || e)); }
     }
     async function purgeTrashBatchNow(batchId) {
-      if (!confirm(tr('Bu elementlar darhol va qaytarib bo‘lmaydigan tarzda o‘chirilsinmi?','Удалить эти элементы навсегда прямо сейчас?'))) return;
+      const ok = await fcConfirm(tr('Butunlay o‘chirilsinmi?', 'Удалить навсегда?'), tr('Bu elementlar darhol va qaytarib bo‘lmaydigan tarzda o‘chiriladi.', 'Эти элементы будут удалены немедленно и без возможности восстановления.'));
+      if (!ok) return;
       showActionToast(tr('⏳ Butunlay o‘chirilmoqda...','⏳ Удаление навсегда...'), 'saving');
       try {
         await callApi('purge_trash_batch_now', { batchId });
@@ -5961,189 +6891,164 @@
         showActionToast(tr('✅ Butunlay o‘chirildi','✅ Удалено навсегда'), 'success', 1500);
       } catch (e) { console.error(e); alert(tr('❌ O‘chirishda xatolik: ','❌ Ошибка удаления: ') + (e.message || e)); }
     }
-    function dashboardRangeBounds(preset) {
-      const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const endExclusive = new Date(startOfToday.getTime() + 24 * 3600 * 1000);
-      if (preset === '7d') return { from: new Date(startOfToday.getTime() - 6 * 24 * 3600 * 1000), to: endExclusive };
-      if (preset === '30d') return { from: new Date(startOfToday.getTime() - 29 * 24 * 3600 * 1000), to: endExclusive };
-      if (preset === 'month') return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: endExclusive };
-      if (preset === 'custom') {
-        const from = dashboardCustomFrom ? new Date(dashboardCustomFrom) : startOfToday;
-        const toBase = dashboardCustomTo ? new Date(dashboardCustomTo) : startOfToday;
-        return { from, to: new Date(toBase.getTime() + 24 * 3600 * 1000) };
-      }
-      return { from: startOfToday, to: endExclusive };
-    }
-
-    function openDashboard() {
-      dashboardReturnTab = currentTab === 'dashboard' ? dashboardReturnTab : currentTab;
-      currentTab = 'dashboard';
-      render();
-      loadDashboard();
-      loadUsersLazy(); // "Eng faol mijozlar" ro'yxati openUserModal orqali usersSummary'ga tayanadi
-    }
-
-    function closeDashboard() {
-      currentTab = dashboardReturnTab || 'warehouse';
-      render();
-    }
-
-    function setDashboardRangePreset(preset) {
-      dashboardRangePreset = preset;
-      if (preset === 'custom') { render(); return; }
-      loadDashboard();
-    }
-
-    async function loadDashboard() {
-      dashboardLoading = true;
-      render();
+    async function openDashboardLite() {
+      dashboardLiteData = null; dashboardLiteLoading = true; dashboardCustomerPage = 1;
+      openPage('DASHBOARD');
       try {
-        const { from, to } = dashboardRangeBounds(dashboardRangePreset);
-        dashboardData = await callApi('get_dashboard', { from: from.toISOString(), to: to.toISOString() });
-      } catch (e) {
-        console.error(e);
-        dashboardData = null;
-        alert(tr('❌ Dashboard yuklanmadi: ', '❌ Dashboard не загружен: ') + (e.message || e));
-      } finally {
-        dashboardLoading = false;
-        if (currentTab === 'dashboard') render();
+        dashboardLiteData = await callApi('get_dashboard_lite', {});
+        // Dashboard javobi to'liq mijozlar ro'yxatini ham olib keladi —
+        // Support/boshqa joylarda alohida get_users_summary so'rovi shart emas.
+        if (dashboardLiteData?.customers?.all) { usersSummary = dashboardLiteData.customers.all; usersLoaded = true; }
       }
+      catch (e) { console.error(e); dashboardLiteData = null; alert(tr('❌ Dashboard yuklanmadi: ','❌ Dashboard не загружен: ') + (e.message || e)); }
+      finally { dashboardLiteLoading = false; if (activePage === 'DASHBOARD') render(); }
     }
+    function setDashboardCustomerPage(p) { dashboardCustomerPage = p; render(); }
 
-    function dashboardStatCard(opts) {
-      const { icon, label, value, tint } = opts;
-      const tints = {
-        blue: 'bg-blue-50 border-blue-100 text-blue-700',
-        amber: 'bg-amber-50 border-amber-100 text-amber-700',
-        emerald: 'bg-emerald-50 border-emerald-100 text-emerald-700',
-        violet: 'bg-violet-50 border-violet-100 text-violet-700',
-        sky: 'bg-sky-50 border-sky-100 text-sky-700',
-        red: 'bg-red-50 border-red-100 text-red-700',
-      };
+    // 28-30-band: bitta trash batch kartasi. CATEGORY-turdagi batch hozirgidek
+    // BUTUN BATCH sifatida tiklanadi/o'chiriladi (kategoriyani "qisman"
+    // tiklash struktura jihatidan mantiqsiz). PRODUCT-turdagi batch esa
+    // mahsulot darajasida tanlab tiklash/o'chirish imkonini beradi.
+    function renderTrashBatchHtml(b) {
+      if (b.kind !== 'PRODUCT') {
+        return `
+          <div class="border rounded-xl p-2.5 space-y-1">
+            <p class="font-bold">📁 ${escapeHtml(b.rootCategoryName || ('#' + b.id))}</p>
+            <p class="text-[10px] text-gray-500">${b.categoryCount ? `${b.categoryCount} ${tr('katalog', 'кат.')} · ` : ''}${b.productCount} ${tr('tovar', 'тов.')}</p>
+            <p class="text-[10px] text-gray-400">${tr("Muddati", "Истекает")}: ${new Date(b.expiresAt).toLocaleString()}</p>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button onclick="restoreTrashBatch(${b.id})" class="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded-lg">${tr("♻️ Tiklash", "♻️ Восстановить")}</button>
+              <button onclick="purgeTrashBatchNow(${b.id})" class="fc-bg-danger-soft fc-text-danger border fc-border-danger font-bold py-1.5 rounded-lg flex items-center justify-center gap-1">${ICON_TRASH} ${tr("Butunlay", "Навсегда")}</button>
+            </div>
+          </div>
+        `;
+      }
+
+      const items = b.productItems || [];
+      const selecting = !!trashSelectMode[b.id];
+      const selectedSet = trashSelectedProductIds[b.id] || new Set();
+      const selectedCount = selectedSet.size;
+
       return `
-        <div class="rounded-2xl border p-3 ${tints[tint] || tints.blue}">
-          <div class="flex items-center gap-1.5 text-[10px] font-bold opacity-80"><span>${icon}</span><span>${label}</span></div>
-          <p class="mt-1 text-lg font-black leading-tight">${value}</p>
-        </div>`;
-    }
-
-    function renderDashboard(container) {
-      const d = dashboardData;
-      const presets = [
-        { id: 'today', label: tr('Bugun', 'Сегодня') },
-        { id: '7d', label: tr('7 kun', '7 дней') },
-        { id: '30d', label: tr('30 kun', '30 дней') },
-        { id: 'month', label: tr('Shu oy', 'Этот месяц') },
-        { id: 'custom', label: tr('Ixtiyoriy', 'Период') },
-      ];
-      container.innerHTML = `
-        <div class="space-y-4">
+        <div class="border rounded-xl p-2.5 space-y-2">
           <div class="flex items-center justify-between gap-2">
-            <button onclick="closeDashboard()" class="text-xs font-bold text-blue-600 flex items-center gap-1">‹ ${tr('Orqaga', 'Назад')}</button>
-            <h2 class="text-lg font-bold text-slate-800">📊 ${tr('Dashboard / Hisobot', 'Dashboard / Отчёт')}</h2>
-            <span class="w-10"></span>
+            <div class="min-w-0">
+              <p class="font-bold truncate">📦 ${escapeHtml((b.productNames || [])[0] || ('#' + b.id))}${items.length > 1 ? ` +${items.length - 1}` : ''}</p>
+              <p class="text-[10px] text-gray-500">${items.length} ${tr('tovar', 'тов.')} · ${tr("Muddati", "Истекает")}: ${new Date(b.expiresAt).toLocaleString()}</p>
+            </div>
+            <button onclick="toggleTrashSelectMode(${b.id})" class="fc-badge ${selecting ? 'fc-badge-primary' : 'fc-badge-muted'} shrink-0">${selecting ? tr('Yopish', 'Закрыть') : tr('Tanlash', 'Выбрать')}</button>
           </div>
 
-          <div class="flex flex-wrap gap-1.5">
-            ${presets.map(p => `<button onclick="setDashboardRangePreset('${p.id}')" class="px-2.5 py-1.5 rounded-xl text-[11px] font-bold ${dashboardRangePreset === p.id ? 'bg-slate-900 text-white' : 'bg-white border text-gray-600'}">${p.label}</button>`).join('')}
-          </div>
-          ${dashboardRangePreset === 'custom' ? `
-            <div class="bg-white rounded-2xl border p-3 flex flex-wrap items-end gap-2 text-xs">
-              <div><label class="block font-bold text-gray-500 mb-1">${tr('Dan', 'С')}</label><input type="date" id="dash-from" value="${escapeHtml(dashboardCustomFrom)}" class="p-2 border rounded-xl"></div>
-              <div><label class="block font-bold text-gray-500 mb-1">${tr('Gacha', 'По')}</label><input type="date" id="dash-to" value="${escapeHtml(dashboardCustomTo)}" class="p-2 border rounded-xl"></div>
-              <button onclick="dashboardCustomFrom=document.getElementById('dash-from').value; dashboardCustomTo=document.getElementById('dash-to').value; loadDashboard();" class="bg-blue-600 text-white font-bold px-3 py-2 rounded-xl">${tr("Qo'llash", 'Применить')}</button>
+          ${!selecting ? `
+            <div class="text-[10px] text-gray-500 space-y-0.5">
+              ${items.slice(0, 5).map(p => `<p class="truncate">• ${escapeHtml(p.name)} ${p.sku ? `(ID: ${escapeHtml(p.sku)})` : ''}</p>`).join('')}
+              ${items.length > 5 ? `<p class="text-gray-400">… ${tr('va yana', 'и ещё')} ${items.length - 5}</p>` : ''}
             </div>
-          ` : ''}
-
-          ${dashboardLoading || !d ? `<p class="text-center text-gray-400 py-10">${tr('Yuklanmoqda...', 'Загрузка...')}</p>` : `
-            <div>
-              <h3 class="text-xs font-black text-gray-500 mb-1.5">💰 ${tr('Savdo', 'Продажи')}</h3>
-              <div class="grid grid-cols-2 gap-2">
-                ${dashboardStatCard({ icon: '☀️', label: tr('Bugungi savdo', 'Продажи сегодня'), value: money(d.sales.today), tint: 'blue' })}
-                ${dashboardStatCard({ icon: '📅', label: tr('Haftalik savdo', 'Продажи за неделю'), value: money(d.sales.week), tint: 'blue' })}
-                ${dashboardStatCard({ icon: '🗓️', label: tr('Oylik savdo', 'Продажи за месяц'), value: money(d.sales.month), tint: 'blue' })}
-                ${dashboardStatCard({ icon: '🧾', label: tr('Tanlangan davr buyurtmalari', 'Заказы за период'), value: String(d.sales.rangeOrderCount), tint: 'blue' })}
-              </div>
-            </div>
-
-            <div>
-              <h3 class="text-xs font-black text-gray-500 mb-1.5">📦 ${tr('Buyurtmalar (tanlangan davr)', 'Заказы (за период)')}</h3>
-              <div class="grid grid-cols-2 gap-2">
-                ${dashboardStatCard({ icon: '🆕', label: tr('Yangi', 'Новые'), value: String(d.orders.byStatus.NEW || 0), tint: 'amber' })}
-                ${dashboardStatCard({ icon: '⏳', label: tr('Tayyorlanmoqda', 'В обработке'), value: String(d.orders.byStatus.PROCESSING || 0), tint: 'amber' })}
-                ${dashboardStatCard({ icon: '✅', label: tr('Yetkazilgan', 'Доставлено'), value: String(d.orders.byStatus.DELIVERED || 0), tint: 'emerald' })}
-                ${dashboardStatCard({ icon: '❌', label: tr('Bekor qilingan', 'Отменено'), value: String(d.orders.byStatus.CANCELLED || 0), tint: 'red' })}
-              </div>
-            </div>
-
-            <div>
-              <h3 class="text-xs font-black text-gray-500 mb-1.5">🏷️ ${tr('Tovarlar', 'Товары')}</h3>
-              <div class="grid grid-cols-2 gap-2">
-                ${dashboardStatCard({ icon: '📚', label: tr('Jami mahsulot', 'Всего товаров'), value: String(d.products.total), tint: 'emerald' })}
-                ${dashboardStatCard({ icon: '⚠️', label: tr('Kam qolgan', 'Мало на складе'), value: String(d.products.lowStock), tint: 'amber' })}
-                ${dashboardStatCard({ icon: '🚫', label: tr('Tugagan', 'Закончились'), value: String(d.products.outOfStock), tint: 'red' })}
-              </div>
-              ${d.products.top.length ? `
-                <div class="mt-2 bg-white rounded-2xl border divide-y overflow-hidden">
-                  <p class="px-3 py-2 text-[10px] font-black text-gray-400">${tr('Eng ko‘p sotilgan', 'Самые продаваемые')}</p>
-                  ${d.products.top.map((p, i) => `
-                    <div class="px-3 py-2 flex items-center gap-2 text-xs">
-                      <span class="font-black text-gray-300 w-4">${i + 1}</span>
-                      <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-7 h-7 rounded-lg object-cover flex-shrink-0">
-                      <span class="flex-1 truncate font-bold text-gray-700">${escapeHtml(p.name)}</span>
-                      <span class="font-black text-emerald-700">${p.soldCount}</span>
-                    </div>
-                  `).join('')}
+          ` : `
+            <div class="space-y-1.5 max-h-48 overflow-y-auto">
+              ${items.map(p => `
+                <div onclick="toggleTrashProductSelection(${b.id}, '${p.id}')" class="flex items-center gap-2 p-1.5 rounded-lg cursor-pointer ${selectedSet.has(p.id) ? 'fitcore-selected-card border border-blue-500' : 'border border-transparent hover:bg-gray-50'}">
+                  <div class="w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${selectedSet.has(p.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300'}">${selectedSet.has(p.id) ? '✓' : ''}</div>
+                  <img src="${escapeHtml(p.img || FALLBACK_IMG)}" onerror="this.onerror=null;this.src='${FALLBACK_IMG}';" class="w-8 h-8 object-cover rounded-lg shrink-0">
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate font-bold">${escapeHtml(p.name)}</p>
+                    ${p.sku ? `<p class="text-[9px] text-gray-400">ID: ${escapeHtml(p.sku)}</p>` : ''}
+                  </div>
                 </div>
-              ` : ''}
+              `).join('')}
             </div>
-
-            <div>
-              <h3 class="text-xs font-black text-gray-500 mb-1.5">👥 ${tr('Mijozlar', 'Клиенты')}</h3>
-              <div class="grid grid-cols-2 gap-2">
-                ${dashboardStatCard({ icon: '👤', label: tr('Jami mijozlar', 'Всего клиентов'), value: String(d.customers.total), tint: 'violet' })}
-                ${dashboardStatCard({ icon: '✨', label: tr('Yangi mijozlar', 'Новые клиенты'), value: String(d.customers.new), tint: 'violet' })}
-                ${dashboardStatCard({ icon: '🔁', label: tr('Qayta buyurtma', 'Повторные заказы'), value: String(d.customers.returning), tint: 'violet' })}
-              </div>
-              <button onclick="openAllCustomersPage()" class="mt-2 w-full text-center text-[11px] font-bold text-violet-700 bg-violet-50 border border-violet-100 rounded-xl py-2">${tr('Barcha mijozlarni ko‘rish →', 'Все клиенты →')}</button>
-              ${d.customers.top.length ? `
-                <div class="mt-2 bg-white rounded-2xl border divide-y overflow-hidden">
-                  <p class="px-3 py-2 text-[10px] font-black text-gray-400">${tr('Eng faol mijozlar', 'Самые активные клиенты')}</p>
-                  ${d.customers.top.map(u => `
-                    <div class="px-3 py-2 flex items-center justify-between text-xs cursor-pointer hover:bg-gray-50" onclick="openUserModal('${u.tgId}')">
-                      <span class="font-bold text-gray-700 truncate">${escapeHtml(u.userName)}</span>
-                      <span class="font-black text-violet-700">${u.totalOrders} ${tr('buyurtma', 'заказов')}</span>
-                    </div>
-                  `).join('')}
-                </div>
-              ` : ''}
+            <div class="flex items-center justify-between text-[10px]">
+              <button onclick="selectAllTrashProducts(${b.id})" class="font-bold text-blue-600">${tr('Barchasini tanlash', 'Выбрать все')}</button>
+              <button onclick="clearTrashSelection(${b.id})" class="font-bold text-gray-500">${tr('Tanlovni bekor qilish', 'Снять выбор')}</button>
             </div>
-
-            <div>
-              <h3 class="text-xs font-black text-gray-500 mb-1.5">📍 ${tr('Hududlar (tanlangan davr)', 'Регионы (за период)')}</h3>
-              ${d.regions.length ? `
-                <div class="bg-white rounded-2xl border divide-y overflow-hidden">
-                  ${d.regions.map(r => `
-                    <div class="px-3 py-2 flex items-center justify-between text-xs">
-                      <span class="font-bold text-gray-700">${escapeHtml(r.region)}</span>
-                      <span class="font-black text-sky-700">${r.count}</span>
-                    </div>
-                  `).join('')}
-                </div>
-              ` : `<p class="text-center text-gray-400 py-4 text-xs">${tr("Bu davrda buyurtma yo'q", 'За этот период заказов нет')}</p>`}
+            <div class="grid grid-cols-2 gap-1.5">
+              <button onclick="restoreSelectedTrashItems(${b.id})" ${selectedCount ? '' : 'disabled'} class="bg-emerald-50 text-emerald-700 border border-emerald-200 disabled:opacity-40 font-bold py-1.5 rounded-lg">${tr("♻️ Tiklash", "♻️ Восстановить")} ${selectedCount ? `(${selectedCount})` : ''}</button>
+              <button onclick="purgeSelectedTrashItems(${b.id})" ${selectedCount ? '' : 'disabled'} class="fc-bg-danger-soft fc-text-danger border fc-border-danger disabled:opacity-40 font-bold py-1.5 rounded-lg flex items-center justify-center gap-1">${ICON_TRASH} ${tr("Butunlay", "Навсегда")} ${selectedCount ? `(${selectedCount})` : ''}</button>
             </div>
           `}
         </div>
       `;
     }
 
+    function toggleTrashSelectMode(batchId) {
+      trashSelectMode[batchId] = !trashSelectMode[batchId];
+      if (!trashSelectMode[batchId]) trashSelectedProductIds[batchId] = new Set();
+      render();
+    }
+    function toggleTrashProductSelection(batchId, productId) {
+      if (!trashSelectedProductIds[batchId]) trashSelectedProductIds[batchId] = new Set();
+      const set = trashSelectedProductIds[batchId];
+      if (set.has(productId)) set.delete(productId); else set.add(productId);
+      render();
+    }
+    function selectAllTrashProducts(batchId) {
+      const batch = (trashBatches || []).find(b => b.id === batchId);
+      if (!batch) return;
+      trashSelectedProductIds[batchId] = new Set((batch.productItems || []).map(p => p.id));
+      render();
+    }
+    function clearTrashSelection(batchId) {
+      trashSelectedProductIds[batchId] = new Set();
+      render();
+    }
+    // Batch to'liq hal qilingandan keyin (barcha itemlar tiklandi/o'chirildi)
+    // uni ro'yxatdan olib tashlaydi — 029 migratsiyasidagi RPC ham xuddi shu
+    // holatda trash_batches.restored_at/purged_at'ni belgilaydi.
+    function removeResolvedTrashItemsFromState(batchId, resolvedIds) {
+      const batch = (trashBatches || []).find(b => b.id === batchId);
+      if (!batch) return;
+      batch.productItems = (batch.productItems || []).filter(p => !resolvedIds.includes(p.id));
+      if (!batch.productItems.length) trashBatches = (trashBatches || []).filter(b => b.id !== batchId);
+      trashSelectedProductIds[batchId] = new Set();
+      trashSelectMode[batchId] = false;
+    }
+    async function restoreSelectedTrashItems(batchId) {
+      const ids = [...(trashSelectedProductIds[batchId] || [])];
+      if (!ids.length) return alert(tr('Kamida bitta mahsulot tanlang.', 'Выберите хотя бы один товар.'));
+      showActionToast(tr('⏳ Tiklanmoqda...', '⏳ Восстановление...'), 'saving');
+      try {
+        await callApi('restore_trash_items', { batchId, productIds: ids });
+        await loadCatalog();
+        removeResolvedTrashItemsFromState(batchId, ids);
+        render();
+        showActionToast(tr('✅ Tiklandi', '✅ Восстановлено'), 'success', 1500);
+      } catch (e) {
+        console.error(e);
+        if (String(e.message || '').includes('product_set_changed')) {
+          alert(tr("Tanlangan mahsulotlar ro'yxati o'zgargan (boshqa admin ham amal qilgan bo'lishi mumkin). Ro'yxat yangilanadi.", 'Список выбранных товаров изменился (возможно, другой админ тоже действовал). Список обновится.'));
+          openTrashModal();
+        } else {
+          showActionToast(tr('❌ Tiklanmadi', '❌ Не восстановлено'), 'error', 1800);
+          alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+        }
+      }
+    }
+    async function purgeSelectedTrashItems(batchId) {
+      const ids = [...(trashSelectedProductIds[batchId] || [])];
+      if (!ids.length) return alert(tr('Kamida bitta mahsulot tanlang.', 'Выберите хотя бы один товар.'));
+      const ok = await fcConfirm(tr('Butunlay o‘chirilsinmi?', 'Удалить навсегда?'), tr(`${ids.length} ta mahsulot darhol va qaytarib bo'lmaydigan tarzda o'chiriladi.`, `${ids.length} товар(ов) будут удалены немедленно и без возможности восстановления.`));
+      if (!ok) return;
+      showActionToast(tr('⏳ Butunlay o‘chirilmoqda...', '⏳ Удаление навсегда...'), 'saving');
+      try {
+        await callApi('purge_trash_items', { batchId, productIds: ids });
+        removeResolvedTrashItemsFromState(batchId, ids);
+        render();
+        showActionToast(tr('✅ Butunlay o‘chirildi', '✅ Удалено навсегда'), 'success', 1500);
+      } catch (e) {
+        console.error(e);
+        if (String(e.message || '').includes('product_set_changed')) {
+          alert(tr("Tanlangan mahsulotlar ro'yxati o'zgargan (boshqa admin ham amal qilgan bo'lishi mumkin). Ro'yxat yangilanadi.", 'Список выбранных товаров изменился (возможно, другой админ тоже действовал). Список обновится.'));
+          openTrashModal();
+        } else {
+          showActionToast(tr('❌ O‘chirilmadi', '❌ Не удалено'), 'error', 1800);
+          alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
+        }
+      }
+    }
+
     // 2.5: Chiqindi (trash) ko'rinishi.
     async function openTrashModal() {
       trashBatches = null;
-      trashPage = 1;
-      trashSelectMode = false;
-      trashSelectedBatchIds.clear();
       activePopupModal = 'TRASH';
       render();
       try {
@@ -6167,82 +7072,6 @@
         console.error(e);
         showActionToast(tr('❌ Tiklanmadi', '❌ Не восстановлено'), 'error', 1800);
         alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
-      }
-    }
-
-    // 9-11-band: Trash bulk select. "Multi-select" batch darajasida ishlaydi
-    // — har bir batch allaqachon bitta atomik birlik (bitta mahsulot yoki
-    // bitta bulk-trash/kategoriya operatsiyasi natijasi), shu sabab bir
-    // nechta batch'ni birga tanlab tiklash/o'chirish xavfsiz semantика.
-    function toggleTrashSelectMode() {
-      trashSelectMode = !trashSelectMode;
-      trashSelectedBatchIds.clear();
-      renderModalContainer();
-    }
-    function toggleTrashBatchSelection(batchId, event) {
-      if (event) event.stopPropagation();
-      const key = String(batchId);
-      if (trashSelectedBatchIds.has(key)) trashSelectedBatchIds.delete(key); else trashSelectedBatchIds.add(key);
-      renderModalContainer();
-    }
-    function selectAllVisibleTrashBatches() {
-      const batches = trashBatches || [];
-      const pageItems = batches.slice((trashPage - 1) * 10, trashPage * 10);
-      for (const b of pageItems) trashSelectedBatchIds.add(String(b.id));
-      renderModalContainer();
-    }
-    function selectAllTrashBatches() {
-      for (const b of (trashBatches || [])) trashSelectedBatchIds.add(String(b.id));
-      renderModalContainer();
-    }
-    function clearTrashSelection() {
-      trashSelectedBatchIds.clear();
-      renderModalContainer();
-    }
-    async function restoreSelectedTrashBatches() {
-      const ids = [...trashSelectedBatchIds].map(Number);
-      if (!ids.length) return;
-      showActionToast(tr('⏳ Tiklanmoqda...', '⏳ Восстановление...'), 'saving');
-      try {
-        const result = await callApi('restore_trash_batches', { batchIds: ids });
-        const failedIds = new Set((result.results || []).filter(r => !r.ok).map(r => r.batchId));
-        await loadCatalog();
-        if (trashBatches) trashBatches = trashBatches.filter(b => failedIds.has(b.id) || !ids.includes(b.id));
-        trashSelectedBatchIds.clear();
-        trashSelectMode = false;
-        render();
-        if (failedIds.size) {
-          showActionToast(tr(`⚠️ ${failedIds.size} tasi tiklanmadi`, `⚠️ ${failedIds.size} не восстановлено`), 'error', 2200);
-        } else {
-          showActionToast(tr('✅ Tiklandi', '✅ Восстановлено'), 'success', 1500);
-        }
-      } catch (e) {
-        console.error(e);
-        showActionToast(tr('❌ Xatolik', '❌ Ошибка'), 'error', 1800);
-        alert(tr('❌ Xatolik: ', '❌ Ошибка: ') + (e.message || e));
-      }
-    }
-    async function purgeSelectedTrashBatches() {
-      const ids = [...trashSelectedBatchIds].map(Number);
-      if (!ids.length) return;
-      if (!confirm(`${ids.length} ${tr("ta chiqindi butunlay o'chirilsinmi? Bu amalni ortga qaytarib bo'lmaydi.", "элементов будет удалено навсегда. Это действие нельзя отменить.")}`)) return;
-      showActionToast(tr('⏳ Butunlay o‘chirilmoqda...', '⏳ Удаление навсегда...'), 'saving');
-      try {
-        const result = await callApi('purge_trash_batches_now', { batchIds: ids });
-        const failedIds = new Set((result.results || []).filter(r => !r.ok).map(r => r.batchId));
-        if (trashBatches) trashBatches = trashBatches.filter(b => failedIds.has(b.id) || !ids.includes(b.id));
-        trashSelectedBatchIds.clear();
-        trashSelectMode = false;
-        render();
-        if (failedIds.size) {
-          showActionToast(tr(`⚠️ ${failedIds.size} tasi o'chmadi`, `⚠️ ${failedIds.size} не удалено`), 'error', 2200);
-        } else {
-          showActionToast(tr('✅ Butunlay o‘chirildi', '✅ Удалено навсегда'), 'success', 1500);
-        }
-      } catch (e) {
-        console.error(e);
-        showActionToast(tr('❌ Xatolik', '❌ Ошибка'), 'error', 1800);
-        alert(tr('❌ O‘chirishda xatolik: ', '❌ Ошибка удаления: ') + (e.message || e));
       }
     }
 
@@ -6299,12 +7128,7 @@
         return;
       }
       const idx = products.findIndex(p => p.id === mapped.id);
-      // Kategoriya realtime'dagi bilan bir xil himoya: TOAST qilingan katta
-      // (base64) img ustuni o'zgarmagan UPDATE'da bo'sh kelishi mumkin.
-      if (idx >= 0) {
-        if (!mapped.img && products[idx].img) mapped.img = products[idx].img;
-        products[idx] = mapped;
-      } else products.push(mapped);
+      if (idx >= 0) products[idx] = mapped; else products.push(mapped);
       products.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
     }
 
@@ -6335,32 +7159,7 @@
           } else {
             const mapped = mapCategoryFromDB(payload.new);
             const idx = categories.findIndex(c => c.id === mapped.id);
-            // MUAMMO 2 tuzatish: tartib (sortOrder) FAQAT ⬆️/⬇️ tugmasi
-            // (moveCategoryOrder) orqali o'zgaradi va u allaqachon o'zining
-            // optimistic+rollback tsikliga ega. Realtime orqali kelgan
-            // sortOrder'ga ishonib mahalliy qiymatni qoplab qo'yish — bir
-            // nechta bosishda (reorder yozuvining o'zi ham shu kanalga signal
-            // beradi) eski/kechikkan qiymat yangisini bosib, tartib "orqaga
-            // qaytib" ketardi. Shu sabab mavjud qatorlar uchun sortOrder
-            // e'tiborsiz qoldiriladi — faqat nom/rasm/boshqa maydonlar
-            // sinxronlanadi. Yangi (idx<0) qatorlar uchun serverdan kelgan
-            // sortOrder shart, chunki mahalliy optimistic qiymat yo'q.
-            //
-            // QO'SHIMCHA TUZATISH (reorder rasmlarni "yo'qotib qo'yish" bug'i):
-            // reorder bir nechta qatorni bir vaqtda yangilaganda (faqat
-            // sort_order ustuniga tegadi), Postgres logical replication katta
-            // (base64) `img` ustunini — u TOAST qilingan va shu UPDATE'da
-            // o'zgarmagan bo'lsa — real qiymatsiz/bo'sh holda yuborishi
-            // mumkin. Shu sabab: agar realtime orqali kelgan img BO'SH bo'lsa,
-            // lekin mahalliyda oldin haqiqiy rasm bo'lgan bo'lsa — eskisi
-            // saqlanadi (rasm "yo'qolib" ko'rinmaydi). Rasm chindan o'chirilsa
-            // yoki almashtirilsa — kelgan qiymat BO'SH BO'LMAYDI, shuning
-            // uchun bu himoya haqiqiy o'zgarishlarga xalaqit bermaydi.
-            if (idx >= 0) {
-              mapped.sortOrder = categories[idx].sortOrder;
-              if (!mapped.img && categories[idx].img) mapped.img = categories[idx].img;
-              categories[idx] = mapped;
-            } else categories.push(mapped);
+            if (idx >= 0) categories[idx] = mapped; else categories.push(mapped);
           }
           saveCatalogCache();
           if (currentTab === 'categories' || currentTab === 'warehouse') render();
@@ -6487,10 +7286,12 @@
           localStorage.setItem('registeredUser', JSON.stringify(registeredUser));
         }
         authReady = true;
+        loadFavorites(); // 17-band: bir marta, fonda — heart iconlar to'g'ri holatda chiqishi uchun
+        loadRecentViews(); // 18-band: bir marta, fonda
       } catch (e) {
         console.error('Yuklashda xatolik:', e);
         document.getElementById('app-content').innerHTML = `
-          <div class="bg-red-50 border border-red-200 text-red-700 text-xs p-4 rounded-2xl mt-10 text-center">
+          <div class="fc-bg-danger-soft border fc-border-danger fc-text-danger text-xs p-4 rounded-2xl mt-10 text-center">
             ⚠️ Ma'lumotlarni yuklashda xatolik yuz berdi.<br>Internetni tekshirib, ilovani qayta oching.<br><br>
             <span class="font-mono text-[10px]">${escapeHtml(e.message || String(e))}</span>
           </div>`;
